@@ -1,1 +1,1 @@
-# Tutor Allocation System (Apache + PHP + SQLite + HTML/CSS/JS)
+# Tutor Allocation System (Group 8 - Project 700 - UTAS)
