@@ -9,10 +9,10 @@ FUNCTION assert_role(user_id, allowed_roles):
         RAISE "ACCESS_DENIED"
 
 FUNCTION audit_log(action, actor_user_id, target, metadata_json):
-    // app-side immutable log (table not shown in schema)
+    // app-side immutable log
 
 FUNCTION notify(user_id, message, payload_json):
-    // app/email notification
+    // email notification
 
 
 #--------------------------------------------------------------------------#
