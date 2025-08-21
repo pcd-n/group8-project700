@@ -9,10 +9,10 @@ FUNCTION assert_role(user_id, allowed_roles):
         RAISE "ACCESS_DENIED"
 
 FUNCTION audit_log(action, actor_user_id, target, metadata_json):
-    // app-side immutable log (table not shown in schema)
+    // app-side immutable log
 
 FUNCTION notify(user_id, message, payload_json):
-    // app/email notification
+    // email notification
 
 
 #--------------------------------------------------------------------------#
@@ -91,11 +91,11 @@ FUNCTION admin_check_unit_status(admin_user_id, unit_id, term, year, campus_id):
     assert_role(admin_user_id, ["ADMIN"])
     row = SELECT status FROM "UnitCourses"
           WHERE unit_id=unit_id AND term=term AND year=year AND campus_id=campus_id
-    RETURN row.status  // e.g., 'Active' or 'Published'
+    RETURN row.status
 
 
 #--------------------------------------------------------------------------#
-2) Unit Coordinator lane (candidate filtering, ranking, allocation, publish)
+2) Unit Coordinator lane (candidate filtering, preference, allocation, publish)
 FUNCTION uc_filter_candidates(uc_user_id, unit_id, campus_id, term, year, filters):
     assert_role(uc_user_id, ["UNIT_COORDINATOR"])
     RETURN SELECT ea.eoi_app_id, ea.applicant_user_id, u.first_name, u.last_name, u.email,
@@ -107,14 +107,14 @@ FUNCTION uc_filter_candidates(uc_user_id, unit_id, campus_id, term, year, filter
              AND ea.campus_id = campus_id
              APPLY(filters)
 
-FUNCTION uc_rank_shortlist(uc_user_id, rankings):
+FUNCTION uc_preference_shortlist(uc_user_id, preferences):
     assert_role(uc_user_id, ["UNIT_COORDINATOR"])
-    // rankings: [{eoi_app_id, status_label, notes}]
-    FOR EACH r IN rankings:
+    // preferences: [{eoi_app_id, status_label, notes}]
+    FOR EACH r IN preferences:
         UPDATE "EoiApp"
            SET status = r.status_label, remarks = r.notes, updated_at = now()
          WHERE eoi_app_id = r.eoi_app_id AND is_current = TRUE
-    audit_log("RANKINGS_SAVED", uc_user_id, {count: len(rankings)}, {})
+    audit_log("PREFERENCES_SAVED", uc_user_id, {count: len(preferences)}, {})
 
 FUNCTION uc_allocate_to_class(uc_user_id, tutor_user_id, unit_course_id, campus_id, slot, allow_override):
     assert_role(uc_user_id, ["UNIT_COORDINATOR"])
@@ -154,10 +154,6 @@ FUNCTION tutor_view_published_timetable(tutor_user_id, term, year, campus_id):
              AND tt.campus_id = campus_id
              AND (SELECT status FROM "UnitCourses"
                   WHERE unit_course_id = uc.unit_course_id) = 'Published'
-
-
-Note: No Tutor EOI submit/update functions exist anymore.
-
 
 #--------------------------------------------------------------------------#
 4) System services (shared)
