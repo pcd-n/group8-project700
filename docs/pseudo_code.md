@@ -163,7 +163,6 @@ FUNCTION provide_filter_search_ui(user_id, criteria):
     // (same as uc_filter_candidates for UCs; Admin can search across units/campuses)
 
 FUNCTION clash_check_on_allocation(tutor_user_id, unit_course_id, campus_id, slot):
-    // Overlap against existing allocations for this tutor
     overlap = EXISTS(
       SELECT 1 FROM "TimeTable"
       WHERE tutor_user_id = tutor_user_id
