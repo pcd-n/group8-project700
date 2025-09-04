@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Unit Details</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <style>
+      .section-title {
+        font-weight: 600;
+      }
+      .pref-select {
+        width: 90px;
+      }
+      .actions {
+        border-top: 1px solid #e5e7eb;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container py-4">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h1 id="unitTitle" class="h5 m-0">Unit</h1>
+        <a href="home.html" class="btn btn-outline-secondary"
+          >← Back to Units</a
+        >
+      </div>
+
+      <div id="hobartBlock" class="mb-4 d-none">
+        <div class="section-title mb-2">Location: Hobart</div>
+        <div class="table-responsive">
+          <table class="table table-bordered align-middle">
+            <thead class="table-light" id="hobartHead"></thead>
+            <tbody id="hobartBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="launcBlock" class="mb-4 d-none">
+        <div class="section-title mb-2">Location: Launceston</div>
+        <div class="table-responsive">
+          <table class="table table-bordered align-middle">
+            <thead class="table-light" id="launcHead"></thead>
+            <tbody id="launcBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="otherBlock" class="mb-4 d-none">
+        <div class="section-title mb-2">Location: Other</div>
+        <div class="table-responsive">
+          <table class="table table-bordered align-middle">
+            <thead class="table-light" id="otherHead"></thead>
+            <tbody id="otherBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="noData" class="alert alert-warning d-none">
+        No spreadsheet found. Please upload on
+        <a href="home.html" class="alert-link">home page</a> first.
+      </div>
+
+      <!-- Actions -->
+      <div class="actions pt-3 d-flex justify-content-center gap-2">
+        <button id="btnEdit" class="btn btn-danger px-5">EDIT</button>
+        <button id="btnSubmit" class="btn btn-primary px-5 d-none">
+          SUBMIT
+        </button>
+      </div>
+    </div>
+
+    <script>
+      // --- Query params ---
+      const params = new URLSearchParams(location.search);
+      const sheetName = params.get("sheet") || "";
+      const unitTitleStr = decodeURIComponent(params.get("title") || "");
+      const unitCode = decodeURIComponent(params.get("code") || "");
+      document.getElementById("unitTitle").textContent =
+        unitTitleStr || sheetName || "Unit";
+
+      // --- Storage keys ---
+      const SHEETS_KEY = "eoi_sheets_aoa";
+      const PREF_KEY = "eoi_prefs"; // { "<unitCode>|<email>": "3", ... }
+
+      // --- Load workbook (as AOA) from localStorage ---
+      const store = localStorage.getItem(SHEETS_KEY);
+      if (!store) document.getElementById("noData").classList.remove("d-none");
+      const AOA = store ? JSON.parse(store) : {};
+      const rows = (AOA && AOA[sheetName]) || [];
+
+      // --- Detect table header row (blue table) ---
+      const required = ["name", "email", "you are", "tutoring location"];
+      let headerIdx = -1;
+      for (let r = 0; r < Math.min(rows.length, 250); r++) {
+        const lower = rows[r].map((c) => String(c).trim().toLowerCase());
+        const ok = required.every((k) => lower.some((x) => x.includes(k)));
+        if (ok) {
+          headerIdx = r;
+          break;
+        }
+      }
+
+      const hobartBlock = document.getElementById("hobartBlock");
+      const launcBlock = document.getElementById("launcBlock");
+      const otherBlock = document.getElementById("otherBlock");
+      const hobartHead = document.getElementById("hobartHead");
+      const hobartBody = document.getElementById("hobartBody");
+      const launcHead = document.getElementById("launcHead");
+      const launcBody = document.getElementById("launcBody");
+      const otherHead = document.getElementById("otherHead");
+      const otherBody = document.getElementById("otherBody");
+
+      // Editing state
+      let isEditing = false;
+      const btnEdit = document.getElementById("btnEdit");
+      const btnSubmit = document.getElementById("btnSubmit");
+
+      if (headerIdx === -1) {
+        document.getElementById("noData").classList.remove("d-none");
+      } else {
+        const headerRow = rows[headerIdx];
+        const idx = (label) =>
+          headerRow.findIndex((h) => String(h).toLowerCase().includes(label));
+        const nameCol = idx("name");
+        const emailCol = idx("email");
+        const locCol = idx("tutoring location");
+
+        // existing prefs
+        const prefs = JSON.parse(localStorage.getItem(PREF_KEY) || "{}");
+
+        // split data rows
+        const bodyRows = rows
+          .slice(headerIdx + 1)
+          .filter((r) => r.some((c) => String(c).trim() !== ""));
+        const groups = { Hobart: [], Launceston: [], Other: [] };
+        bodyRows.forEach((r) => {
+          const loc = (r[locCol] || "").toString().trim().toLowerCase();
+          if (loc === "hobart") groups.Hobart.push(r);
+          else if (loc === "launceston") groups.Launceston.push(r);
+          else groups.Other.push(r);
+        });
+
+        // Build each section with disabled selects by default
+        buildSection(
+          "hobart",
+          hobartHead,
+          hobartBody,
+          groups.Hobart,
+          headerRow,
+          prefs,
+          emailCol
+        );
+        buildSection(
+          "launc",
+          launcHead,
+          launcBody,
+          groups.Launceston,
+          headerRow,
+          prefs,
+          emailCol
+        );
+        buildSection(
+          "other",
+          otherHead,
+          otherBody,
+          groups.Other,
+          headerRow,
+          prefs,
+          emailCol
+        );
+
+        if (groups.Hobart.length) hobartBlock.classList.remove("d-none");
+        if (groups.Launceston.length) launcBlock.classList.remove("d-none");
+        if (groups.Other.length) otherBlock.classList.remove("d-none");
+      }
+
+      function buildSection(
+        prefix,
+        headEl,
+        bodyEl,
+        dataRows,
+        headerRow,
+        prefs,
+        emailCol
+      ) {
+        if (!dataRows.length) return;
+
+        // HEAD: Preference + original columns
+        const trh = document.createElement("tr");
+        const thPref = document.createElement("th");
+        thPref.textContent = "Preference";
+        trh.appendChild(thPref);
+        headerRow.forEach((h) => {
+          if (!String(h).trim()) return;
+          const th = document.createElement("th");
+          th.textContent = h;
+          trh.appendChild(th);
+        });
+        headEl.appendChild(trh);
+
+        // BODY: one row per applicant
+        dataRows.forEach((r) => {
+          const tr = document.createElement("tr");
+
+          // Preference dropdown (disabled initially)
+          const tdPref = document.createElement("td");
+          const sel = document.createElement("select");
+          sel.className = "form-select form-select-sm pref-select";
+          sel.disabled = true; // disabled until EDIT
+          const key = `${unitCode}|${(r[emailCol] || "").toString().trim()}`;
+
+          const optBlank = document.createElement("option");
+          optBlank.value = "";
+          optBlank.textContent = "—";
+          sel.appendChild(optBlank);
+          for (let i = 1; i <= 10; i++) {
+            const o = document.createElement("option");
+            o.value = String(i);
+            o.textContent = String(i);
+            sel.appendChild(o);
+          }
+          // set saved value if any
+          const saved = prefs[key];
+          if (saved) sel.value = saved;
+
+          // store identity for submit
+          sel.dataset.prefKey = key;
+
+          tdPref.appendChild(sel);
+          tr.appendChild(tdPref);
+
+          // Original columns
+          headerRow.forEach((_, c) => {
+            const td = document.createElement("td");
+            td.textContent = (r[c] ?? "").toString();
+            tr.appendChild(td);
+          });
+
+          bodyEl.appendChild(tr);
+        });
+      }
+
+      // --- Edit / Submit logic ---
+      btnEdit.addEventListener("click", () => {
+        isEditing = true;
+        btnEdit.classList.add("btn-secondary"); // optional visual
+        btnSubmit.classList.remove("d-none");
+        // enable all selects
+        document
+          .querySelectorAll(".pref-select")
+          .forEach((s) => (s.disabled = false));
+      });
+
+      btnSubmit.addEventListener("click", () => {
+        if (!isEditing) return;
+
+        // collect selections
+        const prefsNow = JSON.parse(localStorage.getItem(PREF_KEY) || "{}");
+        document.querySelectorAll(".pref-select").forEach((sel) => {
+          const key = sel.dataset.prefKey;
+          const val = sel.value.trim();
+          if (!key) return;
+          if (val) prefsNow[key] = val;
+          else delete prefsNow[key];
+        });
+        localStorage.setItem(PREF_KEY, JSON.stringify(prefsNow));
+
+        // lock UI again
+        isEditing = false;
+        btnSubmit.classList.add("d-none");
+        btnEdit.classList.remove("btn-secondary");
+        document
+          .querySelectorAll(".pref-select")
+          .forEach((s) => (s.disabled = true));
+
+        alert("Preferences saved locally. (No backend yet)");
+      });
+    </script>
+  </body>
+</html>

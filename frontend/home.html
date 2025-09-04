@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Web Based Tutor Allocation System</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <style>
+      body {
+        background: #fff;
+      }
+      .hero {
+        min-height: 34vh;
+        display: grid;
+        place-items: center;
+        text-align: center;
+      }
+      .btn-pill {
+        border-radius: 999px;
+      }
+      .btn-wide {
+        min-width: 240px;
+      }
+      .file-note {
+        font-size: 0.9rem;
+        color: #6b7280;
+      }
+      .hidden {
+        display: none !important;
+      }
+      .table-wrap {
+        max-width: 1000px;
+      }
+      .units-table tr {
+        cursor: pointer;
+      }
+      .section-title {
+        font-weight: 600;
+        letter-spacing: 0.2px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container hero">
+      <div>
+        <h1 class="h5 fw-semibold mb-4">Web Based Tutor Allocation System</h1>
+
+        <div class="d-flex flex-column align-items-center gap-2">
+          <input
+            id="eoiFile"
+            type="file"
+            class="d-none"
+            accept=".xlsx,.xls,.csv"
+          />
+          <button
+            id="btnUpload"
+            class="btn btn-dark btn-pill btn-wide"
+            type="button"
+          >
+            Upload EOI Spreadsheet
+          </button>
+          <div id="fileName" class="file-note"></div>
+
+          <a href="signin.html" class="btn btn-success btn-pill btn-wide mt-2">
+            Proceed to Tutor Allocation
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <div id="unitsSection" class="container table-wrap hidden">
+      <div class="mb-2">
+        <div class="section-title">Computing And Information Systems Units</div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-bordered align-middle units-table">
+          <thead class="table-light">
+            <tr>
+              <th style="width: 160px">Code</th>
+              <th>Name</th>
+            </tr>
+          </thead>
+          <tbody id="unitsBody"></tbody>
+        </table>
+      </div>
+      <div id="recordCount" class="small text-muted"></div>
+    </div>
+
+    <script>
+      const btnUpload = document.getElementById("btnUpload");
+      const eoiFile = document.getElementById("eoiFile");
+      const fileNameEl = document.getElementById("fileName");
+      const unitsSection = document.getElementById("unitsSection");
+      const unitsBody = document.getElementById("unitsBody");
+      const recordCount = document.getElementById("recordCount");
+
+      let workbook = null;
+      let unitSheets = []; // [{sheetName, code, name, title}]
+
+      btnUpload.addEventListener("click", () => eoiFile.click());
+      eoiFile.addEventListener("change", () => {
+        const f = eoiFile.files?.[0];
+        if (!f) return;
+        fileNameEl.textContent = f.name;
+
+        const reader = new FileReader();
+        const isCSV = /\.csv$/i.test(f.name);
+        reader.onload = (e) => {
+          let wb;
+          if (isCSV) wb = XLSX.read(e.target.result, { type: "string" });
+          else {
+            const data = new Uint8Array(e.target.result);
+            wb = XLSX.read(data, { type: "array" });
+          }
+          onWorkbookLoaded(wb);
+        };
+        isCSV ? reader.readAsText(f) : reader.readAsArrayBuffer(f);
+      });
+
+      function onWorkbookLoaded(wb) {
+        workbook = wb;
+        // Convert each sheet to AOA (array-of-arrays) and store in localStorage
+        const payload = {};
+        wb.SheetNames.forEach((name) => {
+          payload[name] = XLSX.utils.sheet_to_json(wb.Sheets[name], {
+            header: 1,
+            defval: "",
+          });
+        });
+        localStorage.setItem("eoi_sheets_aoa", JSON.stringify(payload));
+
+        // Build unit list from B1 (e.g., "KIT107 Programming")
+        unitSheets = wb.SheetNames.map((sheetName) => {
+          const sheet = wb.Sheets[sheetName];
+          let b1 = sheet["B1"]
+            ? String(sheet["B1"].v || sheet["B1"].w || "").trim()
+            : "";
+          if (!b1) b1 = scanTopForCodeTitle(sheet);
+
+          let code = "",
+            name = "";
+          if (b1) {
+            const m = b1.match(/^([A-Za-z]{3}\d{3,})\s+(.+)$/);
+            if (m) {
+              code = m[1].trim();
+              name = m[2].trim();
+            } else if (/^[A-Za-z]{3}\d{3,}$/.test(b1)) code = b1;
+            else name = b1;
+          }
+          if (!code) {
+            const mm = sheetName.match(/^([A-Za-z]{3}\d{3,})/);
+            if (mm) code = mm[1];
+          }
+          if (!name) name = sheetName;
+
+          const title = `${code || ""} ${name || ""}`.trim();
+          return { sheetName, code, name, title };
+        });
+
+        // dedupe + sort
+        const seen = new Set();
+        unitSheets = unitSheets
+          .filter((u) => {
+            const k = `${u.code}||${u.name}`;
+            if (seen.has(k)) return false;
+            seen.add(k);
+            return true;
+          })
+          .sort(
+            (a, b) =>
+              (a.code || "").localeCompare(b.code || "") ||
+              (a.name || "").localeCompare(b.name || "")
+          );
+
+        renderUnits();
+      }
+
+      function renderUnits() {
+        unitsBody.innerHTML = "";
+        unitSheets.forEach((u) => {
+          const url = `unitdetails.html?sheet=${encodeURIComponent(
+            u.sheetName
+          )}&title=${encodeURIComponent(u.title)}&code=${encodeURIComponent(
+            u.code
+          )}&name=${encodeURIComponent(u.name)}`;
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+          <td class="fw-semibold"><a class="text-decoration-none" href="${url}">${
+            u.code || ""
+          }</a></td>
+          <td><a class="text-decoration-none" href="${url}">${
+            u.name || ""
+          }</a></td>`;
+          unitsBody.appendChild(tr);
+        });
+        unitsSection.classList.remove("hidden");
+        recordCount.textContent = `${unitSheets.length} Records Found`;
+      }
+
+      function scanTopForCodeTitle(sheet) {
+        const maxR = 6,
+          maxC = 6;
+        for (let r = 1; r <= maxR; r++)
+          for (let c = 1; c <= maxC; c++) {
+            const addr = XLSX.utils.encode_cell({ r: r - 1, c: c - 1 });
+            const cell = sheet[addr];
+            if (!cell) continue;
+            const v = String(cell.v || cell.w || "").trim();
+            if (/^[A-Za-z]{3}\d{3,}\s+.+$/.test(v)) return v;
+          }
+        return "";
+      }
+    </script>
+  </body>
+</html>
