@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Allocation Details</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <style>
+      .campus-title {
+        background: #fde047;
+        padding: 0.35rem 0.6rem;
+        font-weight: 600;
+        display: inline-block;
+        border-radius: 0.25rem;
+        margin: 0.25rem 0 0.5rem;
+      }
+      .cell-input {
+        min-width: 160px;
+      }
+      .notes-input {
+        min-width: 220px;
+      }
+      .small-hint {
+        font-size: 0.8rem;
+        color: #6b7280;
+      }
+      .actions {
+        border-top: 1px solid #e5e7eb;
+      }
+      .staff-chip {
+        display: inline-block;
+        margin: 0.1rem 0.25rem 0.1rem 0;
+        padding: 0.15rem 0.45rem;
+        border-radius: 999px;
+        background: #e9f2ff;
+        color: #0b5ed7;
+        cursor: pointer;
+        font-size: 0.85rem;
+      }
+      /* Timetable */
+      .tt-grid {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        table-layout: fixed;
+      }
+      .tt-grid th,
+      .tt-grid td {
+        border: 1px solid #e5e7eb;
+      }
+      .tt-grid thead th {
+        background: #f8fafc;
+        text-align: center;
+      }
+      .tt-time {
+        width: 90px;
+        background: #f3f4f6;
+        font-weight: 600;
+      }
+      .tt-slot {
+        height: 56px;
+        position: relative;
+      } /* 56px per hour */
+      .tt-event {
+        position: absolute;
+        left: 6px;
+        right: 6px;
+        border-radius: 0.25rem;
+        padding: 0.25rem 0.35rem;
+        background: #facc15;
+        color: #111827;
+        font-size: 0.8rem;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container py-4">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+          <h1 id="title" class="h5 m-0">Unit</h1>
+          <div class="small-hint">
+            Click <strong>EDIT</strong> to update Staff / Notes, then
+            <strong>SUBMIT</strong> to save. Click a
+            <span
+              class="staff-chip"
+              style="cursor: default; background: #eef6ff; color: #0b5ed7"
+              >staff name</span
+            >
+            to view timetable.
+          </div>
+        </div>
+        <a href="home.html" class="btn btn-outline-secondary"
+          >← Back to Units</a
+        >
+      </div>
+
+      <div id="content"></div>
+
+      <div id="noData" class="alert alert-warning d-none mt-3">
+        No allocation data found. Please upload “Tutorial Allocations.xlsx” on
+        the home page first and click a unit again.
+      </div>
+
+      <!-- Actions -->
+      <div class="actions pt-3 mt-2 d-flex justify-content-center gap-2">
+        <button id="btnEdit" class="btn btn-danger px-5">EDIT</button>
+        <button id="btnSubmit" class="btn btn-primary px-5 d-none">
+          SUBMIT
+        </button>
+      </div>
+    </div>
+
+    <!-- Timetable Modal -->
+    <div class="modal fade" id="ttModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-xl modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="ttTitle">Timetable</h5>
+            <button
+              type="button"
+              class="btn-close"
+              data-bs-dismiss="modal"
+              aria-label="Close"
+            ></button>
+          </div>
+          <div class="modal-body">
+            <div id="ttContainer"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+      /* ------------ query + title ------------ */
+      const qs = new URLSearchParams(location.search);
+      const sheetParam = decodeURIComponent(qs.get("sheet") || "");
+      const unitCode = decodeURIComponent(qs.get("code") || "");
+      const unitName = decodeURIComponent(qs.get("name") || "");
+      const unitTitle =
+        `${unitCode} ${unitName}`.trim() || sheetParam || "Unit";
+      document.getElementById("title").textContent = unitTitle;
+
+      /* ------------ storage helpers ------------ */
+      function safeLoad(key) {
+        try {
+          const s = sessionStorage.getItem(key);
+          if (s) return JSON.parse(s);
+        } catch {}
+        try {
+          const s = localStorage.getItem(key);
+          if (s) return JSON.parse(s);
+        } catch {}
+        return null;
+      }
+      function safeSave(key, obj) {
+        try {
+          localStorage.setItem(key, JSON.stringify(obj));
+          return;
+        } catch {}
+        try {
+          sessionStorage.setItem(key, JSON.stringify(obj));
+          return;
+        } catch {}
+      }
+
+      /* ------------ load rows (prefer stashed sheet from click) ------------ */
+      const current = safeLoad("alloc_sheet_current"); // { key, rows }
+      let rows = current && Array.isArray(current.rows) ? current.rows : null;
+
+      if (!rows) {
+        const AOA = safeLoad("alloc_sheets_aoa");
+        if (AOA) {
+          const keys = Object.keys(AOA);
+          let key =
+            keys.find((k) => k === sheetParam) ||
+            keys.find(
+              (k) => k.trim().toLowerCase() === sheetParam.trim().toLowerCase()
+            ) ||
+            keys.find(
+              (k) =>
+                unitCode && k.toLowerCase().includes(unitCode.toLowerCase())
+            ) ||
+            keys[0];
+          rows = AOA[key];
+        }
+      }
+
+      if (!rows || !rows.length) {
+        const nd = document.getElementById("noData");
+        nd.textContent =
+          "No saved workbook (alloc_sheets_aoa). Upload on the home page first.";
+        nd.classList.remove("d-none");
+        throw new Error("no data for details");
+      }
+
+      /* ------------ detect header row (tolerant) ------------ */
+      const candidates = [
+        "subject_code",
+        "subject code",
+        "subject_description",
+        "subject description",
+        "activity_code",
+        "activity code",
+        "campus",
+        "day_of_week",
+        "day of week",
+        "day",
+        "start_time",
+        "start time",
+        "time",
+        "weeks",
+        "teaching_weeks",
+        "teaching weeks",
+        "duration",
+        "location",
+        "staff",
+        "staffs",
+      ];
+      let headerIdx = -1,
+        header = [];
+      for (let r = 0; r < Math.min(200, rows.length); r++) {
+        const lower = rows[r].map((x) => String(x).trim().toLowerCase());
+        const hits = candidates.filter((k) => lower.includes(k)).length;
+        if (hits >= 4) {
+          headerIdx = r;
+          header = rows[r];
+          break;
+        }
+      }
+      if (headerIdx === -1) {
+        const nd = document.getElementById("noData");
+        nd.textContent = "Could not detect the header row on this sheet.";
+        nd.classList.remove("d-none");
+        throw new Error("header not found");
+      }
+
+      const lowerHeader = header.map((h) => String(h).trim().toLowerCase());
+      const col = (...aliases) => {
+        for (const a of aliases) {
+          const i = lowerHeader.indexOf(a);
+          if (i !== -1) return i;
+        }
+        for (let i = 0; i < lowerHeader.length; i++) {
+          if (aliases.some((a) => lowerHeader[i].includes(a))) return i;
+        }
+        return -1;
+      };
+
+      const idx = {
+        activity: col("activity_code", "activity code"),
+        campus: col("campus"),
+        day: col("day_of_week", "day of week", "day"),
+        start: col("start_time", "start time", "time"),
+        weeks: col("weeks"),
+        duration: col("duration"),
+        location: col("location"),
+        staff: col("staff", "staffs"), // may be -1 if not present
+      };
+
+      /* ------------ body rows (non-empty) ------------ */
+      const body = rows
+        .slice(headerIdx + 1)
+        .filter((r) => r.some((c) => String(c).trim() !== ""));
+
+      /* ------------ persistence for edits (by unit + rowKey) ------------ */
+      const EDITS_KEY = "alloc_edits";
+      const allEdits = safeLoad(EDITS_KEY) || {}; // { "<unitTitle>": { "<rowKey>": {staff, notes} } }
+      const unitEdits = allEdits[unitTitle] || {};
+      function rowKey(r) {
+        const parts = [
+          idx.activity >= 0 ? r[idx.activity] : "",
+          idx.day >= 0 ? r[idx.day] : "",
+          idx.start >= 0 ? r[idx.start] : "",
+          idx.location >= 0 ? r[idx.location] : "",
+        ].map((x) => String(x || "").trim());
+        return parts.join("|");
+      }
+      function getEdit(r) {
+        return unitEdits[rowKey(r)] || {};
+      }
+      function setEdit(r, patch) {
+        const key = rowKey(r);
+        const current = unitEdits[key] || {};
+        const next = { ...current, ...patch };
+        if (!allEdits[unitTitle]) allEdits[unitTitle] = {};
+        allEdits[unitTitle][key] = next;
+        safeSave(EDITS_KEY, allEdits);
+      }
+
+      /* ------------ edit state ------------ */
+      let isEditing = false;
+      const btnEdit = document.getElementById("btnEdit");
+      const btnSubmit = document.getElementById("btnSubmit");
+
+      btnEdit.addEventListener("click", () => {
+        isEditing = true;
+        document
+          .querySelectorAll(".editable-input")
+          .forEach((i) => (i.disabled = false));
+        document
+          .querySelectorAll(".staff-display")
+          .forEach((s) => s.classList.add("d-none"));
+        document
+          .querySelectorAll(".staff-input")
+          .forEach((i) => i.classList.remove("d-none"));
+        btnSubmit.classList.remove("d-none");
+        btnEdit.classList.add("btn-secondary");
+      });
+
+      btnSubmit.addEventListener("click", () => {
+        // Save all inputs
+        document
+          .querySelectorAll(".editable-input[data-rowkey]")
+          .forEach((inp) => {
+            const key = inp.dataset.rowkey;
+            if (!allEdits[unitTitle]) allEdits[unitTitle] = {};
+            const cur = allEdits[unitTitle][key] || {};
+            const field = inp.dataset.field; // 'staff' or 'notes'
+            allEdits[unitTitle][key] = { ...cur, [field]: inp.value };
+          });
+        safeSave(EDITS_KEY, allEdits);
+
+        // Update display chips
+        document.querySelectorAll(".staff-cell").forEach((cell) => {
+          const input = cell.querySelector(".staff-input");
+          const display = cell.querySelector(".staff-display");
+          display.innerHTML = chipsHTML(splitNames(input.value));
+        });
+
+        // Lock again
+        isEditing = false;
+        document
+          .querySelectorAll(".editable-input")
+          .forEach((i) => (i.disabled = true));
+        document
+          .querySelectorAll(".staff-input")
+          .forEach((i) => i.classList.add("d-none"));
+        document
+          .querySelectorAll(".staff-display")
+          .forEach((s) => s.classList.remove("d-none"));
+        btnSubmit.classList.add("d-none");
+        btnEdit.classList.remove("btn-secondary");
+        alert("Changes saved locally.");
+      });
+
+      /* ------------ group by campus and render ------------ */
+      const groups = { HBT: [], LTN: [], ONLINE: [], OTHER: [] };
+      body.forEach((r) => {
+        const v = ((idx.campus >= 0 ? r[idx.campus] : "") || "")
+          .toString()
+          .trim()
+          .toUpperCase();
+        if (v.startsWith("HBT")) groups.HBT.push(r);
+        else if (
+          v.startsWith("LTN") ||
+          v.startsWith("LST") ||
+          v.startsWith("LNC")
+        )
+          groups.LTN.push(r);
+        else if (v.startsWith("ONLINE")) groups.ONLINE.push(r);
+        else groups.OTHER.push(r);
+      });
+
+      const content = document.getElementById("content");
+      renderGroup("HBT", groups.HBT);
+      renderGroup("LTN", groups.LTN);
+      renderGroup("ONLINE", groups.ONLINE);
+      if (groups.OTHER.length) renderGroup("OTHER", groups.OTHER);
+
+      function renderGroup(label, rowsForGroup) {
+        if (!rowsForGroup.length) return;
+
+        const badge = document.createElement("div");
+        badge.className = "campus-title";
+        badge.textContent = label;
+        content.appendChild(badge);
+
+        const wrap = document.createElement("div");
+        wrap.className = "table-responsive mb-4";
+        const table = document.createElement("table");
+        table.className = "table table-bordered align-middle";
+
+        const thead = document.createElement("thead");
+        thead.className = "table-light";
+        const tbody = document.createElement("tbody");
+
+        // Always show Staff & Notes (editable), plus the detected columns
+        const cols = [
+          ["activity", "Activity", false],
+          ["day", "Day", false],
+          ["start", "Start time", false],
+          ["weeks", "Weeks", false],
+          ["duration", "Duration", false],
+          ["location", "Location", false],
+          ["staff", "Staff", true], // editable (but shown as chips until Edit)
+          ["notes", "Notes", true], // editable
+        ].filter(([k]) => k === "staff" || k === "notes" || idx[k] >= 0);
+
+        const thr = document.createElement("tr");
+        cols.forEach(([_, labelTxt]) => {
+          const th = document.createElement("th");
+          th.textContent = labelTxt;
+          thr.appendChild(th);
+        });
+        thead.appendChild(thr);
+
+        rowsForGroup.forEach((r) => {
+          const tr = document.createElement("tr");
+          const key = rowKey(r);
+          const saved = getEdit(r);
+
+          cols.forEach(([k]) => {
+            const td = document.createElement("td");
+
+            if (k === "staff") {
+              td.classList.add("staff-cell");
+              const initial = (
+                saved.staff != null
+                  ? saved.staff
+                  : idx.staff >= 0
+                  ? r[idx.staff] ?? ""
+                  : ""
+              ).toString();
+
+              // display chips (clickable)
+              const disp = document.createElement("div");
+              disp.className = "staff-display";
+              disp.innerHTML = chipsHTML(splitNames(initial));
+              td.appendChild(disp);
+
+              // input (hidden until Edit)
+              const input = document.createElement("input");
+              input.type = "text";
+              input.className =
+                "form-control form-control-sm cell-input editable-input staff-input d-none";
+              input.value = initial;
+              input.placeholder = "Comma-separated names";
+              input.disabled = true;
+              input.dataset.rowkey = key;
+              input.dataset.field = "staff";
+              td.appendChild(input);
+            } else if (k === "notes") {
+              const initial = (saved.notes || "").toString();
+              const input = document.createElement("input");
+              input.type = "text";
+              input.className =
+                "form-control form-control-sm notes-input editable-input";
+              input.value = initial;
+              input.placeholder = "Add notes";
+              input.disabled = true; // locked until Edit
+              input.dataset.rowkey = key;
+              input.dataset.field = "notes";
+              td.appendChild(input);
+            } else {
+              td.textContent = (idx[k] >= 0 ? r[idx[k]] ?? "" : "").toString();
+            }
+
+            tr.appendChild(td);
+          });
+
+          tbody.appendChild(tr);
+        });
+
+        table.appendChild(thead);
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+        content.appendChild(wrap);
+      }
+
+      /* ------------ helpers for names + chips + modal ------------ */
+      function splitNames(v) {
+        return String(v || "")
+          .split(/[;,/]+/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+      }
+      function chipsHTML(names) {
+        return names
+          .map(
+            (n) =>
+              `<span class="staff-chip" data-staff="${escapeHtml(
+                n
+              )}">${escapeHtml(n)}</span>`
+          )
+          .join(" ");
+      }
+      function escapeHtml(s) {
+        return s.replace(
+          /[&<>"']/g,
+          (m) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            }[m])
+        );
+      }
+
+      // Delegate clicks on chips to open modal
+      document.addEventListener("click", (e) => {
+        const chip = e.target.closest(".staff-chip");
+        if (!chip || isEditing) return; // disable during edit
+        const staffName = chip.getAttribute("data-staff");
+        openTimetableModal(staffName);
+      });
+
+      /* ------------ timetable modal ------------ */
+      function openTimetableModal(staffName) {
+        // collect events for this staff from current sheet (use saved edits first)
+        const events = [];
+        const rowsAll = body; // already filtered body rows
+        rowsAll.forEach((r) => {
+          // get staff from edits or row
+          const key = rowKey(r);
+          const edited =
+            allEdits[unitTitle] && allEdits[unitTitle][key]
+              ? allEdits[unitTitle][key]
+              : {};
+          const staffStr = (
+            edited.staff != null
+              ? edited.staff
+              : idx.staff >= 0
+              ? r[idx.staff] ?? ""
+              : ""
+          ).toString();
+          const names = splitNames(staffStr).map((x) => x.toLowerCase());
+          if (!names.includes(staffName.toLowerCase())) return;
+
+          const day = (idx.day >= 0 ? String(r[idx.day] || "") : "").trim();
+          const time = (
+            idx.start >= 0 ? String(r[idx.start] || "") : ""
+          ).trim();
+          const dur = parseInt(
+            (idx.duration >= 0 ? String(r[idx.duration] || "") : "60").match(
+              /\d+/
+            )?.[0] || "60",
+            10
+          );
+          const loc = (
+            idx.location >= 0 ? String(r[idx.location] || "") : ""
+          ).trim();
+          const act = (
+            idx.activity >= 0 ? String(r[idx.activity] || "") : ""
+          ).trim();
+          const weeks = (
+            idx.weeks >= 0 ? String(r[idx.weeks] || "") : ""
+          ).trim();
+
+          events.push({ day, time, dur, loc, act, weeks });
+        });
+
+        renderTimetable(staffName, events);
+        const modal = new bootstrap.Modal(document.getElementById("ttModal"));
+        modal.show();
+      }
+
+      function renderTimetable(staffName, events) {
+        document.getElementById(
+          "ttTitle"
+        ).textContent = `Timetable — ${staffName}`;
+        const container = document.getElementById("ttContainer");
+        container.innerHTML = ""; // reset
+
+        // Build grid: Mon–Fri, 8:00–20:00
+        const days = ["MON", "TUES", "WED", "THURS", "FRI"];
+        const startHour = 8,
+          endHour = 20; // 8am-8pm
+        const table = document.createElement("table");
+        table.className = "tt-grid table";
+
+        const thead = document.createElement("thead");
+        const hr = document.createElement("tr");
+        const thEmpty = document.createElement("th");
+        thEmpty.className = "tt-time";
+        thEmpty.textContent = "TIME";
+        hr.appendChild(thEmpty);
+        days.forEach((d) => {
+          const th = document.createElement("th");
+          th.textContent = d;
+          hr.appendChild(th);
+        });
+        thead.appendChild(hr);
+
+        const tbody = document.createElement("tbody");
+        for (let h = startHour; h <= endHour; h++) {
+          const tr = document.createElement("tr");
+          const timeLabel = document.createElement("td");
+          timeLabel.className = "tt-time";
+          timeLabel.textContent = formatHour(h);
+          tr.appendChild(timeLabel);
+          for (let d = 0; d < days.length; d++) {
+            const td = document.createElement("td");
+            td.className = "tt-slot";
+            td.dataset.day = days[d];
+            td.dataset.hour = h;
+            tr.appendChild(td);
+          }
+          tbody.appendChild(tr);
+        }
+
+        table.appendChild(thead);
+        table.appendChild(tbody);
+        container.appendChild(table);
+
+        // Place events
+        events.forEach((ev) => {
+          const dIdx = dayIndex(ev.day);
+          if (dIdx === -1) return;
+          const start = parseTimeToFloat(ev.time); // e.g., 13.5 for 1:30 PM
+          if (isNaN(start)) return;
+
+          const hour = Math.floor(start);
+          const minuteOffset = (start - hour) * 60; // minutes part
+          // find the cell td for this day/hour
+          const td = tbody.querySelector(
+            `td.tt-slot[data-day="${days[dIdx]}"][data-hour="${hour}"]`
+          );
+          if (!td) return;
+
+          const evDiv = document.createElement("div");
+          evDiv.className = "tt-event";
+          evDiv.style.top = `${(minuteOffset / 60) * 56}px`;
+          evDiv.style.height = `${Math.max(28, (ev.dur / 60) * 56 - 4)}px`; // minimum visual height
+          const label = [
+            unitCode || "",
+            ev.act || "",
+            ev.loc ? `— ${ev.loc}` : "",
+            ev.weeks ? ` (${ev.weeks})` : "",
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .trim();
+          evDiv.textContent = label || "Class";
+          td.appendChild(evDiv);
+        });
+      }
+
+      function formatHour(h) {
+        const ampm = h < 12 ? "AM" : "PM";
+        const hr = ((h + 11) % 12) + 1;
+        return `${hr}:00 ${ampm}`;
+      }
+      function dayIndex(dayStr) {
+        const s = String(dayStr || "")
+          .trim()
+          .toLowerCase();
+        if (s.startsWith("mon")) return 0;
+        if (s.startsWith("tue")) return 1;
+        if (s.startsWith("wed")) return 2;
+        if (s.startsWith("thu")) return 3;
+        if (s.startsWith("fri")) return 4;
+        return -1;
+      }
+      function parseTimeToFloat(t) {
+        // accept "13:30", "1:30 PM", "12:00", etc.
+        const s = String(t || "").trim();
+        const m = s.match(/(\d{1,2}):?(\d{2})?\s*(AM|PM|am|pm)?/);
+        if (!m) return NaN;
+        let hh = parseInt(m[1], 10);
+        const mm = parseInt(m[2] || "0", 10);
+        const ap = m[3] ? m[3].toUpperCase() : null;
+        if (ap === "PM" && hh < 12) hh += 12;
+        if (ap === "AM" && hh === 12) hh = 0;
+        return hh + mm / 60;
+      }
+    </script>
+  </body>
+</html>

@@ -42,6 +42,13 @@
         font-weight: 600;
         letter-spacing: 0.2px;
       }
+      a.rowlink {
+        text-decoration: none;
+        color: inherit;
+      }
+      a.rowlink:hover {
+        text-decoration: underline;
+      }
     </style>
   </head>
   <body>
@@ -50,6 +57,7 @@
         <h1 class="h5 fw-semibold mb-4">Web Based Tutor Allocation System</h1>
 
         <div class="d-flex flex-column align-items-center gap-2">
+          <!-- EOI upload (your original flow) -->
           <input
             id="eoiFile"
             type="file"
@@ -65,13 +73,26 @@
           </button>
           <div id="fileName" class="file-note"></div>
 
-          <a href="signin.html" class="btn btn-success btn-pill btn-wide mt-2">
+          <!-- Tutor Allocations upload -->
+          <input
+            id="allocFile"
+            type="file"
+            class="d-none"
+            accept=".xlsx,.xls,.csv"
+          />
+          <button
+            id="btnProceedAlloc"
+            class="btn btn-success btn-pill btn-wide mt-2"
+            type="button"
+          >
             Proceed to Tutor Allocation
-          </a>
+          </button>
+          <div id="allocFileName" class="file-note"></div>
         </div>
       </div>
     </div>
 
+    <!-- EOI units (Code + Name only) -->
     <div id="unitsSection" class="container table-wrap hidden">
       <div class="mb-2">
         <div class="section-title">Computing And Information Systems Units</div>
@@ -90,7 +111,30 @@
       <div id="recordCount" class="small text-muted"></div>
     </div>
 
+    <!-- Tutor Allocations: Code | Name | Staffs -->
+    <div id="allocSection" class="container table-wrap hidden">
+      <div class="mb-2">
+        <div class="section-title">
+          Computing And Information Systems Units For Semester 2, 2025
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-bordered align-middle">
+          <thead class="table-light">
+            <tr>
+              <th style="width: 160px">Code</th>
+              <th>Name</th>
+              <th style="width: 280px">Staffs</th>
+            </tr>
+          </thead>
+          <tbody id="allocBody"></tbody>
+        </table>
+      </div>
+      <div id="allocCount" class="small text-muted"></div>
+    </div>
+
     <script>
+      /* ---------------- EOI (your working flow) ---------------- */
       const btnUpload = document.getElementById("btnUpload");
       const eoiFile = document.getElementById("eoiFile");
       const fileNameEl = document.getElementById("fileName");
@@ -112,10 +156,8 @@
         reader.onload = (e) => {
           let wb;
           if (isCSV) wb = XLSX.read(e.target.result, { type: "string" });
-          else {
-            const data = new Uint8Array(e.target.result);
-            wb = XLSX.read(data, { type: "array" });
-          }
+          else
+            wb = XLSX.read(new Uint8Array(e.target.result), { type: "array" });
           onWorkbookLoaded(wb);
         };
         isCSV ? reader.readAsText(f) : reader.readAsArrayBuffer(f);
@@ -123,7 +165,6 @@
 
       function onWorkbookLoaded(wb) {
         workbook = wb;
-        // Convert each sheet to AOA (array-of-arrays) and store in localStorage
         const payload = {};
         wb.SheetNames.forEach((name) => {
           payload[name] = XLSX.utils.sheet_to_json(wb.Sheets[name], {
@@ -131,9 +172,10 @@
             defval: "",
           });
         });
-        localStorage.setItem("eoi_sheets_aoa", JSON.stringify(payload));
+        try {
+          localStorage.setItem("eoi_sheets_aoa", JSON.stringify(payload));
+        } catch {}
 
-        // Build unit list from B1 (e.g., "KIT107 Programming")
         unitSheets = wb.SheetNames.map((sheetName) => {
           const sheet = wb.Sheets[sheetName];
           let b1 = sheet["B1"]
@@ -161,7 +203,6 @@
           return { sheetName, code, name, title };
         });
 
-        // dedupe + sort
         const seen = new Set();
         unitSheets = unitSheets
           .filter((u) => {
@@ -189,10 +230,10 @@
           )}&name=${encodeURIComponent(u.name)}`;
           const tr = document.createElement("tr");
           tr.innerHTML = `
-          <td class="fw-semibold"><a class="text-decoration-none" href="${url}">${
+            <td class="fw-semibold"><a class="text-decoration-none" href="${url}">${
             u.code || ""
           }</a></td>
-          <td><a class="text-decoration-none" href="${url}">${
+            <td><a class="text-decoration-none" href="${url}">${
             u.name || ""
           }</a></td>`;
           unitsBody.appendChild(tr);
@@ -213,6 +254,223 @@
             if (/^[A-Za-z]{3}\d{3,}\s+.+$/.test(v)) return v;
           }
         return "";
+      }
+
+      /* -------- Tutor Allocations flow (with per-click sheet stash) -------- */
+      let __allocAOA = null; // in-memory copy of allocations workbook (AOA per sheet)
+
+      const btnProceedAlloc = document.getElementById("btnProceedAlloc");
+      const allocFile = document.getElementById("allocFile");
+      const allocFileName = document.getElementById("allocFileName");
+      const allocSection = document.getElementById("allocSection");
+      const allocBody = document.getElementById("allocBody");
+      const allocCount = document.getElementById("allocCount");
+
+      btnProceedAlloc.addEventListener("click", () => allocFile.click());
+
+      allocFile.addEventListener("change", () => {
+        const f = allocFile.files?.[0];
+        if (!f) return;
+        allocFileName.textContent = f.name;
+
+        const reader = new FileReader();
+        const isCSV = /\.csv$/i.test(f.name);
+        reader.onload = (e) => {
+          let wb;
+          if (isCSV) wb = XLSX.read(e.target.result, { type: "string" });
+          else
+            wb = XLSX.read(new Uint8Array(e.target.result), { type: "array" });
+
+          // Build AOA per sheet and keep in memory
+          __allocAOA = {};
+          wb.SheetNames.forEach((n) => {
+            __allocAOA[n] = XLSX.utils.sheet_to_json(wb.Sheets[n], {
+              header: 1,
+              defval: "",
+            });
+          });
+          // optional persistent cache
+          try {
+            localStorage.setItem(
+              "alloc_sheets_aoa",
+              JSON.stringify(__allocAOA)
+            );
+          } catch {}
+
+          const list = buildAllocList(wb);
+          renderAlloc(list);
+        };
+        isCSV ? reader.readAsText(f) : reader.readAsArrayBuffer(f);
+      });
+
+      // tolerant header detection
+      function buildAllocList(wb) {
+        const out = [];
+
+        wb.SheetNames.forEach((sheetName) => {
+          const sh = wb.Sheets[sheetName];
+          const aoa = XLSX.utils.sheet_to_json(sh, { header: 1, defval: "" });
+          if (!aoa.length) return;
+
+          const wanted = [
+            "subject_code",
+            "subject code",
+            "subject_description",
+            "subject description",
+            "activity_code",
+            "campus",
+            "location",
+            "staff",
+            "staffs",
+            "tutor",
+            "tutors",
+            "teacher",
+            "instructor",
+          ];
+          let h = -1;
+          let cols = { code: -1, name: -1, staff: -1 };
+
+          for (let r = 0; r < Math.min(200, aoa.length); r++) {
+            const lower = aoa[r].map((c) => String(c).trim().toLowerCase());
+            const hits = wanted.filter((w) => lower.includes(w)).length;
+            if (hits >= 2) {
+              h = r;
+              cols.code = indexOfAny(lower, ["subject_code", "subject code"]);
+              cols.name = indexOfAny(lower, [
+                "subject_description",
+                "subject description",
+                "unit name",
+                "subject name",
+              ]);
+              cols.staff = indexOfAny(lower, [
+                "staff",
+                "staffs",
+                "tutor",
+                "tutors",
+                "teacher",
+                "instructor",
+              ]);
+              break;
+            }
+          }
+
+          let code = "",
+            name = "",
+            staffStr = "";
+
+          if (h !== -1) {
+            // first non-empty row after header
+            for (let r = h + 1; r < aoa.length; r++) {
+              const row = aoa[r];
+              if (row.some((x) => String(x).trim() !== "")) {
+                if (cols.code >= 0) {
+                  const raw = String(row[cols.code] || "").trim();
+                  const m = raw.match(/[A-Za-z]{3}\d{3}/);
+                  code = m ? m[0] : raw;
+                }
+                if (cols.name >= 0) name = String(row[cols.name] || "").trim();
+                break;
+              }
+            }
+            if (cols.staff >= 0) {
+              const names = [];
+              for (let r = h + 1; r < aoa.length; r++) {
+                const v = (aoa[r][cols.staff] || "").toString().trim();
+                if (!v) continue;
+                v.split(/[;,/]+/)
+                  .map((s) => s.trim())
+                  .filter(Boolean)
+                  .forEach((n) => {
+                    if (!names.includes(n)) names.push(n);
+                  });
+              }
+              staffStr = names.slice(0, 3).join(", ");
+            }
+          }
+
+          // fallbacks
+          if (!code) {
+            const b1 = sh["B1"]
+              ? String(sh["B1"].v || sh["B1"].w || "").trim()
+              : "";
+            const m1 = b1.match(/[A-Za-z]{3}\d{3}/);
+            if (m1) code = m1[0];
+          }
+          if (!code) {
+            const mm = sheetName.match(/[A-Za-z]{3}\d{3}/);
+            if (mm) code = mm[0];
+          }
+          if (!name) name = sheetName;
+
+          if (code || name)
+            out.push({ sheetName, code, name, staff: staffStr });
+        });
+
+        return out.filter((r) => r.code || r.name);
+
+        function indexOfAny(arr, keys) {
+          for (const k of keys) {
+            const i = arr.indexOf(k);
+            if (i !== -1) return i;
+          }
+          return -1;
+        }
+      }
+
+      function renderAlloc(list) {
+        allocBody.innerHTML = "";
+        const seen = new Set();
+        const uniq = list
+          .filter((r) => {
+            const k = `${r.code}||${r.name}`;
+            if (seen.has(k)) return false;
+            seen.add(k);
+            return true;
+          })
+          .sort(
+            (a, b) =>
+              (a.code || "").localeCompare(b.code || "") ||
+              (a.name || "").localeCompare(b.name || "")
+          );
+
+        uniq.forEach((r) => {
+          const href = `allocationdetails.html?sheet=${encodeURIComponent(
+            r.sheetName
+          )}&code=${encodeURIComponent(r.code)}&name=${encodeURIComponent(
+            r.name
+          )}`;
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td class="fw-semibold"><a class="rowlink" href="${href}">${
+            r.code || ""
+          }</a></td>
+            <td><a class="rowlink" href="${href}">${r.name || ""}</a></td>
+            <td><a class="rowlink" href="${href}"><strong>${
+            r.staff || ""
+          }</strong></a></td>`;
+
+          // Stash just THIS sheet to sessionStorage before navigating
+          tr.querySelectorAll("a").forEach((a) => {
+            a.addEventListener("click", () => {
+              try {
+                if (__allocAOA && __allocAOA[r.sheetName]) {
+                  sessionStorage.setItem(
+                    "alloc_sheet_current",
+                    JSON.stringify({
+                      key: r.sheetName,
+                      rows: __allocAOA[r.sheetName],
+                    })
+                  );
+                }
+              } catch (_) {}
+            });
+          });
+
+          allocBody.appendChild(tr);
+        });
+
+        allocSection.classList.remove("hidden");
+        allocCount.textContent = `${uniq.length} Records Found`;
       }
     </script>
   </body>
