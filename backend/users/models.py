@@ -188,7 +188,7 @@ class UserManager(BaseUserManager):
             UserRoles = self.model._meta.apps.get_model('users', 'UserRoles')
             
             # Define essential roles that can be auto-created
-            essential_roles = ['Admin', 'Member', 'Student', 'Lecturer']
+            essential_roles = ['Admin', 'Coordinator', 'Tutor', 'Support', 'Member']
             
             # Get or create the role (only for essential roles)
             try:
@@ -210,31 +210,19 @@ class UserManager(BaseUserManager):
                 disabled_roles = []
                 
                 for user_role in previous_roles:
-                    if user_role.role.role_name != role_name:  # Don't disable if it's the same role
-                        user_role.disable()
-                        disabled_roles.append(user_role.role.role_name)
+                    user_role.disable()
+                    disabled_roles.append(user_role.role.role_name)
                 
                 if disabled_roles:
                     console.print(f"[yellow]• Disabled previous roles for {user.email}: {', '.join(disabled_roles)}[/yellow]")
                 
-                # Check if user already has this role (might be inactive)
-                existing_role, created = UserRoles.objects.get_or_create(
+                # ALWAYS create a new UserRole instance for proper auditing trail
+                new_role = UserRoles.objects.create(
                     user=user,
                     role=role,
-                    defaults={'is_active': True}
+                    is_active=True
                 )
-                
-                if not created:
-                    if not existing_role.is_active:
-                        # Reactivate the role
-                        existing_role.is_active = True
-                        existing_role.disabled_at = None
-                        existing_role.save()
-                        console.print(f"[green]✓ Reactivated role {role_name} for user {user.email}[/green]")
-                    else:
-                        console.print(f"[yellow]• User {user.email} already has active role {role_name}[/yellow]")
-                else:
-                    console.print(f"[green]✓ Assigned role {role_name} to user {user.email}[/green]")
+                console.print(f"[green]✓ Created new role assignment {role_name} for user {user.email}[/green]")
             
         except Exception as e:
             console.print(f"[red]✗ Error assigning role to user:[/red] {str(e)}")
@@ -327,12 +315,24 @@ class User(AbstractBaseUser):
         User.objects._assign_role_to_user(self, role_name)
     
     def remove_role(self, role_name):
-        """Remove/disable a role from this user."""
+        """Remove/disable a role from this user and assign Member role if no active roles remain."""
         try:
             role = Role.objects.get(role_name=role_name)
             user_role = UserRoles.objects.get(user=self, role=role, is_active=True)
             user_role.disable()
             console.print(f"[yellow]• Removed role {role_name} from user {self.email}[/yellow]")
+            
+            # Check if user has any remaining active roles
+            remaining_roles = UserRoles.objects.filter(user=self, is_active=True)
+            if not remaining_roles.exists():
+                # Assign Member role as fallback (always create new instance)
+                try:
+                    member_role = Role.objects.get(role_name='Member')
+                    UserRoles.objects.create(user=self, role=member_role, is_active=True)
+                    console.print(f"[green]✓ Created new Member role assignment for user {self.email} (fallback)[/green]")
+                except Role.DoesNotExist:
+                    console.print(f"[red]Error: Member role does not exist! User {self.email} has no active roles[/red]")
+            
             return True
         except (Role.DoesNotExist, UserRoles.DoesNotExist):
             console.print(f"[red]✗ User {self.email} does not have active role {role_name}[/red]")

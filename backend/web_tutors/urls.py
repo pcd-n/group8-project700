@@ -1,7 +1,7 @@
 """
 URL configuration for web_tutors project.
 
-The urlpatterns list routes URLs to views. For more information please see:
+The `urlpatterns` list routes URLs to views. For more information please see:
     https://docs.djangoproject.com/en/5.2/topics/http/urls/
 Examples:
 Function views
@@ -18,7 +18,6 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import include, path, re_path
 from django.http import JsonResponse
-from oauth2_provider import urls as oauth2_urls
 from drf_spectacular.views import (
     SpectacularAPIView,
     SpectacularRedocView,
@@ -44,7 +43,7 @@ def home_view(request):
                 "ReDoc": "/api/redoc/",
                 "OpenAPI Schema": "/api/schema/"
             },
-            "🔐 Authentication": "/o/",
+            "🔐 Authentication": "/api/users/",
             "👥 User Management": "/api/users/",
             "📋 Academic Units": "/api/units/",
             "📝 Expression of Interest": "/api/eoi/",
@@ -77,7 +76,6 @@ def home_view(request):
 urlpatterns = [
     path("", home_view, name="home"),  # Home page showing OK status
     path("admin/", admin.site.urls),
-    path("o/", include(oauth2_urls, namespace="oauth2_provider")),
     # API Documentation
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),

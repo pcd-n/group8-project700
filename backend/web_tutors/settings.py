@@ -60,7 +60,6 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'oauth2_provider',
     'rest_framework',
     'rest_framework_simplejwt',
     'drf_spectacular',
@@ -85,7 +84,6 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'oauth2_provider.middleware.OAuth2TokenMiddleware',
     'allauth.account.middleware.AccountMiddleware',
 ]
 SOCIALACCOUNT_PROVIDERS = {
@@ -125,9 +123,9 @@ WSGI_APPLICATION = 'web_tutors.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': os.getenv('DEV_DB', 'web_tutors_mariadb'),
-        'USER': os.getenv('DEV_USER', 'root'),
-        'PASSWORD': os.getenv('DEV_PASSWORD', ''),
+        'NAME': os.getenv('DEV_DB', ),
+        'USER': os.getenv('DEV_USER', ),
+        'PASSWORD': os.getenv('DEV_PASSWORD'),
         'HOST': os.getenv('DB_HOST', '127.0.0.1'),
         'PORT': os.getenv('DB_PORT', '3306'),
         'OPTIONS': {
@@ -136,10 +134,10 @@ DATABASES = {
             'use_unicode': True,
         },
         'TEST': {
-            'NAME': os.getenv('DEV_DB', 'web_tutors_mariadb'),  # Use same database for testing
+            'NAME': os.getenv('DEV_DB'),  # Use same database for testing
             'CREATE_DB': False,  # Don't create separate test database
-            'USER': os.getenv('DEV_USER', 'root'),
-            'PASSWORD': os.getenv('DEV_PASSWORD', ''),
+            'USER': os.getenv('DEV_USER', ),
+            'PASSWORD': os.getenv('DEV_PASSWORD', ),
             'HOST': os.getenv('DB_HOST', '127.0.0.1'),
             'PORT': os.getenv('DB_PORT', '3306'),
             'OPTIONS': {
@@ -259,25 +257,25 @@ LOGGING = {
             'level': 'INFO',
             'formatter': 'simple',
         },
-        'file': {
-            'class': 'logging.FileHandler',
-            'filename': 'web_tutors.log',
-            'level': 'INFO',
-            'formatter': 'verbose',
-        },
+        # 'file': {
+        #     'class': 'logging.FileHandler',
+        #     'filename': 'web_tutors.log',
+        #     'level': 'INFO',
+        #     'formatter': 'verbose',
+        # },
     },
     'root': {
         'level': 'INFO',
-        'handlers': ['console', 'file'],
+        'handlers': ['console'],
     },
     'loggers': {
         'django': {
-            'handlers': ['console', 'file'],
+            'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,
         },
         'accounts': {
-            'handlers': ['console', 'file'],
+            'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,
         },
@@ -293,16 +291,12 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
         'rest_framework.authentication.SessionAuthentication',
-        'oauth2_provider.contrib.rest_framework.OAuth2Authentication',
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
 }
 
-OAUTH2_PROVIDER = {
-    # this is the list of available scopes
-    'SCOPES': {'read': 'Read scope', 'write': 'Write scope', 'groups': 'Access to your groups'}
-}
+
 # Swagger/OpenAPI Configuration
 SPECTACULAR_SETTINGS = {
     'TITLE': f'{PROJECT_TITLE} API',
@@ -312,71 +306,42 @@ SPECTACULAR_SETTINGS = {
     'SCHEMA_PATH_PREFIX': '/api/',
     'COMPONENT_SPLIT_REQUEST': True,
     'SORT_OPERATIONS': False,
+    'ENABLE_DJANGO_DEPLOY_CHECK': False,
+    'AUTO_SCHEMA_ENABLED': True,
+    'SCHEMA_COERCION_PATH_PK_SUFFIX': True,
     'SWAGGER_UI_SETTINGS': {
         'deepLinking': True,
         'persistAuthorization': True,
-        'displayOperationId': True,
-        'defaultModelsExpandDepth': 2,
-        'defaultModelExpandDepth': 2,
-        'docExpansion': 'list',
+        'displayOperationId': False,
+        'defaultModelsExpandDepth': 3,
+        'defaultModelExpandDepth': 3,
+        'docExpansion': 'none',
         'filter': True,
         'showExtensions': True,
         'showCommonExtensions': True,
+        'displayRequestDuration': True,
+        'tryItOutEnabled': True,
+        'requestSnippetsEnabled': True,
+        'supportedSubmitMethods': ['get', 'post', 'put', 'delete'],
+        'validatorUrl': None,
     },
     'REDOC_UI_SETTINGS': {
         'hideDownloadButton': False,
         'expandResponses': 'all',
         'pathInMiddlePanel': True,
-        'theme': {
-            'colors': {
-                'primary': {
-                    'main': '#2196F3'
-                }
-            }
-        }
-    },
-    # OAuth2 Configuration for Swagger
-    'AUTHENTICATION_WHITELIST': [
-        'oauth2_provider.contrib.rest_framework.OAuth2Authentication',
-        'rest_framework.authentication.SessionAuthentication',
-    ],
-    'OAUTH2_FLOWS': {
-        'authorizationCode': {
-            'authorizationUrl': '/o/authorize/',
-            'tokenUrl': '/o/token/',
-            'scopes': {
-                'read': 'Read access',
-                'write': 'Write access',
-            }
-        }
     },
     'SECURITY': [
         {
-            'OAuth2': ['read', 'write']
-        },
-        {
-            'SessionAuth': []
+            'bearerAuth': []
         }
     ],
     'APPEND_COMPONENTS': {
         'securitySchemes': {
-            'OAuth2': {
-                'type': 'oauth2',
-                'flows': {
-                    'authorizationCode': {
-                        'authorizationUrl': '/o/authorize/',
-                        'tokenUrl': '/o/token/',
-                        'scopes': {
-                            'read': 'Read access',
-                            'write': 'Write access',
-                        }
-                    }
-                }
-            },
-            'SessionAuth': {
-                'type': 'apiKey',
-                'in': 'cookie',
-                'name': 'sessionid'
+            'bearerAuth': {
+                'type': 'http',
+                'scheme': 'bearer',
+                'bearerFormat': 'JWT',
+                'description': 'JWT Token authentication. Get token from /api/users/login/ endpoint'
             }
         }
     }

@@ -19,7 +19,7 @@ from django.contrib.auth import get_user_model
 def create_superuser():
     User = get_user_model()
     admin_username = os.getenv('DEV_ADMIN_USER', 'devadmin')
-    password = os.getenv('DEV_ADMIN_USER_PASSWORD')
+    password = os.getenv('DEV_ADMIN_USER_PASSWORD', 'admin123!')
     email = f"{admin_username}@example.com"
     first_name = os.getenv('DEV_ADMIN_FIRST_NAME', 'Admin')
     last_name = os.getenv('DEV_ADMIN_LAST_NAME', 'User')

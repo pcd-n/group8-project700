@@ -93,10 +93,10 @@ class Command(BaseCommand):
                 # Determine course information
                 if unit_code.startswith('KIT'):
                     # Determine level and type from the subject code
-                    if 'H' in subject_code:
+                    if '_H_' in subject_code:
                         campus_code = 'H'  # Hobart
                         campus_name = 'SB'
-                    elif 'L' in subject_code:
+                    elif '_L_' in subject_code:
                         campus_code = 'L'  # Launceston
                         campus_name = 'IR'
                     else:
@@ -237,10 +237,10 @@ class Command(BaseCommand):
                 unit_code = unit_code_match.group(1)
                 
                 # Determine course code and campus
-                if 'H' in subject_code:
+                if '_H_' in subject_code:
                     campus_code = 'H'
                     campus_name = 'SB'
-                elif 'L' in subject_code:
+                elif '_L_' in subject_code:
                     campus_code = 'L'
                     campus_name = 'IR'
                 else:
