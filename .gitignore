@@ -18,3 +18,9 @@ logs/
 *.log
 # VS Code
 .vscode/
+
+backend/web_tutors.log
+__pycache__/
+.coverage
+.pytest_cache/
+.mypy_cache/

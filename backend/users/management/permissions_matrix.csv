@@ -1,0 +1,49 @@
+resource,action,admin,coordinator,tutor,support,member,description
+allocations,create,TRUE,TRUE,FALSE,FALSE,FALSE,Create allocations assigning tutors to class slots (coordinators: own units).
+allocations,delete,TRUE,FALSE,FALSE,FALSE,FALSE,Delete erroneous allocations.
+allocations,update,TRUE,TRUE,FALSE,FALSE,FALSE,"Update allocations, reassign, or override clashes (coordinators: own units; actions are audited)."
+allocations,view,TRUE,TRUE,TRUE,TRUE,TRUE,View allocations dashboard (admin/support: all units; coordinator: own units; tutor/member: self).
+audit,create,FALSE,FALSE,FALSE,FALSE,FALSE,System-generated only; cannot be created manually.
+audit,delete,FALSE,FALSE,FALSE,FALSE,FALSE,Immutable — cannot be deleted.
+audit,update,FALSE,FALSE,FALSE,FALSE,FALSE,Immutable — cannot be edited.
+audit,view,TRUE,FALSE,FALSE,TRUE,FALSE,View immutable audit trail (admin/support).
+dashboard,create,FALSE,FALSE,FALSE,FALSE,FALSE,Not applicable — dashboard is derived from data.
+dashboard,delete,FALSE,FALSE,FALSE,FALSE,FALSE,Not applicable — cannot delete dashboards.
+dashboard,update,FALSE,FALSE,FALSE,FALSE,FALSE,Not applicable — dashboard configuration is managed by admins elsewhere.
+dashboard,view,TRUE,TRUE,TRUE,TRUE,TRUE,View allocation/metrics dashboards (role-scoped).
+datasets_batch_update,create,FALSE,FALSE,FALSE,FALSE,FALSE,Not applicable.
+datasets_batch_update,delete,FALSE,FALSE,FALSE,FALSE,FALSE,Not applicable.
+datasets_batch_update,update,TRUE,FALSE,FALSE,FALSE,FALSE,Perform batch updates via template uploads.
+datasets_batch_update,view,FALSE,FALSE,FALSE,FALSE,FALSE,Not applicable.
+datasets_formatted_export,create,TRUE,TRUE,FALSE,TRUE,TRUE,Generate formatted .xlsx reports (coordinator: own units; member: read-only filters).
+datasets_formatted_export,delete,FALSE,FALSE,FALSE,FALSE,FALSE,Not applicable.
+datasets_formatted_export,update,FALSE,FALSE,FALSE,FALSE,FALSE,Not applicable.
+datasets_formatted_export,view,FALSE,FALSE,FALSE,FALSE,FALSE,Not applicable.
+datasets_raw_export,create,TRUE,FALSE,FALSE,TRUE,FALSE,Generate raw CSV datasets for analysis.
+datasets_raw_export,delete,FALSE,FALSE,FALSE,FALSE,FALSE,Not applicable.
+datasets_raw_export,update,FALSE,FALSE,FALSE,FALSE,FALSE,Not applicable.
+datasets_raw_export,view,FALSE,FALSE,FALSE,FALSE,FALSE,Not applicable.
+eoi,create,TRUE,FALSE,FALSE,TRUE,FALSE,Ingest EOIs/master lists via CSV/XLSX with validation.
+eoi,delete,TRUE,FALSE,FALSE,FALSE,FALSE,Delete erroneous EOI records or imports.
+eoi,update,TRUE,FALSE,FALSE,FALSE,FALSE,Edit EOI records or fix validation issues.
+eoi,view,TRUE,TRUE,FALSE,TRUE,TRUE,View and filter EOIs/applicants (coordinator: own units; member: read-only).
+profile_self,create,FALSE,FALSE,FALSE,FALSE,FALSE,Not applicable.
+profile_self,delete,FALSE,FALSE,FALSE,FALSE,FALSE,Not applicable.
+profile_self,update,FALSE,FALSE,FALSE,FALSE,FALSE,Self-edit not enabled; changes handled by Admin.
+profile_self,view,TRUE,TRUE,TRUE,TRUE,TRUE,View own profile and allocations.
+ranking,create,TRUE,TRUE,FALSE,FALSE,FALSE,Create rankings/shortlists for units.
+ranking,delete,TRUE,FALSE,FALSE,FALSE,FALSE,Remove obsolete rankings.
+ranking,update,TRUE,TRUE,FALSE,FALSE,FALSE,Update rankings or adjust criteria (coordinators: own units).
+ranking,view,TRUE,TRUE,FALSE,FALSE,FALSE,View rankings and criteria (coordinators: own units).
+roles,create,TRUE,FALSE,FALSE,FALSE,FALSE,Create roles and define permission grants (RBAC).
+roles,delete,TRUE,FALSE,FALSE,FALSE,FALSE,Delete roles that are no longer used.
+roles,update,TRUE,FALSE,FALSE,FALSE,FALSE,Modify roles or permission mappings.
+roles,view,TRUE,FALSE,FALSE,FALSE,FALSE,View RBAC configuration (roles and permissions).
+timetable,create,TRUE,FALSE,FALSE,TRUE,FALSE,Import master timetable for a term.
+timetable,delete,TRUE,FALSE,FALSE,FALSE,FALSE,Delete faulty timetable imports.
+timetable,update,TRUE,FALSE,FALSE,TRUE,FALSE,Refresh or correct timetable records.
+timetable,view,TRUE,TRUE,FALSE,TRUE,FALSE,View timetable data for planning.
+users,create,TRUE,FALSE,FALSE,FALSE,FALSE,Create new user accounts and assign roles.
+users,delete,TRUE,FALSE,FALSE,FALSE,FALSE,Deactivate or delete user accounts.
+users,update,TRUE,FALSE,FALSE,FALSE,FALSE,"Edit any user's details, status, or roles."
+users,view,TRUE,FALSE,FALSE,FALSE,FALSE,View any user's profile and directory details.
