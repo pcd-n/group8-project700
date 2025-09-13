@@ -1,0 +1,6 @@
+.env
+.venv
+.mypy_cache
+
+
+login_git.sh
