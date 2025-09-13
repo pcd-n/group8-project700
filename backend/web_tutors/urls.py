@@ -86,7 +86,7 @@ urlpatterns = [
         path("units/", include("units.urls")),
         path("eoi/", include("eoi.urls")),
         path("timetable/", include("timetable.urls")),
-
+        path("allocation/", include("allocation.urls")),
         path("dashboard/", include("dashboard.urls")),  # Note: using actual directory name "dasboard"
     ])),
      path('accounts/', include('allauth.urls')),
