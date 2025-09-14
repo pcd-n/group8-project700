@@ -1,5 +1,6 @@
 from django.urls import path
+from .views import EOIUploadView
 
 urlpatterns = [
-    # Add your URL patterns here for eoi app
+    path("upload/", EOIUploadView.as_view(), name="eoi-upload"),
 ]

@@ -48,7 +48,7 @@ CSRF_TRUSTED_ORIGINS = [
 ]
 # Project Configuration
 PROJECT_TITLE = os.getenv('PROJECT_TITLE', 'Web Tutors')
-PROJECT_DESCRIPTION = "Web Tutors - Online Learning Platform Backend"
+PROJECT_DESCRIPTION = "Project 8 - Tutors Allocation Platform"
 PROJECT_VERSION = "1.0.0"
 
 # Admin Site Configuration
@@ -79,7 +79,7 @@ INSTALLED_APPS = [
 
     # Pham: added allocation
     "allocation.apps.AllocationConfig",
-
+    "imports",
 
     # allauth
     'allauth',
@@ -128,6 +128,10 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'web_tutors.wsgi.application'
 
+# Pham: for uploading feature
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+DATA_UPLOAD_MAX_MEMORY_SIZE = 25 * 1024 * 1024  # 25MB
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases

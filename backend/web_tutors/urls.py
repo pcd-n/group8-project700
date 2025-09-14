@@ -24,6 +24,8 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 
+from django.conf import settings
+from django.conf.urls.static import static
 
 def home_view(request):
     """Simple home view that returns OK status"""
@@ -86,11 +88,12 @@ urlpatterns = [
         path("units/", include("units.urls")),
         path("eoi/", include("eoi.urls")),
         path("timetable/", include("timetable.urls")),
-        
-        # Pham: added path for allocation feature
+
+        # Pham: added path for features
         path("allocation/", include("allocation.urls")), 
+        path("imports/", include("imports.urls")),
 
         path("dashboard/", include("dashboard.urls")),  # Note: using actual directory name "dasboard"
     ])),
      path('accounts/', include('allauth.urls')),
-]
+] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
