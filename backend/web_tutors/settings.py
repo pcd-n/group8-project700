@@ -38,9 +38,14 @@ DEBUG = True
 ALLOWED_HOSTS = [
     "localhost",
     "127.0.0.1",
-    "10.36.241.172", 
+    "10.36.241.172",
+    "testlab-dev-172.cis.utas.edu.au",
     ]
 
+CSRF_TRUSTED_ORIGINS = [
+    "http://testlab-dev-172.cis.utas.edu.au",
+    "http://10.36.241.172",
+]
 # Project Configuration
 PROJECT_TITLE = os.getenv('PROJECT_TITLE', 'Web Tutors')
 PROJECT_DESCRIPTION = "Web Tutors - Online Learning Platform Backend"
