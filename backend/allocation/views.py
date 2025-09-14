@@ -1,5 +1,5 @@
 from django.shortcuts import get_object_or_404
-from rest_framework import generics, status
+from rest_framework import generics, status, serializers
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -8,11 +8,34 @@ from .models import Allocation
 from eoi.models import EoiApp
 from .serializers import AllocationSerializer, ManualAssignSerializer
 from timetable.models import TimeTable
+from timetable.serializers import TimeTableSessionSerializer
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
 
+class AssignSer(serializers.Serializer):
+    session_id = serializers.IntegerField()
+    tutor_id = serializers.IntegerField()
+    preference = serializers.IntegerField(required=False, default=0)
 
+class AssignTutor(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        ser = AssignSer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        tt = TimeTable.objects.get(pk=ser.validated_data["session_id"])
+        tutor = User.objects.get(pk=ser.validated_data["tutor_id"])
+        alloc, _ = Allocation.objects.get_or_create(
+            session=tt, tutor=tutor, defaults={"created_by": request.user}
+        )
+        # update optional fields
+        alloc.preference = ser.validated_data.get("preference", alloc.preference)
+        alloc.status = "completed"
+        alloc.approved = False
+        alloc.save()
+        return Response({"ok": True, "allocation_id": alloc.id}, status=status.HTTP_200_OK)
+    
 class AllocationListView(generics.ListAPIView):
     """
     List all allocations in a semester (filter by year/term).
@@ -143,3 +166,15 @@ class TutorTimetableView(APIView):
         tutor = request.user if tutor_id is None else get_object_or_404(User, pk=tutor_id)
         qs = Allocation.objects.filter(tutor=tutor, approved=True)
         return Response(AllocationSerializer(qs, many=True).data)
+
+class SessionsByUnitCode(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        code = request.query_params.get("unit_code")
+        if not code:
+            return Response([], status=200)
+
+        qs = TimeTable.objects.filter(unit__unit_code__iexact=code).select_related("unit").prefetch_related("allocations__tutor")
+        data = TimeTableSessionSerializer(qs, many=True).data
+        return Response(data, status=200)

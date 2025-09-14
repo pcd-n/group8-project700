@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.db import transaction
 from django.utils import timezone
-from .models import Subject, ActivityGroup, TimetableEntry, TimetableImport
+from .models import Subject, ActivityGroup, TimetableEntry, TimetableImport, TimeTable
 from units.serializers import UnitSerializer
 from users.serializers import CampusSerializer, UserSerializer
 
@@ -242,3 +242,24 @@ class TimetableBulkImportSerializer(serializers.Serializer):
             'error_rows': error_rows,
             'error_log': '\n'.join(error_log)
         }
+
+class TimeTableSessionSerializer(serializers.ModelSerializer):
+    session_id = serializers.IntegerField(source="id", read_only=True)
+    activity_code = serializers.CharField(source="activity_code", required=False)
+    campus = serializers.CharField(required=False)
+    day_of_week = serializers.CharField(source="day", required=False)
+    start_time = serializers.CharField(required=False)
+    duration = serializers.IntegerField(required=False)
+    location = serializers.CharField(required=False)
+    weeks = serializers.CharField(required=False)
+    staff = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TimeTable
+        fields = ["session_id","activity_code","campus","day_of_week",
+                  "start_time","duration","location","weeks","staff"]
+
+    def get_staff(self, obj):
+        # If you already create Allocation rows, return the names on this slot:
+        # obj.allocations is Allocation queryset via related_name="allocations"
+        return [alloc.tutor.get_full_name() or alloc.tutor.email for alloc in obj.allocations.all()]

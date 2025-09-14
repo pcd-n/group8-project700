@@ -26,6 +26,7 @@ from drf_spectacular.views import (
 
 from django.conf import settings
 from django.conf.urls.static import static
+from django.views.generic import TemplateView
 
 def home_view(request):
     """Simple home view that returns OK status"""
@@ -78,6 +79,13 @@ def home_view(request):
 urlpatterns = [
     path("", home_view, name="home"),  # Home page showing OK status
     path("admin/", admin.site.urls),
+
+    # Frontend pages served by Django Templates
+    path("", TemplateView.as_view(template_name="index.html"), name="index"),          # login page
+    path("home/", TemplateView.as_view(template_name="home.html"), name="home"),
+    path("units/<int:id>/", TemplateView.as_view(template_name="unitdetails.html"), name="unit_details"),
+    path("allocations/<int:id>/", TemplateView.as_view(template_name="allocationdetails.html"), name="alloc_details"),
+
     # API Documentation
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),

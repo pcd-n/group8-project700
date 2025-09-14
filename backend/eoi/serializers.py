@@ -1,7 +1,6 @@
 from rest_framework import serializers
 from .models import EoiApp, MasterEoI, TutorsCourses, TutorSkills, TutorSupervisors
 
-
 class EoiAppSerializer(serializers.ModelSerializer):
     """Serializer for EoiApp model."""
     applicant_email = serializers.CharField(source='applicant_user.email', read_only=True)
