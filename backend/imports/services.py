@@ -10,11 +10,10 @@ import pandas as pd
 from django.db import transaction
 from django.utils import timezone
 
-# --- Project models (adjust imports only if your paths differ) ---
 from users.models import User, Campus
 from units.models import Unit, Course, UnitCourse
 from eoi.models import EoiApp
-from timetable.models import MasterClassTime, Timetable, TimetableImportLog
+from timetable.models import MasterClassTime, TimeTable, TimetableImportLog
 
 
 # =========================
@@ -450,7 +449,7 @@ def import_tutorial_allocations_xlsx(file_like, job, using: str):
                 created_at=timezone.now(),
             )
 
-            Timetable.objects.using(using).update_or_create(
+            TimeTable.objects.using(using).update_or_create(
                 **lookup, defaults=defaults
             )
             stats.inc()

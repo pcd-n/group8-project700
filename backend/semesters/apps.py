@@ -5,9 +5,4 @@ class SemestersConfig(AppConfig):
     name = "semesters"
 
     def ready(self):
-        # At startup, load configured semester DB connections into Django
-        from .services import hydrate_runtime_databases
-        try:
-            hydrate_runtime_databases()
-        except Exception:
-            pass
+        pass

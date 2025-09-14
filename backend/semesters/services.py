@@ -1,8 +1,13 @@
 import os
 from django.conf import settings
-from django.db import connections
+from django.db import connections, OperationalError
 from django.core.management import call_command
 from .models import Semester
+
+_hydrated_flag = False
+
+def is_hydrated() -> bool:
+    return _hydrated_flag
 
 def _mysql_base_conf():
     # Reuse default connection credentials for new DBs
@@ -23,14 +28,25 @@ def _build_db_settings(db_name: str):
 
 def hydrate_runtime_databases():
     """
-    At runtime, add all known semester DBs into settings.DATABASES so Django can use them.
-    Also set CURRENT_SEMESTER_ALIAS.
+    Add all known semester DBs into settings.DATABASES.
+    Safe to call multiple times; no-ops after first success.
     """
-    for sem in Semester.objects.all():
-        settings.DATABASES[sem.alias] = _build_db_settings(sem.db_name)
-    current = Semester.objects.filter(is_current=True).first()
-    if current:
-        settings.CURRENT_SEMESTER_ALIAS = current.alias
+    from django.conf import settings
+    global _hydrated_flag
+    if _hydrated_flag:
+        return
+
+    try:
+        for sem in Semester.objects.all():
+            settings.DATABASES[sem.alias] = _build_db_settings(sem.db_name)
+        current = Semester.objects.filter(is_current=True).first()
+        if current:
+            settings.CURRENT_SEMESTER_ALIAS = current.alias
+        _hydrated_flag = True
+    except Exception:
+        # Happens during initial migrate when the semesters table doesn't exist yet.
+        # We'll try again on the next request.
+        _hydrated_flag = False
 
 def create_semester_db(*, year: int, term: str, make_current: bool):
     """
