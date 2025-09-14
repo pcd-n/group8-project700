@@ -36,8 +36,10 @@ SECRET_KEY = 'django-insecure-gl-04#lerai64h7r#d6$93m27t)9f&_2gfnqv%+=1fo1r74j*c
 DEBUG = True
 
 ALLOWED_HOSTS = [
-    
-]
+    "localhost",
+    "127.0.0.1",
+    "10.36.241.172", 
+    ]
 
 # Project Configuration
 PROJECT_TITLE = os.getenv('PROJECT_TITLE', 'Web Tutors')
