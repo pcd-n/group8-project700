@@ -1,269 +1,476 @@
-import io
+# imports/services.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Dict, Iterable, Tuple
+import re
+import uuid
+
 import pandas as pd
-from django.utils import timezone
 from django.db import transaction
+from django.utils import timezone
+
+# --- Project models (adjust imports only if your paths differ) ---
 from users.models import User, Campus
-from units.models import Unit, UnitCourse, Course
-from timetable.models import MasterClassTime, TimeTable
-from eoi.models import EoiApp  # your SCD-II model
+from units.models import Unit, Course, UnitCourse
+from eoi.models import EoiApp
+from timetable.models import MasterClassTime, Timetable, TimetableImportLog
 
-# Helpers
-def _norm(s):
-    if pd.isna(s):
-        return None
-    if isinstance(s, str):
-        return s.strip()
-    return s
 
-def _parse_time(x):
-    if pd.isna(x):
+# =========================
+# Header validation helpers
+# =========================
+
+REQUIRED_COLUMNS: Dict[str, set[str]] = {
+    "eoi": {
+        "tutor_email",
+        "unit_code",
+        "preference",
+        "campus",
+        "qualifications",
+        "availability",
+    },
+    "master_classes": {
+        "subject_code",
+        "subject_description",
+        "activity_group_code",
+        "activity_code",
+        "activity_description",
+        "campus",
+        "location",
+        "day_of_week",
+        "start_time",
+        "weeks",
+        "staff",
+        "size",
+    },
+    "tutorial_allocations": {
+        "unit_code",
+        "day_of_week",
+        "start_time",
+        "end_time",
+        "room",
+        "tutor_email",
+    },
+}
+
+# Flexible synonyms so slightly different headers still map correctly
+HEADER_SYNONYMS: Dict[str, set[str]] = {
+    # generic
+    "tutor_email": {"TutorEmail", "Email", "Applicant", "ApplicantEmail", "applicant", "applicant_email"},
+    "unit_code": {"UnitCode", "Unit", "Unit Code", "subject_code"},
+    "preference": {"Preference", "Rank", "Priority"},
+    "campus": {"Campus", "Location"},
+    "qualifications": {"Qualifications", "Notes", "Experience"},
+    "availability": {"Availability", "Available", "Times"},
+    # master classes
+    "subject_description": {"SubjectDescription", "Subject Name", "Unit Name"},
+    "activity_group_code": {"ActivityGroup", "GroupCode", "Group"},
+    "activity_code": {"ActivityCode", "Activity"},
+    "activity_description": {"ActivityDescription", "Activity Desc"},
+    "location": {"Location", "RoomLocation"},
+    "day_of_week": {"Day", "DayOfWeek"},
+    "start_time": {"Start", "StartTime"},
+    "weeks": {"Weeks", "TeachingWeeks"},
+    "staff": {"Staff", "StaffName", "Lecturer"},
+    "size": {"Size", "Capacity"},
+    "end_time": {"End", "EndTime"},
+    "room": {"Room", "Location"},
+}
+
+
+def _strip(s) -> str:
+    return str(s).strip() if s is not None else ""
+
+
+def _normalise_headers(df: pd.DataFrame) -> Dict[str, str]:
+    """
+    Returns a mapping {wanted_key -> actual_column_name_in_df}
+    """
+    mapping: Dict[str, str] = {}
+    dfcols = [str(c).strip() for c in df.columns]
+    lower_to_actual = {c.lower(): c for c in dfcols}
+
+    for want in set().union(*REQUIRED_COLUMNS.values()) | set(HEADER_SYNONYMS.keys()):
+        # exact lowercase match
+        if want.lower() in lower_to_actual:
+            mapping[want] = lower_to_actual[want.lower()]
+            continue
+        # synonyms
+        for syn in HEADER_SYNONYMS.get(want, set()):
+            if syn in dfcols:
+                mapping[want] = syn
+                break
+    return mapping
+
+
+def _validate_headers(kind: str, df: pd.DataFrame) -> Dict[str, str]:
+    mapping = _normalise_headers(df)
+    missing = [c for c in REQUIRED_COLUMNS[kind] if c not in mapping]
+    if missing:
+        raise ValueError(
+            f"Spreadsheet is missing required columns for '{kind}': {', '.join(missing)}"
+        )
+    return mapping
+
+
+# ============
+# Conversions
+# ============
+
+DAY_ALIASES = {
+    "mon": "Monday",
+    "monday": "Monday",
+    "tue": "Tuesday",
+    "tues": "Tuesday",
+    "tuesday": "Tuesday",
+    "wed": "Wednesday",
+    "wednesday": "Wednesday",
+    "thu": "Thursday",
+    "thur": "Thursday",
+    "thurs": "Thursday",
+    "thursday": "Thursday",
+    "fri": "Friday",
+    "friday": "Friday",
+    "sat": "Saturday",
+    "saturday": "Saturday",
+    "sun": "Sunday",
+    "sunday": "Sunday",
+}
+
+
+def _as_day_name(s: str) -> str:
+    if not s:
+        return s
+    key = s.strip().lower()
+    return DAY_ALIASES.get(key, s.strip())
+
+
+def _as_time(cell) -> str:
+    """
+    Return 'HH:MM:SS' string; supports Excel/strings/pandas time.
+    """
+    if pd.isna(cell):
         return None
-    # handle 9:00 / 09:00 / datetime.time etc.
-    if hasattr(x, "hour"):
-        return x
+    # If already a time-like string
+    text = str(cell).strip()
+    m = re.match(r"^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?$", text, re.IGNORECASE)
+    if m:
+        h = int(m.group(1))
+        mi = int(m.group(2))
+        se = int(m.group(3) or 0)
+        ampm = m.group(4)
+        if ampm:
+            ampm = ampm.lower()
+            if ampm == "pm" and h < 12:
+                h += 12
+            if ampm == "am" and h == 12:
+                h = 0
+        return f"{h:02d}:{mi:02d}:{se:02d}"
+    # pandas datetime/time
     try:
-        return pd.to_datetime(str(x)).time()
+        ts = pd.to_datetime(cell)
+        return ts.strftime("%H:%M:%S")
     except Exception:
-        return None
+        return text  # last resort; DB layer may still coerce
 
-def _choice_day(s):
-    # Map free-text to your DAY_CHOICES in TimeTable
-    m = {"MON":"MON","TUE":"TUE","WED":"WED","THU":"THU","FRI":"FRI","SAT":"SAT","SUN":"SUN"}
-    key = str(s or "").strip().upper()[:3]
-    return m.get(key)
 
-# ========== EOI import ==========
-@transaction.atomic
-def import_eoi_xlsx(fobj, job):
+# ==================
+# Logging to control
+# ==================
+
+@dataclass
+class ImportStats:
+    ok: int = 0
+    err: int = 0
+    errors: list[str] = None
+
+    def __post_init__(self):
+        if self.errors is None:
+            self.errors = []
+
+    def log(self, msg: str):
+        self.errors.append(msg)
+        self.err += 1
+
+    def inc(self):
+        self.ok += 1
+
+
+def _create_log(filename: str, uploaded_by: User) -> TimetableImportLog:
+    # Keep logs on default DB
+    return TimetableImportLog.objects.create(
+        import_id=uuid.uuid4(),
+        filename=filename,
+        status="RUNNING",
+        total_rows=0,
+        processed_rows=0,
+        error_rows=0,
+        error_log="",
+        uploaded_by=uploaded_by,
+        created_at=timezone.now(),
+    )
+
+
+def _finalise_log(log: TimetableImportLog, stats: ImportStats, total: int, ok_status: str):
+    log.total_rows = total
+    log.processed_rows = stats.ok
+    log.error_rows = stats.err
+    log.error_log = "\n".join(stats.errors)
+    log.status = "COMPLETED" if stats.err == 0 else "COMPLETED_WITH_ERRORS"
+    log.completed_at = timezone.now()
+    log.save(update_fields=[
+        "total_rows", "processed_rows", "error_rows", "error_log", "status", "completed_at"
+    ])
+
+
+# ================
+# EOI import logic
+# ================
+
+def import_eoi_xlsx(file_like, job, using: str):
     """
-    Accepts either 'Casual Master EOI Spreadsheet.xlsx' or 'Casual EOI Spreadsheet.xlsx'.
-    Expected columns (best-effort, tolerant to naming):
-    - TutorEmail / Email
-    - UnitCode
-    - Preference (1,2,3…)
-    - Campus (SB/IR/Hobart/Launceston)
-    - Qualifications
-    - Availability
+    Import EOI applications.
+    Writes go to semester DB given by `using`.
+    The job object itself (and log) remains on default DB.
     """
-    df = pd.read_excel(fobj, engine="openpyxl")
-    job.rows_total = len(df.index)
+    df = pd.read_excel(file_like)
+    col = _validate_headers("eoi", df)
 
-    col = {c.lower().strip(): c for c in df.columns}
-    get = lambda *names: next((col[n.lower()] for n in names if n.lower() in col), None)
+    stats = ImportStats()
+    log = _create_log(getattr(job.file, "name", "eoi.xlsx"), job.created_by)
 
-    c_email = get("TutorEmail","Email","applicant","applicant_email")
-    c_unit  = get("UnitCode","Unit","Unit Code")
-    c_pref  = get("Preference","Rank","Priority")
-    c_campus= get("Campus","Location")
-    c_qua   = get("Qualifications","Notes","Experience")
-    c_avail = get("Availability","Available","Times")
-
-    ok = err = 0
-    logs = []
-
+    total = len(df)
     for i, row in df.iterrows():
         try:
-            email = _norm(row.get(c_email)) if c_email else None
-            unit_code = _norm(row.get(c_unit)) if c_unit else None
-            pref = int(row.get(c_pref)) if c_pref and pd.notna(row.get(c_pref)) else 0
-            campus_name = _norm(row.get(c_campus)) if c_campus else None
-            qual = _norm(row.get(c_qua)) if c_qua else ""
-            avail = _norm(row.get(c_avail)) if c_avail else ""
+            email = _strip(row[col["tutor_email"]]).lower()
+            unit_code = _strip(row[col["unit_code"]])
+            campus_name = _strip(row[col["campus"]])
+            pref = int(row[col["preference"]]) if pd.notna(row[col["preference"]]) else None
+            quals = _strip(row[col["qualifications"]])
+            avail = _strip(row[col["availability"]])
 
             if not email or not unit_code:
-                raise ValueError("Missing email/unit")
+                raise ValueError("Missing tutor_email or unit_code")
 
             user = User.objects.filter(email__iexact=email).first()
             if not user:
-                raise ValueError(f"User not found: {email}")
+                raise ValueError(f"No user with email {email}")
 
-            unit = Unit.objects.filter(unit_code__iexact=unit_code).first()
+            unit = Unit.objects.using(using).filter(unit_code__iexact=unit_code).first()
             if not unit:
-                raise ValueError(f"Unit not found: {unit_code}")
+                # try default units if shared
+                unit = Unit.objects.filter(unit_code__iexact=unit_code).first()
+            if not unit:
+                raise ValueError(f"No unit '{unit_code}'")
 
             campus = None
             if campus_name:
                 campus = Campus.objects.filter(campus_name__iexact=campus_name).first()
 
-            # Pick the current UnitCourse if any (S2/Year match not provided here)
-            uc = UnitCourse.objects.filter(unit=unit).order_by("-year","-created_at").first()
-
-            # Create/append SCD-II row: use business key eoi_app_id per your model logic
-            app = EoiApp(
+            # Upsert by (applicant_user, unit) as a reasonable natural key
+            defaults = {
+                "status": "Submitted",
+                "remarks": "",
+                "valid_from": timezone.now(),
+                "is_current": True,
+                "version": 1,
+                "campus": campus,
+                "availability": avail or None,
+                "preference": pref or 0,
+                "qualifications": quals or None,
+                "updated_at": timezone.now(),
+                "created_at": timezone.now(),
+            }
+            # ensure .using(using) writes into semester DB
+            EoiApp.objects.using(using).update_or_create(
                 applicant_user=user,
                 unit=unit,
-                campus=campus,
-                status="Submitted",
-                remarks="Imported from spreadsheet",
-                preference=pref,
-                qualifications=qual,
-                availability=avail,
+                defaults=defaults,
             )
-            app.save()  # model handles versioning
-            ok += 1
+            stats.inc()
         except Exception as ex:
-            err += 1
-            logs.append(f"Row {i+2}: {ex}")
+            stats.log(f"Row {i + 2}: {ex}")
 
-    job.rows_ok = ok
-    job.rows_error = err
-    job.log = "\n".join(logs)
-    job.ok = err == 0
+    _finalise_log(log, stats, total, ok_status="EOI")
+    job.rows_ok = stats.ok
+    job.rows_error = stats.err
+    job.ok = stats.err == 0
     job.finished_at = timezone.now()
-    job.save()
-    return job
+    job.save(update_fields=["rows_ok", "rows_error", "ok", "finished_at"])
 
-# ========== Master Classes import ==========
-@transaction.atomic
-def import_master_classes_xlsx(fobj, job):
+
+# ===========================
+# Master class times (MCT) import
+# ===========================
+
+def import_master_classes_xlsx(file_like, job, using: str):
     """
-    Parse 'Master class List.xlsx' into MasterClassTime.
-    Important fields in your table: subject_code, activity_code, campus, day_of_week,
-    start_time, duration, size, buffer, adjusted_size, etc.  :contentReference[oaicite:2]{index=2}
+    Import MasterClassTime rows (teaching activities/timetable templates).
     """
-    df = pd.read_excel(fobj, engine="openpyxl")
-    job.rows_total = len(df.index)
-    col = {c.lower().strip(): c for c in df.columns}
-    get = lambda *names: next((col[n.lower()] for n in names if n.lower() in col), None)
+    df = pd.read_excel(file_like)
+    col = _validate_headers("master_classes", df)
 
-    c_subj = get("Subject Code","SubjectCode","Unit Code","UnitCode")
-    c_desc = get("Subject Description","Description")
-    c_fac  = get("Faculty")
-    c_group= get("Activity Group Code","Group")
-    c_act  = get("Activity Code","Activity")
-    c_actd = get("Activity Description")
-    c_camp = get("Campus")
-    c_loc  = get("Location","Room")
-    c_day  = get("Day","Day of Week")
-    c_start= get("Start","Start Time")
-    c_weeks= get("Weeks")
-    c_teach= get("Teaching Weeks","TeachingWeeks")
-    c_dur  = get("Duration","Duration (mins)")
-    c_staff= get("Staff")
-    c_size = get("Size","Capacity")
-    c_buff = get("Buffer")
-    c_adj  = get("Adjusted Size","AdjustedSize")
-    c_stu  = get("Student Count","Students")
-    c_con  = get("Constraint Count","Constraints")
-    c_cluster = get("Cluster")
-    c_group2  = get("Group Code","Group")
+    stats = ImportStats()
+    log = _create_log(getattr(job.file, "name", "master_classes.xlsx"), job.created_by)
 
-    ok = err = 0
-    logs = []
-
+    total = len(df)
     for i, row in df.iterrows():
         try:
-            m = MasterClassTime(
-                subject_code=_norm(row.get(c_subj)),
-                subject_description=_norm(row.get(c_desc)) or "",
-                faculty=_norm(row.get(c_fac)) or "",
-                activity_group_code=_norm(row.get(c_group)) or "",
-                activity_code=_norm(row.get(c_act)) or "",
-                activity_description=_norm(row.get(c_actd)) or "",
-                campus=_norm(row.get(c_camp)) or "",
-                location=_norm(row.get(c_loc)) or "",
-                day_of_week=_norm(row.get(c_day)) or "",
-                start_time=_parse_time(row.get(c_start)),
-                weeks=_norm(row.get(c_weeks)) or "",
-                teaching_weeks=int(row.get(c_teach) or 0),
-                duration=int(row.get(c_dur) or 0),
-                staff=_norm(row.get(c_staff)) or "",
-                size=int(row.get(c_size) or 0),
-                buffer=int(row.get(c_buff) or 0),
-                adjusted_size=int(row.get(c_adj) or 0),
-                student_count=int(row.get(c_stu) or 0),
-                constraint_count=int(row.get(c_con) or 0),
-                cluster=_norm(row.get(c_cluster)) or "",
-                group=_norm(row.get(c_group2)) or "",
-                show_on_timetable=True,
-                available_for_allocation=True,
-            )
-            # upsert by unique (subject_code, activity_code, campus) per your model constraint :contentReference[oaicite:3]{index=3}
-            MasterClassTime.objects.update_or_create(
-                subject_code=m.subject_code, activity_code=m.activity_code, campus=m.campus,
-                defaults=m.__dict__
-            )
-            ok += 1
-        except Exception as ex:
-            err += 1
-            logs.append(f"Row {i+2}: {ex}")
+            subject_code = _strip(row[col["subject_code"]])
+            subject_description = _strip(row[col["subject_description"]])
+            activity_group_code = _strip(row[col["activity_group_code"]])
+            activity_code = _strip(row[col["activity_code"]])
+            activity_description = _strip(row[col["activity_description"]])
+            campus = _strip(row[col["campus"]])
+            location = _strip(row[col["location"]])
+            day = _as_day_name(_strip(row[col["day_of_week"]]))
+            start = _as_time(row[col["start_time"]])
+            weeks = _strip(row[col["weeks"]])
+            staff = _strip(row[col["staff"]])
+            size = int(row[col["size"]]) if pd.notna(row[col["size"]]) else 0
 
-    job.rows_ok = ok
-    job.rows_error = err
-    job.log = "\n".join(logs)
-    job.ok = err == 0
-    job.finished_at = timezone.now()
-    job.save()
-    return job
+            if not subject_code or not activity_group_code or not activity_code or not day or not start:
+                raise ValueError("Missing one of required identifying fields")
 
-# ========== Tutorial Allocations seed (optional) ==========
-@transaction.atomic
-def import_tutorial_allocations_xlsx(fobj, job):
-    """
-    Optionally seed TimeTable rows from a “Tutorial Allocations.xlsx”
-    (one row per class slot), mapping staff into `tutor_user` when email matches.
-    Table & fields per your TimeTable model.  :contentReference[oaicite:4]{index=4}
-    """
-    df = pd.read_excel(fobj, engine="openpyxl")
-    job.rows_total = len(df.index)
-    col = {c.lower().strip(): c for c in df.columns}
-    get = lambda *names: next((col[n.lower()] for n in names if n.lower() in col), None)
-
-    c_unit  = get("UnitCode","Unit Code")
-    c_course= get("CourseCode","Course")
-    c_campus= get("Campus")
-    c_room  = get("Room","Location")
-    c_day   = get("Day")
-    c_start = get("Start","Start Time")
-    c_end   = get("End","End Time")
-    c_staff = get("Staff","TutorEmail","Tutor")
-
-    ok = err = 0
-    logs = []
-
-    for i, row in df.iterrows():
-        try:
-            unit_code = _norm(row.get(c_unit))
-            course_code = _norm(row.get(c_course))
-            campus_name = _norm(row.get(c_campus))
-            day = _choice_day(row.get(c_day))
-            start = _parse_time(row.get(c_start))
-            end = _parse_time(row.get(c_end))
-            room = _norm(row.get(c_room)) or ""
-
-            unit = Unit.objects.filter(unit_code__iexact=unit_code).first()
-            course = Course.objects.filter(course_code__iexact=course_code).first()
-            campus = Campus.objects.filter(campus_name__iexact=campus_name).first()
-
-            if not (unit and course and campus and day and start and end):
-                raise ValueError("Missing unit/course/campus/day/time")
-
-            uc = UnitCourse.objects.filter(unit=unit, course=course, campus=campus).order_by("-year").first()
-            if not uc:
-                raise ValueError("UnitCourse not found")
-
-            tutor_user = None
-            staff_val = _norm(row.get(c_staff))
-            if staff_val and "@" in staff_val:
-                tutor_user = User.objects.filter(email__iexact=staff_val).first()
-
-            # create or update slot uniqueness per constraint (unit_course, campus, day_of_week, start_time)
-            slot, _ = TimeTable.objects.update_or_create(
-                unit_course=uc,
-                campus=campus,
+            # Use a natural key for upsert
+            lookup = dict(
+                subject_code=subject_code,
+                activity_group_code=activity_group_code,
+                activity_code=activity_code,
                 day_of_week=day,
                 start_time=start,
-                defaults=dict(room=room, end_time=end, tutor_user=tutor_user),
             )
-            ok += 1
+            defaults = dict(
+                subject_description=subject_description,
+                activity_description=activity_description,
+                campus=campus,
+                location=location,
+                weeks=weeks,
+                staff=staff,
+                size=size,
+                # sensible defaults for nullable/extra fields
+                faculty="",
+                duration=0,
+                buffer=0,
+                adjusted_size=size,
+                student_count=0,
+                constraint_count=0,
+                cluster="",
+                group="",
+                show_on_timetable=True,
+                available_for_allocation=True,
+                updated_at=timezone.now(),
+                created_at=timezone.now(),
+            )
+            MasterClassTime.objects.using(using).update_or_create(
+                **lookup, defaults=defaults
+            )
+            stats.inc()
         except Exception as ex:
-            err += 1
-            logs.append(f"Row {i+2}: {ex}")
+            stats.log(f"Row {i + 2}: {ex}")
 
-    job.rows_ok = ok
-    job.rows_error = err
-    job.log = "\n".join(logs)
-    job.ok = err == 0
+    _finalise_log(log, stats, total, ok_status="MASTER_CLASSES")
+    job.rows_ok = stats.ok
+    job.rows_error = stats.err
+    job.ok = stats.err == 0
     job.finished_at = timezone.now()
-    job.save()
-    return job
+    job.save(update_fields=["rows_ok", "rows_error", "ok", "finished_at"])
+
+
+# ===========================
+# Tutorial allocations import
+# ===========================
+
+def _resolve_current_unit_course(using: str, unit: Unit) -> UnitCourse | None:
+    """
+    Pick a reasonable UnitCourse (latest year then created_at) for the given unit.
+    """
+    qs = UnitCourse.objects.using(using).filter(unit=unit).order_by("-year", "-created_at")
+    return qs.first()
+
+
+def import_tutorial_allocations_xlsx(file_like, job, using: str):
+    """
+    Import Timetable rows (allocations) and attach tutors when possible.
+    """
+    df = pd.read_excel(file_like)
+    col = _validate_headers("tutorial_allocations", df)
+
+    stats = ImportStats()
+    log = _create_log(getattr(job.file, "name", "tutorial_allocations.xlsx"), job.created_by)
+
+    total = len(df)
+    for i, row in df.iterrows():
+        try:
+            unit_code = _strip(row[col["unit_code"]])
+            day = _as_day_name(_strip(row[col["day_of_week"]]))
+            start = _as_time(row[col["start_time"]])
+            end = _as_time(row[col["end_time"]])
+            room = _strip(row[col["room"]])
+            email = _strip(row[col["tutor_email"]]).lower()
+
+            if not unit_code or not day or not start or not end:
+                raise ValueError("Missing unit_code/day_of_week/start_time/end_time")
+
+            unit = Unit.objects.using(using).filter(unit_code__iexact=unit_code).first()
+            if not unit:
+                unit = Unit.objects.filter(unit_code__iexact=unit_code).first()
+            if not unit:
+                raise ValueError(f"No unit '{unit_code}'")
+
+            uc = _resolve_current_unit_course(using, unit)
+            if not uc:
+                raise ValueError(f"No UnitCourse found for unit '{unit_code}' in current semester")
+
+            tutor = User.objects.filter(email__iexact=email).first() if email else None
+
+            # Try to find a matching MCT; if not found we still create a Timetable entry
+            mct = MasterClassTime.objects.using(using).filter(
+                subject_code__iexact=unit_code,
+                day_of_week=day,
+                start_time=start,
+            ).first()
+
+            # Natural key for timetable upsert
+            lookup = dict(
+                unit_course=uc,
+                day_of_week=day,
+                start_time=start,
+                room=room or "",
+            )
+            defaults = dict(
+                end_time=end,
+                start_date=None,
+                end_date=None,
+                campus=uc.campus if hasattr(uc, "campus") else None,
+                master_class=mct,
+                tutor_user=tutor,
+                updated_at=timezone.now(),
+                created_at=timezone.now(),
+            )
+
+            Timetable.objects.using(using).update_or_create(
+                **lookup, defaults=defaults
+            )
+            stats.inc()
+        except Exception as ex:
+            stats.log(f"Row {i + 2}: {ex}")
+
+    _finalise_log(log, stats, total, ok_status="ALLOCATIONS")
+    job.rows_ok = stats.ok
+    job.rows_error = stats.err
+    job.ok = stats.err == 0
+    job.finished_at = timezone.now()
+    job.save(update_fields=["rows_ok", "rows_error", "ok", "finished_at"])
+
+
+# =================
+# Import dispatcher
+# =================
+
+IMPORT_DISPATCH = {
+    "eoi": import_eoi_xlsx,
+    "master_classes": import_master_classes_xlsx,
+    "tutorial_allocations": import_tutorial_allocations_xlsx,
+}

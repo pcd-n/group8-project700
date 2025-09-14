@@ -65,6 +65,36 @@
     <div>
       <h1 class="h5 fw-semibold mb-4">Web Based Tutor Allocation System</h1>
 
+      <!-- Visible only to admins in JS once we fetch /api/users/me or decode JWT -->
+      <div id="adminSemesterTools" class="card mb-3 d-none">
+        <div class="card-body">
+          <h5 class="card-title">Semester Databases</h5>
+          <div class="row g-2 align-items-end">
+            <div class="col-auto">
+              <label class="form-label">Create new</label>
+              <div class="input-group">
+                <input id="semYear" type="number" class="form-control" placeholder="Year e.g. 2026" />
+                <select id="semTerm" class="form-select">
+                  <option value="S1">Semester 1</option>
+                  <option value="S2">Semester 2</option>
+                  <option value="S3">Semester 3</option>
+                  <option value="S4">Semester 4</option>
+                </select>
+                <button id="btnCreateSem" class="btn btn-primary">Create & set current</button>
+              </div>
+            </div>
+            <div class="col-auto">
+              <label class="form-label">View semester (read-only)</label>
+              <div class="input-group">
+                <select id="semView" class="form-select"></select>
+                <button id="btnViewApply" class="btn btn-outline-secondary">Apply</button>
+                <button id="btnViewReset" class="btn btn-outline-secondary">Current</button>
+              </div>
+            </div>
+          </div>
+          <small class="text-muted">Uploads always go to the current semester. Old semesters are view-only.</small>
+        </div>
+      </div>
       <div class="d-flex flex-column align-items-center gap-2">
         <!-- EOI upload (original flow) -->
         <input id="eoiFile" type="file" class="d-none" accept=".xlsx,.xls,.csv" />
@@ -125,36 +155,165 @@
   </div>
 
   <script>
-    // --- real backend endpoints found in your code ---
+    // =========================
+    // Auth + request utilities
+    // =========================
     const API = {
       base: "/api",
-      importsUpload: "/imports/upload/",            // expects FormData: { import_type, file }
-      // alt: eoiUpload: "/eoi/upload/"             // also supported, but imports/upload handles all
+      // imports
+      importsUpload: "/imports/upload/", // FormData: { import_type, file }
+      // semesters
+      semestersList: "/semesters/",
+      semestersCreate: "/semesters/create/",
+      semestersSelect: "/semesters/select/",
+      // (optional) whoami endpoint — used to show/hide admin tools if available
+      meCandidates: ["/users/me/", "/me/"],
     };
 
-    function token() { return localStorage.getItem("access"); }
-    function authHeaders(extra = {}) {
-      const t = token();
-      return t ? { ...extra, Authorization: `Bearer ${t}` } : extra;
-    }
-    async function apiPostForm(path, formData) {
+    const token = () => localStorage.getItem("access");
+    const authHeaders = (extra = {}) =>
+      token() ? { ...extra, Authorization: `Bearer ${token()}` } : extra;
+
+    async function apiGet(path) {
       const res = await fetch(`${API.base}${path}`, {
-        method: "POST",
-        headers: authHeaders(),     // leave Content-Type unset for FormData
-        body: formData
+        headers: authHeaders(),
+        credentials: "include",
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || err.error || `Upload failed (${res.status})`);
-      }
+      if (!res.ok) throw new Error(`GET ${path} failed (${res.status})`);
       return res.json();
     }
 
-    document.addEventListener("DOMContentLoaded", () => {
-      if (!token()) { window.location.href = "/"; }
+    async function apiPostJSON(path, body) {
+      const res = await fetch(`${API.base}${path}`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        credentials: "include",
+        body: JSON.stringify(body),
+      });
+      let payload = null;
+      try { payload = await res.json(); } catch { }
+      if (!res.ok) throw new Error(payload?.detail || payload?.error || `POST ${path} failed (${res.status})`);
+      return payload ?? {};
+    }
+
+    async function apiPostForm(path, formData) {
+      const res = await fetch(`${API.base}${path}`, {
+        method: "POST",
+        headers: authHeaders(),
+        credentials: "include",
+        body: formData,
+      });
+      let payload = null;
+      try { payload = await res.json(); } catch { }
+      if (!res.ok) throw new Error(payload?.detail || payload?.error || `Upload failed (${res.status})`);
+      return payload ?? {};
+    }
+
+    // =========================
+    // Admin tools visibility
+    // =========================
+    const adminCard = document.getElementById("adminSemesterTools");
+    async function maybeShowAdminTools() {
+      // Try a couple of common "me" endpoints; fall back to showing UI (server will still enforce perms)
+      for (const p of API.meCandidates) {
+        try {
+          const me = await apiGet(p);
+          const isAdmin =
+            !!me?.is_staff ||
+            (Array.isArray(me?.roles) && me.roles.includes("Admin")) ||
+            me?.role === "Admin";
+          if (isAdmin) adminCard.classList.remove("d-none");
+          return;
+        } catch { /* try next */ }
+      }
+      // Fallback (minimal change): show; server-side permission will block non-admins on POST
+      adminCard.classList.remove("d-none");
+    }
+
+    // =========================
+    // Semester APIs + UI wiring
+    // =========================
+    const semYearInput = document.getElementById("semYear");
+    const semTermSelect = document.getElementById("semTerm");
+    const btnCreateSem = document.getElementById("btnCreateSem");
+
+    const semViewSelect = document.getElementById("semView");
+    const btnViewApply = document.getElementById("btnViewApply");
+    const btnViewReset = document.getElementById("btnViewReset");
+
+    function labelForTerm(term) {
+      // Accepts either S1/S2/… or full names, returns a compact label for the dropdown
+      const t = String(term || "").toUpperCase().trim();
+      if (t === "S1" || t.includes("SEMESTER 1")) return "S1";
+      if (t === "S2" || t.includes("SEMESTER 2")) return "S2";
+      if (t === "S3" || t.includes("SEMESTER 3")) return "S3";
+      if (t === "S4" || t.includes("SEMESTER 4")) return "S4";
+      if (t.includes("SPRING")) return "SPRING";
+      if (t.includes("SUMMER")) return "SUMMER";
+      if (t.includes("WINTER")) return "WINTER";
+      return term || "TERM";
+    }
+
+    async function loadSemesters() {
+      try {
+        const list = await apiGet(API.semestersList);
+        semViewSelect.innerHTML = "";
+        (list || []).forEach((s) => {
+          const opt = document.createElement("option");
+          opt.value = s.alias; // e.g. backend alias like "2025_S2"
+          const tag = s.is_current ? " (current)" : "";
+          const termLabel = labelForTerm(s.term);
+          opt.textContent = `${s.year} ${termLabel}${tag}`;
+          semViewSelect.appendChild(opt);
+        });
+      } catch (e) {
+        // Non-fatal to the rest of the page
+        console.warn("Failed to load semesters:", e);
+      }
+    }
+
+    btnCreateSem?.addEventListener("click", async () => {
+      const year = Number(semYearInput.value);
+      const term = semTermSelect.value; // S1/S2/S3/S4 (backend maps to full term)
+      if (!year || year < 2000) return alert("Enter a valid year (e.g., 2026).");
+      try {
+        const created = await apiPostJSON(API.semestersCreate, {
+          year,
+          term,
+          make_current: true,
+        });
+        alert(`Created ${created?.year} ${created?.term} and set as current.`);
+        await loadSemesters();
+      } catch (e) {
+        alert(e.message || "Failed to create semester.");
+      }
     });
 
-    /* ---------------- EOI upload (button + file) ---------------- */
+    btnViewApply?.addEventListener("click", async () => {
+      const alias = semViewSelect.value;
+      if (!alias) return;
+      try {
+        await apiPostJSON(API.semestersSelect, { alias });
+        // Reload so the backend-selected DB alias reflects in all reads
+        location.reload();
+      } catch (e) {
+        alert(e.message || "Failed to switch semester view.");
+      }
+    });
+
+    btnViewReset?.addEventListener("click", async () => {
+      try {
+        // Passing null tells backend to clear override and use current semester
+        await apiPostJSON(API.semestersSelect, { alias: null });
+        location.reload();
+      } catch (e) {
+        alert(e.message || "Failed to reset view.");
+      }
+    });
+
+    // =========================
+    // EOI upload -> backend + local preview (unchanged UX)
+    // =========================
     const btnUpload = document.getElementById("btnUpload");
     const eoiFile = document.getElementById("eoiFile");
     const fileNameEl = document.getElementById("fileName");
@@ -165,21 +324,26 @@
       if (!f) return;
       fileNameEl.textContent = f.name;
 
-      // 1) send to backend (real)
+      // 1) send to backend — will write into the CURRENT semester DB
       try {
         const fd = new FormData();
         fd.append("import_type", "eoi");
         fd.append("file", f);
         await apiPostForm(API.importsUpload, fd);
-        // optional toast:
-        // alert("EOI uploaded to server.");
       } catch (e) {
         alert(e.message);
       }
 
-      // 2) keep your existing local preview workflow (unchanged)
+      // 2) local preview keeps your original flow
       parseEOIToLocalPreview(f);
     });
+
+    // === Local EOI preview helpers (existing logic kept) ===
+    const unitsSection = document.getElementById("unitsSection");
+    const unitsBody = document.getElementById("unitsBody");
+    const recordCount = document.getElementById("recordCount");
+    let workbook = null;
+    let unitSheets = [];
 
     function parseEOIToLocalPreview(file) {
       const reader = new FileReader();
@@ -193,21 +357,11 @@
       isCSV ? reader.readAsText(file) : reader.readAsArrayBuffer(file);
     }
 
-    // === everything below here is your existing units preview logic ===
-    const unitsSection = document.getElementById("unitsSection");
-    const unitsBody = document.getElementById("unitsBody");
-    const recordCount = document.getElementById("recordCount");
-    let workbook = null;
-    let unitSheets = [];
-
     function onWorkbookLoaded(wb) {
       workbook = wb;
       const payload = {};
       wb.SheetNames.forEach((name) => {
-        payload[name] = XLSX.utils.sheet_to_json(wb.Sheets[name], {
-          header: 1,
-          defval: "",
-        });
+        payload[name] = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: "" });
       });
       try { localStorage.setItem("eoi_sheets_aoa", JSON.stringify(payload)); } catch { }
 
@@ -263,7 +417,9 @@
       return "";
     }
 
-    /* -------- Tutor Allocations upload (button + file) -------- */
+    // =========================
+    // Tutor allocations upload
+    // =========================
     const btnProceedAlloc = document.getElementById("btnProceedAlloc");
     const allocFile = document.getElementById("allocFile");
     const allocFileName = document.getElementById("allocFileName");
@@ -278,19 +434,17 @@
       if (!f) return;
       allocFileName.textContent = f.name;
 
-      // 1) send to backend (real)
+      // 1) send to backend — will write into the CURRENT semester DB
       try {
         const fd = new FormData();
         fd.append("import_type", "tutorial_allocations");
         fd.append("file", f);
         await apiPostForm(API.importsUpload, fd);
-        // optional toast:
-        // alert("Tutor allocations uploaded to server.");
       } catch (e) {
         alert(e.message);
       }
 
-      // 2) keep your local preview (unchanged)
+      // 2) local preview
       const reader = new FileReader();
       const isCSV = /\.csv$/i.test(f.name);
       reader.onload = (e) => {
@@ -303,13 +457,13 @@
           __allocAOA[n] = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: "" });
         });
         try { localStorage.setItem("alloc_sheets_aoa", JSON.stringify(__allocAOA)); } catch { }
+
         const list = buildAllocList(wb);
         renderAlloc(list);
       };
       isCSV ? reader.readAsText(f) : reader.readAsArrayBuffer(f);
     });
 
-    // === your existing allocation preview helpers (unchanged) ===
     function buildAllocList(wb) {
       const out = [];
       wb.SheetNames.forEach((sheetName) => {
@@ -405,7 +559,17 @@
       allocSection.classList.remove("hidden");
       allocCount.textContent = `${uniq.length} Records Found`;
     }
+
+    // =========================
+    // Page init
+    // =========================
+    document.addEventListener("DOMContentLoaded", async () => {
+      if (!token()) return (window.location.href = "/"); // require login
+      await maybeShowAdminTools();
+      await loadSemesters();
+    });
   </script>
+
 </body>
 
 </html>

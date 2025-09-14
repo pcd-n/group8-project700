@@ -80,9 +80,10 @@ INSTALLED_APPS = [
     'timetable',
     'dashboard',
 
-    # Pham: added allocation
-    "allocation.apps.AllocationConfig",
-    "imports",
+    # Pham: added features
+    'allocation.apps.AllocationConfig',
+    'imports',
+    'semesters',
 
     # allauth
     'allauth',
@@ -100,7 +101,18 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'allauth.account.middleware.AccountMiddleware',
+    'semesters.middleware.SemesterViewAliasMiddleware',
 ]
+
+# All semester DBs will be created with this prefix
+SEMESTER_DB_PREFIX = os.getenv("SEMESTER_DB_PREFIX", "backend_db_")
+
+# Tell Django to route semester apps to the right DBs
+DATABASE_ROUTERS = ["semesters.router.SemesterRouter"]
+
+# On first boot you may not have any Semester rows yet:
+CURRENT_SEMESTER_ALIAS = None  # will be set at runtime by SemestersConfig.ready()
+
 SOCIALACCOUNT_PROVIDERS = {
     'google': {
         'SCOPE': [
