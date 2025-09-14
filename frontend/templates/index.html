@@ -119,6 +119,11 @@
   <script>
     const API_BASE = "/api";
 
+    // Optional: if already logged in, skip the sign-in page
+    document.addEventListener("DOMContentLoaded", () => {
+      if (localStorage.getItem("access")) window.location.href = "/home.html";
+    });
+
     const form = document.getElementById("signinForm");
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -133,26 +138,34 @@
       const password = document.getElementById("password").value;
 
       try {
-        const res = await fetch(`${API_BASE}/users/login/`, {
+        // Call the working token endpoint
+        const res = await fetch(`${API_BASE}/users/token/`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "Accept": "application/json" },
           body: JSON.stringify({ email, password }),
         });
+
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          throw new Error(err.detail || err.error || "Login failed");
+          throw new Error(err.detail || err.error || `Login failed (HTTP ${res.status})`);
         }
-        const data = await res.json(); // { user, tokens: { access, refresh? } }
-        localStorage.setItem("access", data.tokens?.access || "");
-        if (data.tokens?.refresh) localStorage.setItem("refresh", data.tokens.refresh);
-        localStorage.setItem("user", JSON.stringify(data.user || {}));
 
-        window.location.href = "/home/";
+        // Backend returns { access, refresh }
+        const data = await res.json();
+        localStorage.setItem("access", data.access || "");
+        if (data.refresh) localStorage.setItem("refresh", data.refresh);
+
+        // (Optional) clear any stale user cache
+        localStorage.removeItem("user");
+
+        // Go to the protected app
+        window.location.href = "/home.html";
       } catch (err) {
-        alert(err.message);
+        alert(err.message || "Login failed");
       }
     });
   </script>
+
 </body>
 
 </html>
