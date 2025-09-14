@@ -69,6 +69,11 @@ INSTALLED_APPS = [
     'eoi',
     'timetable',
     'dashboard',
+
+    # Pham: added allocation
+    "allocation.apps.AllocationConfig",
+
+
     # allauth
     'allauth',
     'allauth.account',

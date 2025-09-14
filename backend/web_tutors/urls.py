@@ -28,7 +28,7 @@ from drf_spectacular.views import (
 def home_view(request):
     """Simple home view that returns OK status"""
     return JsonResponse({
-        "🎓 Web Tutors - Online Learning Platform": {
+        "🎓 Project 8 - Tutors Allocation Platform": {
             "status": "✅ RUNNING",
             "message": "Backend API is operational and ready to serve requests!",
             "version": "1.0.0",
@@ -86,6 +86,9 @@ urlpatterns = [
         path("units/", include("units.urls")),
         path("eoi/", include("eoi.urls")),
         path("timetable/", include("timetable.urls")),
+        
+        # Pham: added path for allocation feature
+        path("allocation/", include("allocation.urls")), 
 
         path("dashboard/", include("dashboard.urls")),  # Note: using actual directory name "dasboard"
     ])),

@@ -3,7 +3,6 @@ from django.utils import timezone
 from django.core.validators import MinValueValidator
 import uuid
 
-
 class EoiApp(models.Model):
     """
     Expression of Interest Application model with SCD Type II support.
@@ -60,7 +59,23 @@ class EoiApp(models.Model):
         blank=True,
         help_text="Additional notes or comments about the application"
     )
-    
+
+    # Pham: added the 3 followings for 'allocation'
+    preference = models.IntegerField(
+        default=0,
+        help_text="Coordinator-set priority (1 = highest, 2 = next, etc.)"
+    )
+    qualifications = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Tutor qualifications provided via EOI"
+    )
+    availability = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Tutor availability provided via EOI"
+    )
+
     # SCD Type II control fields
     valid_from = models.DateTimeField(
         default=timezone.now,
