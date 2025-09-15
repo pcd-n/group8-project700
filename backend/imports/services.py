@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterable, Dict, Any, Optional, List
+from typing import Iterable, Tuple, Dict, Any, Optional, List
+from datetime import time, datetime
 import re
 import uuid
 
 import pandas as pd
-from django.apps import apps
+from django.apps import apps as django_apps
 from django.db import connections, transaction, models
 from django.core.exceptions import ValidationError
 from django.utils import timezone
@@ -156,7 +157,7 @@ def _best_mapping(model) -> Optional[dict]:
 
 def _find_eoi_destination(using: str):
     try:
-        app_cfg = apps.get_app_config("eoi")
+        app_cfg = django_apps.get_app_config("eoi")
     except LookupError:
         return None, None
 
@@ -416,7 +417,7 @@ def _normalize_workbook_to_rows(fobj) -> List[Dict[str, Any]]:
 
 def _find_eoi_model() -> Optional[Any]:
     try:
-        app_cfg = apps.get_app_config("eoi")
+        app_cfg = django_apps.get_app_config("eoi")
     except LookupError:
         return None
     needed = {"unit_code", "tutor_email", "preference", "campus", "qualifications", "availability"}
@@ -810,6 +811,445 @@ def import_tutorial_allocations_xlsx(file_like, job, using: str):
     job.finished_at = timezone.now()
     job.save(update_fields=["rows_ok", "rows_error", "ok", "finished_at"])
 
+# ==================
+# TUTOR ALLOCATION
+# ==================
+
+# ---------- utility ----------
+
+def _apps_get(app_label: str, model_name: str):
+    return django_apps.get_model(app_label, model_name)
+
+
+def _strip(v: Any) -> str:
+    if v is None:
+        return ""
+    return str(v).strip()
+
+
+def _to_int(value: Any) -> Optional[int]:
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        return int(str(value).strip())
+    except Exception:
+        return None
+
+
+def _to_time(x: Any) -> Optional[time]:
+    """
+    Excel times can arrive as:
+      - Python datetime.time (already OK)
+      - datetime.datetime with a date (take .time())
+      - number (Excel time fraction of a day)
+      - string ("13:00", "1:00 PM")
+    """
+    if x is None or x == "":
+        return None
+    if isinstance(x, time):
+        return x
+    if isinstance(x, datetime):
+        return x.time()
+    # numeric excel time fraction
+    if isinstance(x, (int, float)):
+        seconds = float(x) * 24 * 60 * 60
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        s = int(seconds % 60)
+        return time(h, m, s)
+    # string
+    s = str(x).strip()
+    # "1:23 PM"/"13:23"
+    try:
+        for fmt in ("%H:%M", "%H:%M:%S", "%I:%M %p", "%I:%M:%S %p"):
+            try:
+                return datetime.strptime(s, fmt).time()
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return None
+
+
+# ---------- models via apps registry (avoids hard imports & circulars) ----------
+
+EOIImport = _apps_get("imports", "EOIImport")                     # staging log (your existing table)
+MasterEOI = _apps_get("eoi", "MasterEOI")                         # normalized EOI rows
+MasterClassTime = _apps_get("eoi", "MasterClassTime")             # normalized timeslots for every unit class
+Campus = _apps_get("users", "Campus")                             # reference data
+Unit = _apps_get("units", "Unit")                                 # reference data
+
+
+# ---------- workbook readers ----------
+
+REQUIRED_EOI_COLS = {
+    "unit_code", "tutor_email", "preference", "campus", "qualifications", "availability"
+}
+
+EOI_HEADER_ALIASES = {
+    "unit_code": {"unit code", "unit", "code"},
+    "tutor_email": {"email address", "email", "tutor email"},
+    "preference": {"preference", "pref", "rank"},
+    "campus": {"campus"},
+    "qualifications": {"qualifications", "skills", "notes"},
+    "availability": {"availability", "hours", "available hours"},
+}
+
+CLASS_HEADER_ALIASES = {
+    "unit_code": {"unit code", "unit", "code"},
+    "campus": {"campus"},
+    "activity": {"activity", "class type", "type"},
+    "day": {"day"},
+    "start": {"start", "start time", "begin"},
+    "end": {"end", "end time", "finish"},
+    "group": {"class", "group", "stream", "number"},
+}
+
+DAY_NORMALIZE = {
+    "mon": "Mon", "monday": "Mon",
+    "tue": "Tue", "tues": "Tue", "tuesday": "Tue",
+    "wed": "Wed", "wednesday": "Wed",
+    "thu": "Thu", "thur": "Thu", "thurs": "Thu", "thursday": "Thu",
+    "fri": "Fri", "friday": "Fri",
+    "sat": "Sat", "saturday": "Sat",
+    "sun": "Sun", "sunday": "Sun",
+}
+
+
+def _best_header_map(header_cells: Iterable[str], aliases: Dict[str, Set[str]]) -> Dict[int, str]:
+    """
+    Given a row of header strings and a mapping of canonical->aliases,
+    return a dict: {column_index: canonical_name}
+    """
+    header_map: Dict[int, str] = {}
+    for idx, raw in enumerate(header_cells):
+        label = _strip(raw).lower()
+        for canonical, alias_set in aliases.items():
+            if label == canonical:
+                header_map[idx] = canonical
+                break
+            if label in alias_set:
+                header_map[idx] = canonical
+                break
+    return header_map
+
+
+def _normalize_eoi_sheet(ws) -> List[Dict[str, Any]]:
+    """
+    Scan a unit sheet. We search for the first row that can be interpreted as the header row
+    (must cover at least the EOI required columns with aliases), then read down until an empty tutor_email.
+    Hidden columns are handled by openpyxl transparently.
+    """
+    rows: List[Dict[str, Any]] = []
+
+    # collect header row
+    header_map: Dict[int, str] = {}
+    header_row_idx = None
+    for r in ws.iter_rows(min_row=1, max_row=ws.max_row, values_only=True):
+        header_map = _best_header_map(r, EOI_HEADER_ALIASES)
+        have = set(header_map.values())
+        if REQUIRED_EOI_COLS.issubset(have):
+            header_row_idx = r
+            break
+
+    if not header_map:
+        return rows
+
+    # read data after the header
+    started = False
+    for i, r in enumerate(ws.iter_rows(values_only=True)):
+        if not started:
+            # skip until row equals header_row_idx
+            if r is header_row_idx:
+                started = True
+            continue
+        # build row dict
+        rec = {k: None for k in REQUIRED_EOI_COLS}
+        for c_idx, canonical in header_map.items():
+            rec[canonical] = r[c_idx]
+        # a valid row must have tutor_email
+        if not _strip(rec.get("tutor_email")):
+            continue
+        rows.append({
+            "unit_code": _strip(rec["unit_code"]),
+            "tutor_email": _strip(rec["tutor_email"]).lower(),
+            "preference": _to_int(rec["preference"]) or 0,
+            "campus": _strip(rec["campus"]),
+            "qualifications": _strip(rec["qualifications"]),
+            "availability": _to_int(rec["availability"]) or 0,
+        })
+    return rows
+
+
+def _normalize_workbook_to_eoi_rows(fobj) -> List[Dict[str, Any]]:
+    wb = load_workbook(fobj, data_only=True, read_only=True)
+    out: List[Dict[str, Any]] = []
+    for name in wb.sheetnames:
+        ws = wb[name]
+        # Skip obvious cover / index sheets
+        if re.search(r"(cover|index|instruction|summary)", name, re.I):
+            continue
+        rows = _normalize_eoi_sheet(ws)
+        out.extend(rows)
+    if not out:
+        raise ValidationError(
+            "Could not find any EOI rows. Ensure unit tabs contain a tutor section "
+            "with an 'Email Address' column. Hidden columns are supported."
+        )
+    return out
+
+
+def _normalize_workbook_to_classes(fobj) -> List[Dict[str, Any]]:
+    """
+    Master class list parser — flexible header mapping.
+    Expected columns (case/alias-insensitive):
+        unit_code, campus, activity, day, start, end, [group]
+    """
+    wb = load_workbook(fobj, data_only=True, read_only=True)
+    out: List[Dict[str, Any]] = []
+
+    for name in wb.sheetnames:
+        ws = wb[name]
+        # find header
+        header_map: Dict[int, str] = {}
+        header_row = None
+        for r in ws.iter_rows(min_row=1, max_row=ws.max_row, values_only=True):
+            header_map = _best_header_map(r, CLASS_HEADER_ALIASES)
+            if {"unit_code", "day", "start", "end"}.issubset(set(header_map.values())):
+                header_row = r
+                break
+        if not header_map:
+            continue
+
+        started = False
+        for r in ws.iter_rows(values_only=True):
+            if not started:
+                if r is header_row:
+                    started = True
+                continue
+            rec = {}
+            for c_idx, canonical in header_map.items():
+                rec[canonical] = r[c_idx]
+
+            unit_code = _strip(rec.get("unit_code"))
+            if not unit_code:
+                continue
+
+            day_raw = _strip(rec.get("day")).lower()
+            day = DAY_NORMALIZE.get(day_raw, day_raw.capitalize() or None)
+            start = _to_time(rec.get("start"))
+            end = _to_time(rec.get("end"))
+            if not day or not start or not end:
+                continue
+
+            out.append({
+                "unit_code": unit_code,
+                "campus": _strip(rec.get("campus")),
+                "activity": _strip(rec.get("activity")) or "Class",
+                "group": _strip(rec.get("group")),
+                "day": day,
+                "start_time": start,
+                "end_time": end,
+            })
+
+    if not out:
+        raise ValidationError("No class rows found in the Master class list workbook.")
+    return out
+
+
+# ---------- reference data upserts ----------
+
+def _ensure_campuses(rows: Iterable[Dict[str, Any]], *, using: str) -> int:
+    names = { _strip(r.get("campus")) for r in rows if _strip(r.get("campus")) }
+    if not names:
+        return 0
+    existing = set(
+        Campus.objects.using(using)
+        .filter(campus_name__in=names)
+        .values_list("campus_name", flat=True)
+    )
+    to_create = [Campus(campus_name=n) for n in (names - existing)]
+    if to_create:
+        Campus.objects.using(using).bulk_create(to_create, ignore_conflicts=True)
+    return len(to_create)
+
+
+def _ensure_units(rows: Iterable[Dict[str, Any]], *, using: str) -> int:
+    codes = { _strip(r.get("unit_code")) for r in rows if _strip(r.get("unit_code")) }
+    if not codes:
+        return 0
+    existing = set(
+        Unit.objects.using(using).filter(code__in=codes).values_list("code", flat=True)
+    )
+    to_create = [Unit(code=c, name=c) for c in (codes - existing)]  # name unknown → use code
+    if to_create:
+        Unit.objects.using(using).bulk_create(to_create, ignore_conflicts=True)
+    return len(to_create)
+
+
+# ---------- writers ----------
+
+def _write_eoi_staging(rows: List[Dict[str, Any]], *, job, using: str) -> int:
+    """Keep your current staging log behaviour (eoi_imports)."""
+    objs = [
+        EOIImport(
+            job=job,
+            unit_code=r["unit_code"],
+            tutor_email=r["tutor_email"],
+            preference=r["preference"],
+            campus=r["campus"],
+            qualifications=r["qualifications"],
+            availability=r["availability"],
+        )
+        for r in rows
+    ]
+    if objs:
+        EOIImport.objects.using(using).bulk_create(objs)
+    return len(objs)
+
+
+def _upsert_master_eoi(rows: List[Dict[str, Any]], *, using: str) -> Tuple[int, int]:
+    """
+    Upsert into eoi.MasterEOI by (unit_code, tutor_email).
+    Returns (created, updated).
+    """
+    # First, create any missing pairs
+    pairs = {(r["unit_code"], r["tutor_email"]) for r in rows}
+    existing_pairs = set(
+        MasterEOI.objects.using(using)
+        .filter(unit_code__in=[p[0] for p in pairs], tutor_email__in=[p[1] for p in pairs])
+        .values_list("unit_code", "tutor_email")
+    )
+    to_create = []
+    for r in rows:
+        key = (r["unit_code"], r["tutor_email"])
+        if key not in existing_pairs:
+            to_create.append(
+                MasterEOI(
+                    unit_code=r["unit_code"],
+                    tutor_email=r["tutor_email"],
+                    preference=r["preference"],
+                    campus=r["campus"],
+                    qualifications=r["qualifications"],
+                    availability=r["availability"],
+                )
+            )
+    created = 0
+    if to_create:
+        MasterEOI.objects.using(using).bulk_create(to_create, ignore_conflicts=True)
+        created = len(to_create)
+
+    # Update fields on existing rows
+    # (do a second pass to pick only the rows that already exist)
+    to_update = []
+    existing_qs = MasterEOI.objects.using(using).filter(
+        unit_code__in=[p[0] for p in existing_pairs],
+        tutor_email__in=[p[1] for p in existing_pairs],
+    )
+    existing_map: Dict[Tuple[str, str], Any] = {
+        (m.unit_code, m.tutor_email): m for m in existing_qs
+    }
+    for r in rows:
+        key = (r["unit_code"], r["tutor_email"])
+        m = existing_map.get(key)
+        if not m:
+            continue
+        dirty = False
+        if m.preference != (r["preference"] or 0):
+            m.preference = r["preference"] or 0
+            dirty = True
+        if m.campus != r["campus"]:
+            m.campus = r["campus"]
+            dirty = True
+        if m.qualifications != r["qualifications"]:
+            m.qualifications = r["qualifications"]
+            dirty = True
+        if m.availability != (r["availability"] or 0):
+            m.availability = r["availability"] or 0
+            dirty = True
+        if dirty:
+            to_update.append(m)
+
+    updated = 0
+    if to_update:
+        MasterEOI.objects.using(using).bulk_update(
+            to_update, ["preference", "campus", "qualifications", "availability"]
+        )
+        updated = len(to_update)
+
+    return created, updated
+
+
+def _write_master_classes(rows: List[Dict[str, Any]], *, using: str) -> int:
+    """
+    Insert all class rows into MasterClassTime.
+    We don't try to deduplicate here (coordinators may re-upload new terms);
+    if you want deduplication, add a unique_together in the model.
+    """
+    objs = [
+        MasterClassTime(
+            unit_code=r["unit_code"],
+            campus=r["campus"],
+            activity=r["activity"],
+            class_group=r["group"],
+            day=r["day"],
+            start_time=r["start_time"],
+            end_time=r["end_time"],
+        )
+        for r in rows
+    ]
+    if objs:
+        MasterClassTime.objects.using(using).bulk_create(objs)
+    return len(objs)
+
+
+# ---------- public import API (used by the view) ----------
+
+def import_eoi_excel(fileobj, job, *, using: str) -> Dict[str, Any]:
+    """
+    1) Parse workbook across unit tabs → normalized rows
+    2) Write staging (eoi_imports)
+    3) Ensure Campus + Unit reference rows exist
+    4) Upsert normalized rows into eoi.MasterEOI
+    """
+    rows = _normalize_workbook_to_eoi_rows(fileobj)
+
+    with transaction.atomic(using=using):
+        staged = _write_eoi_staging(rows, job=job, using=using)
+        campus_new = _ensure_campuses(rows, using=using)
+        unit_new = _ensure_units(rows, using=using)
+        created, updated = _upsert_master_eoi(rows, using=using)
+
+    return {
+        "result": "ok",
+        "target": "master_eoi",
+        "inserted": created + updated,
+        "staged": staged,
+        "upsert_created": created,
+        "upsert_updated": updated,
+        "created_campuses": campus_new,
+        "created_units": unit_new,
+    }
+
+
+def import_master_class_list(fileobj, job, *, using: str) -> Dict[str, Any]:
+    """
+    Parse the 'Master class list' workbook and populate MasterClassTime.
+    Also make sure Units & Campuses referenced here exist.
+    """
+    rows = _normalize_workbook_to_classes(fileobj)
+    with transaction.atomic(using=using):
+        campus_new = _ensure_campuses(rows, using=using)
+        unit_new = _ensure_units(rows, using=using)
+        inserted = _write_master_classes(rows, using=using)
+
+    return {
+        "result": "ok",
+        "target": "master_class_time",
+        "inserted": inserted,
+        "created_campuses": campus_new,
+        "created_units": unit_new,
+    }
 
 # =================
 # Import dispatcher
@@ -817,6 +1257,5 @@ def import_tutorial_allocations_xlsx(file_like, job, using: str):
 
 IMPORT_DISPATCH = {
     "eoi": import_eoi_excel,
-    "master_classes": import_master_classes_xlsx,
-    "tutorial_allocations": import_tutorial_allocations_xlsx,
+    "master_class_list": import_master_class_list,
 }

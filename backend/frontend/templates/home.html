@@ -156,20 +156,31 @@
 
   <script>
     // =========================
-    // Auth + request utilities
+    // Endpoints
     // =========================
     const API = {
       base: "/api",
+
       // imports
-      importsUpload: "/imports/upload/", // FormData: { import_type, file }
+      importsUpload: "/imports/upload/",       // FormData: { import_type, file }
+      finalizeEOI: (alias) => `/imports/finalize/?alias=${encodeURIComponent(alias)}`,
+
+      // allocation
+      runAllocation: (alias) => `/allocation/run/?alias=${encodeURIComponent(alias)}`,
+
       // semesters
       semestersList: "/semesters/",
       semestersCreate: "/semesters/create/",
       semestersSelect: "/semesters/select/",
-      // (optional) whoami endpoint — used to show/hide admin tools if available
+      semestersCurrent: "/semesters/current/", // returns { alias, year, term, ... }
+
+      // whoami (optional; used to show admin panel)
       meCandidates: ["/users/me/", "/me/"],
     };
 
+    // =========================
+    // Auth + request helpers
+    // =========================
     const token = () => localStorage.getItem("access");
     const authHeaders = (extra = {}) =>
       token() ? { ...extra, Authorization: `Bearer ${token()}` } : extra;
@@ -214,7 +225,6 @@
     // =========================
     const adminCard = document.getElementById("adminSemesterTools");
     async function maybeShowAdminTools() {
-      // Try a couple of common "me" endpoints; fall back to showing UI (server will still enforce perms)
       for (const p of API.meCandidates) {
         try {
           const me = await apiGet(p);
@@ -224,25 +234,23 @@
             me?.role === "Admin";
           if (isAdmin) adminCard.classList.remove("d-none");
           return;
-        } catch { /* try next */ }
+        } catch { }
       }
-      // Fallback (minimal change): show; server-side permission will block non-admins on POST
+      // fallback: show (server still enforces perms on POST)
       adminCard.classList.remove("d-none");
     }
 
     // =========================
-    // Semester APIs + UI wiring
+    // Semester UI
     // =========================
     const semYearInput = document.getElementById("semYear");
     const semTermSelect = document.getElementById("semTerm");
     const btnCreateSem = document.getElementById("btnCreateSem");
-
     const semViewSelect = document.getElementById("semView");
     const btnViewApply = document.getElementById("btnViewApply");
     const btnViewReset = document.getElementById("btnViewReset");
 
     function labelForTerm(term) {
-      // Accepts either S1/S2/… or full names, returns a compact label for the dropdown
       const t = String(term || "").toUpperCase().trim();
       if (t === "S1" || t.includes("SEMESTER 1")) return "S1";
       if (t === "S2" || t.includes("SEMESTER 2")) return "S2";
@@ -260,21 +268,20 @@
         semViewSelect.innerHTML = "";
         (list || []).forEach((s) => {
           const opt = document.createElement("option");
-          opt.value = s.alias; // e.g. backend alias like "2025_S2"
+          opt.value = s.alias;
           const tag = s.is_current ? " (current)" : "";
           const termLabel = labelForTerm(s.term);
           opt.textContent = `${s.year} ${termLabel}${tag}`;
           semViewSelect.appendChild(opt);
         });
       } catch (e) {
-        // Non-fatal to the rest of the page
         console.warn("Failed to load semesters:", e);
       }
     }
 
     btnCreateSem?.addEventListener("click", async () => {
       const year = Number(semYearInput.value);
-      const term = semTermSelect.value; // S1/S2/S3/S4 (backend maps to full term)
+      const term = semTermSelect.value; // S1/S2/S3/S4
       if (!year || year < 2000) return alert("Enter a valid year (e.g., 2026).");
       try {
         const created = await apiPostJSON(API.semestersCreate, {
@@ -294,7 +301,6 @@
       if (!alias) return;
       try {
         await apiPostJSON(API.semestersSelect, { alias });
-        // Reload so the backend-selected DB alias reflects in all reads
         location.reload();
       } catch (e) {
         alert(e.message || "Failed to switch semester view.");
@@ -303,7 +309,6 @@
 
     btnViewReset?.addEventListener("click", async () => {
       try {
-        // Passing null tells backend to clear override and use current semester
         await apiPostJSON(API.semestersSelect, { alias: null });
         location.reload();
       } catch (e) {
@@ -312,7 +317,7 @@
     });
 
     // =========================
-    // EOI upload -> backend + local preview (unchanged UX)
+    // EOI upload (unchanged UX) + local preview
     // =========================
     const btnUpload = document.getElementById("btnUpload");
     const eoiFile = document.getElementById("eoiFile");
@@ -323,8 +328,6 @@
       const f = eoiFile.files?.[0];
       if (!f) return;
       fileNameEl.textContent = f.name;
-
-      // 1) send to backend — will write into the CURRENT semester DB
       try {
         const fd = new FormData();
         fd.append("import_type", "eoi");
@@ -333,12 +336,10 @@
       } catch (e) {
         alert(e.message);
       }
-
-      // 2) local preview keeps your original flow
       parseEOIToLocalPreview(f);
     });
 
-    // === Local EOI preview helpers (existing logic kept) ===
+    // --- local preview helpers (kept from your file) ---
     const unitsSection = document.getElementById("unitsSection");
     const unitsBody = document.getElementById("unitsBody");
     const recordCount = document.getElementById("recordCount");
@@ -418,150 +419,72 @@
     }
 
     // =========================
-    // Tutor allocations upload
+    // Tutor allocation workflow
     // =========================
-    const btnProceedAlloc = document.getElementById("btnProceedAlloc");
+    const btnProceed = document.getElementById("btnProceedAlloc");
     const allocFile = document.getElementById("allocFile");
     const allocFileName = document.getElementById("allocFileName");
-    const allocSection = document.getElementById("allocSection");
-    const allocBody = document.getElementById("allocBody");
-    const allocCount = document.getElementById("allocCount");
-    let __allocAOA = null;
 
-    btnProceedAlloc.addEventListener("click", () => allocFile.click());
-    allocFile.addEventListener("change", async () => {
-      const f = allocFile.files?.[0];
-      if (!f) return;
-      allocFileName.textContent = f.name;
-
-      // 1) send to backend — will write into the CURRENT semester DB
-      try {
-        const fd = new FormData();
-        fd.append("import_type", "tutorial_allocations");
-        fd.append("file", f);
-        await apiPostForm(API.importsUpload, fd);
-      } catch (e) {
-        alert(e.message);
-      }
-
-      // 2) local preview
-      const reader = new FileReader();
-      const isCSV = /\.csv$/i.test(f.name);
-      reader.onload = (e) => {
-        let wb;
-        if (isCSV) wb = XLSX.read(e.target.result, { type: "string" });
-        else wb = XLSX.read(new Uint8Array(e.target.result), { type: "array" });
-
-        __allocAOA = {};
-        wb.SheetNames.forEach((n) => {
-          __allocAOA[n] = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: "" });
-        });
-        try { localStorage.setItem("alloc_sheets_aoa", JSON.stringify(__allocAOA)); } catch { }
-
-        const list = buildAllocList(wb);
-        renderAlloc(list);
-      };
-      isCSV ? reader.readAsText(f) : reader.readAsArrayBuffer(f);
+    // Click -> pick file if none, otherwise run workflow
+    btnProceed?.addEventListener("click", () => {
+      if (!allocFile.files?.length) allocFile.click();
+      else startAllocationWorkflow();
     });
 
-    function buildAllocList(wb) {
-      const out = [];
-      wb.SheetNames.forEach((sheetName) => {
-        const sh = wb.Sheets[sheetName];
-        const aoa = XLSX.utils.sheet_to_json(sh, { header: 1, defval: "" });
-        if (!aoa.length) return;
-
-        const wanted = ["subject_code", "subject code", "subject_description", "subject description", "activity_code", "campus", "location", "staff", "staffs", "tutor", "tutors", "teacher", "instructor"];
-        let h = -1;
-        let cols = { code: -1, name: -1, staff: -1 };
-        for (let r = 0; r < Math.min(200, aoa.length); r++) {
-          const lower = aoa[r].map((c) => String(c).trim().toLowerCase());
-          const hits = wanted.filter((w) => lower.includes(w)).length;
-          if (hits >= 2) {
-            h = r;
-            cols.code = indexOfAny(lower, ["subject_code", "subject code"]);
-            cols.name = indexOfAny(lower, ["subject_description", "subject description", "unit name", "subject name"]);
-            cols.staff = indexOfAny(lower, ["staff", "staffs", "tutor", "tutors", "teacher", "instructor"]);
-            break;
-          }
-        }
-
-        let code = "", name = "", staffStr = "";
-        if (h !== -1) {
-          for (let r = h + 1; r < aoa.length; r++) {
-            const row = aoa[r];
-            if (row.some((x) => String(x).trim() !== "")) {
-              if (cols.code >= 0) {
-                const raw = String(row[cols.code] || "").trim();
-                const m = raw.match(/[A-Za-z]{3}\d{3}/); code = m ? m[0] : raw;
-              }
-              if (cols.name >= 0) name = String(row[cols.name] || "").trim();
-              break;
-            }
-          }
-          if (cols.staff >= 0) {
-            const names = [];
-            for (let r = h + 1; r < aoa.length; r++) {
-              const v = (aoa[r][cols.staff] || "").toString().trim();
-              if (!v) continue;
-              v.split(/[;,/]+/).map((s) => s.trim()).filter(Boolean).forEach((n) => {
-                if (!names.includes(n)) names.push(n);
-              });
-            }
-            staffStr = names.slice(0, 3).join(", ");
-          }
-        }
-        if (!code) {
-          const b1 = sh["B1"] ? String(sh["B1"].v || sh["B1"].w || "").trim() : "";
-          const m1 = b1.match(/[A-Za-z]{3}\d{3}/); if (m1) code = m1[0];
-        }
-        if (!code) {
-          const mm = sheetName.match(/[A-Za-z]{3}\d{3}/); if (mm) code = mm[0];
-        }
-        if (!name) name = sheetName;
-
-        if (code || name) out.push({ sheetName, code, name, staff: staffStr });
-      });
-      return out.filter((r) => r.code || r.name);
-
-      function indexOfAny(arr, keys) {
-        for (const k of keys) { const i = arr.indexOf(k); if (i !== -1) return i; }
-        return -1;
+    // When user selects the master class list, run the workflow
+    allocFile.addEventListener("change", () => {
+      const f = allocFile.files?.[0];
+      if (f) {
+        allocFileName.textContent = f.name;
+        startAllocationWorkflow();
       }
-    }
+    });
 
-    function renderAlloc(list) {
-      allocBody.innerHTML = "";
-      const seen = new Set();
-      const uniq = list
-        .filter((r) => { const k = `${r.code}||${r.name}`; if (seen.has(k)) return false; seen.add(k); return true; })
-        .sort((a, b) => (a.code || "").localeCompare(b.code || "") || (a.name || "").localeCompare(b.name || ""));
+    async function startAllocationWorkflow() {
+      const f = allocFile.files?.[0];
+      if (!f) return;
 
-      uniq.forEach((r) => {
-        const href = `allocationdetails.html?sheet=${encodeURIComponent(r.sheetName)}&code=${encodeURIComponent(r.code)}&name=${encodeURIComponent(r.name)}`;
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td class="fw-semibold"><a class="rowlink" href="${href}">${r.code || ""}</a></td>
-          <td><a class="rowlink" href="${href}">${r.name || ""}</a></td>
-          <td><a class="rowlink" href="${href}"><strong>${r.staff || ""}</strong></a></td>`;
-        tr.querySelectorAll("a").forEach((a) => {
-          a.addEventListener("click", () => {
-            try {
-              if (__allocAOA && __allocAOA[r.sheetName]) {
-                sessionStorage.setItem("alloc_sheet_current", JSON.stringify({ key: r.sheetName, rows: __allocAOA[r.sheetName] }));
-              }
-            } catch { }
-          });
-        });
-        allocBody.appendChild(tr);
-      });
+      const original = btnProceed.innerHTML;
+      btnProceed.disabled = true;
 
-      allocSection.classList.remove("hidden");
-      allocCount.textContent = `${uniq.length} Records Found`;
+      try {
+        btnProceed.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>Uploading class times…`;
+
+        // 1) Upload the Master Class List (change import_type if your backend expects another key)
+        const fd = new FormData();
+        fd.append("import_type", "timetable");   // <-- if your service expects 'master_class', change this line
+        fd.append("file", f);
+        await apiPostForm(API.importsUpload, fd);
+
+        // 2) Which semester DB are we working with?
+        const { alias } = await apiGet(API.semestersCurrent);
+
+        // 3) Finalise EOI into canonical tables (master_eoi, tutors, skills, campus…)
+        btnProceed.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>Finalising EOI…`;
+        const finalize = await apiPostJSON(API.finalizeEOI(alias), {});
+
+        // 4) Run allocation (consumes master_class_time + master_eoi + preferences)
+        btnProceed.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>Running allocation…`;
+        const alloc = await apiPostJSON(API.runAllocation(alias), {});
+
+        // 5) Show result + navigate to details
+        const msg =
+          `EOI finalised: ${finalize?.inserted ?? 0} new, ${finalize?.updated ?? 0} updated.\n` +
+          `Allocation: ${alloc?.assigned ?? 0} assigned, ${alloc?.unassigned ?? 0} unassigned.`;
+        console.log(msg);
+        alert("Allocation completed.");
+
+        location.href = `/allocationdetails.html?alias=${encodeURIComponent(alias)}`;
+      } catch (e) {
+        alert(e.message || "Failed to run allocation.");
+        btnProceed.disabled = false;
+        btnProceed.innerHTML = original;
+        return;
+      }
     }
 
     // =========================
-    // Page init
+    // Init
     // =========================
     document.addEventListener("DOMContentLoaded", async () => {
       if (!token()) return (window.location.href = "/"); // require login

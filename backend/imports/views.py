@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from django.db import transaction
 from django.db.utils import IntegrityError, OperationalError
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 
 from semesters.router import get_current_semester_alias
 from semesters.threadlocal import force_write_alias
@@ -44,12 +45,14 @@ class UploadImportView(APIView):
             with job.file.open("rb") as f, force_write_alias(alias), transaction.atomic(using=alias, savepoint=False):
                 result = importer(f, job, using=alias)
 
+            job.finished_at = timezone.now()
+            job.save(update_fields=["finished_at"])
 
-            job.status = "finished"
-            job.error = ""
-            job.save(update_fields=["status", "error"])
-            return Response({"ok": True, "result": result, "job": UploadJobSerializer(job).data}, status=201)
-
+            return Response(
+                {"ok": True, "result": result, "job": UploadJobSerializer(job).data},
+                status=201,
+            )
+        
         except (ValidationError, IntegrityError, OperationalError) as e:
             return Response({"detail": _pretty_err(e)}, status=400)
 
