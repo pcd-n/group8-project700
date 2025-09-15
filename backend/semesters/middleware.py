@@ -1,18 +1,31 @@
-from .threadlocal import set_view_alias
-from .services import hydrate_runtime_databases, is_hydrated
+from django.conf import settings
+import logging
+
+log = logging.getLogger(__name__)
+
+AUTH_FREE_PREFIXES = (
+    "/api/users/token",
+    "/api/users/register",
+    "/api/users/token/refresh",
+)
 
 class SemesterViewAliasMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
-        self._tried_hydrate = False
 
     def __call__(self, request):
-        if not is_hydrated() and not self._tried_hydrate:
-            self._tried_hydrate = True
-            try:
-                hydrate_runtime_databases()
-            except Exception:
-                pass
+        p = request.path.rstrip("/")
+        if any(p.startswith(pref) for pref in AUTH_FREE_PREFIXES):
+            return self.get_response(request)
 
-        set_view_alias(request.session.get("view_semester_alias"))
+        try:
+            # Keep whatever you already do here (e.g., read current semester,
+            # set settings.CURRENT_SEMESTER_ALIAS, etc.)
+            from .services import ensure_current_semester_alias  # or your function
+            ensure_current_semester_alias()
+        except Exception as e:
+            # Fall back so login, docs, etc. keep working
+            log.warning("Semester alias middleware fallback to 'default': %s", e)
+            settings.CURRENT_SEMESTER_ALIAS = "default"
+
         return self.get_response(request)

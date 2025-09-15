@@ -1,25 +1,32 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from django.core.exceptions import PermissionDenied
+from django.db.utils import OperationalError
 from users.permission import IsAdminUser
 from .serializers import SemesterSerializer, CreateSemesterSerializer, SelectViewSerializer
 from .models import Semester
-from .services import create_semester_db, set_view_semester, set_current_semester
+from .services import create_semester_db, set_view_semester, set_current_semester, list_existing_semesters
 
 class SemesterListView(APIView):
     permission_classes = [IsAuthenticated]
     def get(self, request):
-        qs = Semester.objects.all()
+        qs = list_existing_semesters()
         return Response(SemesterSerializer(qs, many=True).data)
-
+    
 class SemesterCreateView(APIView):
     permission_classes = [IsAuthenticated, IsAdminUser]
     def post(self, request):
         s = CreateSemesterSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        sem = create_semester_db(**s.validated_data)
+        try:
+            sem = create_semester_db(actor=request.user, **s.validated_data)
+        except PermissionDenied as e:
+            return Response({"detail": str(e)}, status=403)
+        except OperationalError as e:
+            return Response({"detail": str(e)}, status=400)
         return Response(SemesterSerializer(sem).data, status=201)
-
+    
 class SemesterSelectView(APIView):
     """
     Set *viewing* semester (read-only). Pass {"alias": null} to revert to current.
