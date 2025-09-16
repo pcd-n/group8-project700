@@ -7,6 +7,7 @@ class UploadJob(models.Model):
     TYPE_CHOICES = [
         ("eoi", "EOI (Casual Master/EOI spreadsheet)"),
         ("master_classes", "Master Class List"),
+        ("master_class_list", "Master Class List (alt key)"),
         ("tutorial_allocations", "Tutorial Allocations"),
     ]
     file = models.FileField(upload_to="uploads/")

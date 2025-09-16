@@ -50,16 +50,28 @@ class TimeTableSessionSerializer(serializers.ModelSerializer):
         return None
 
     def get_staff(self, obj):
-        # Allocation.related_name="allocations"
-        names = []
-        for alloc in getattr(obj, "allocations", []).all():
+    names = []
+    # Allocations (if using Allocation model)
+    allocs = getattr(obj, "allocations", None)
+    if allocs is not None:
+        for alloc in allocs.all():
             tutor = getattr(alloc, "tutor", None)
             if tutor:
-                # Prefer full name if available, else email/username
                 full = ""
                 try:
                     full = tutor.get_full_name()
                 except Exception:
                     pass
                 names.append(full or getattr(tutor, "email", None) or getattr(tutor, "username", None) or "Unknown")
-        return names
+    # Direct assignment on timetable (tutor_user)
+    t = getattr(obj, "tutor_user", None)
+    if t:
+        full = ""
+        try:
+            full = t.get_full_name()
+        except Exception:
+            pass
+        label = full or getattr(t, "email", None) or getattr(t, "username", None) or "Unknown"
+        if label not in names:
+            names.append(label)
+    return names

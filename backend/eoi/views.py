@@ -1,3 +1,4 @@
+from semesters.router import get_current_semester_alias
 from django.shortcuts import render
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser

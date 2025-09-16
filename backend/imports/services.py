@@ -590,37 +590,129 @@ def _finalise_log(log: TimetableImportLog, stats: ImportStats, total: int, ok_st
 
 def import_eoi_excel(fileobj, job, using: str):
     """
-    Accepts the multi-tab UTAS workbook, normalizes rows, and
-    writes them into either:
-      - an EOI model we can map to, or
-      - a `master_eoi` table (created on the fly if missing).
+    Parse the Casual Master EOI Spreadsheet and write rows directly into eoi.EoiApp,
+    creating Units/Campuses/Users as needed in the current semester DB.
     """
     rows = _normalize_workbook_to_rows(fileobj)
+    # If the normalizer could not parse, the earlier fallback (pandas) in _normalize_workbook_to_rows will have populated rows.
     if not rows:
         raise ValidationError("No EOI rows parsed from the workbook.")
 
-    # Try model destination first with flexible field mapping
-    Model, mapping = _find_eoi_destination(using)
-    if Model and mapping:
-        objs = []
-        for r in rows:
-            kwargs = {}
-            # required keys always present from the normalizer
-            kwargs[mapping.get("unit_code", "unit_code")] = r["unit_code"]
-            kwargs[mapping.get("tutor_email", "tutor_email")] = r["tutor_email"].lower()
-            kwargs[mapping.get("campus", "campus")] = r["campus"]
-            # soft fields: provide sensible defaults if the model doesn't have them
-            if "preference" in mapping:
-                kwargs[mapping["preference"]] = int(r.get("preference") or 0)
-            if "qualifications" in mapping:
-                kwargs[mapping["qualifications"]] = r.get("qualifications", "")
-            if "availability" in mapping:
-                kwargs[mapping["availability"]] = r.get("availability", "")
-            objs.append(Model(**kwargs))
+    from eoi.models import EoiApp
+    from units.models import Unit
+    from users.models import Campus, User
 
-        with transaction.atomic(using=using):
-            Model.objects.using(using).bulk_create(objs, ignore_conflicts=True)
-        return {"inserted": len(objs), "target": f"{Model._meta.app_label}.{Model._meta.model_name}"}
+    # campus synonym map
+    CAMPUS_MAP = {
+        "hobart": "SB",
+        "sandy bay": "SB",
+        "launceston": "IR",
+        "inveresk": "IR",
+        "online": "ONLINE",
+        "distance": "ONLINE",
+    }
+
+    created = 0
+    updated = 0
+    with transaction.atomic(using=using):
+        for r in rows:
+            unit_code = (r.get("unit_code") or "").strip().upper()
+            if not unit_code:
+                continue
+            # ensure unit
+            unit, _ = Unit.objects.using(using).get_or_create(
+                unit_code=unit_code,
+                defaults={"unit_name": unit_code}
+            )
+            # campus
+            campus_txt = (r.get("campus") or "").strip()
+            campus_key = CAMPUS_MAP.get(campus_txt.lower(), None)
+            campus = None
+            if campus_key:
+                campus, _ = Campus.objects.using(using).get_or_create(
+                    campus_name=campus_key,
+                    defaults={"campus_location": campus_txt or campus_key}
+                )
+            # user
+            email = (r.get("tutor_email") or "").strip().lower()
+            if not email or "@" not in email:
+                continue
+            # Try to split name from extras
+            tutor_name = ""
+            extras = r.get("_extra") or {}
+            if extras:
+                tutor_name = (extras.get("tutor_name") or "").strip()
+            first, last = "", ""
+            if tutor_name:
+                parts = tutor_name.split()
+                first = parts[0]
+                last = " ".join(parts[1:]) if len(parts) > 1 else ""
+            user, _ = User.objects.using(using).get_or_create(
+                email=email,
+                defaults={"first_name": first, "last_name": last, "is_active": False}
+            )
+            # upsert EoiApp (SCD handled by model .save())
+            obj, created_flag = EoiApp.objects.using(using).get_or_create(
+                applicant_user=user,
+                unit=unit,
+                campus=campus,
+                defaults={
+                    "status": "Submitted",
+                    "remarks": "",
+                    "preference": int(r.get("preference") or 0),
+                    "qualifications": r.get("qualifications") or "",
+                    "availability": r.get("availability") or "",
+                    "tutor_email": email,
+                    "tutor_name": tutor_name,
+                    "tutor_current": extras.get("eoi_status_text") or "",
+                    "location_text": extras.get("location_text") or campus_txt or "",
+                    "gpa": (float(extras.get("gpa")) if str(extras.get("gpa") or "").strip() not in {"", "nan"} else None),
+                    "supervisor": extras.get("supervisor") or "",
+                    "applied_units": extras.get("applied_units") or None,
+                    "tutoring_experience": extras.get("tutoring_experience") or "",
+                    "hours_available": (int(extras.get("hours_available")) if str(extras.get("hours_available") or "").strip().isdigit() else None),
+                    "scholarship_received": None if (extras.get("scholarship_received") is None) else str(extras.get("scholarship_received")).strip().lower() in {"y", "yes", "true", "1"},
+                    "transcript_link": extras.get("transcript_link") or "",
+                    "cv_link": extras.get("cv_link") or "",
+                }
+            )
+            if not created_flag:
+                # update mutable fields and save to trigger SCD if changed
+                obj.preference = int(r.get("preference") or obj.preference or 0)
+                obj.qualifications = r.get("qualifications") or obj.qualifications or ""
+                obj.availability = r.get("availability") or obj.availability or ""
+                # extras
+                if tutor_name:
+                    obj.tutor_name = tutor_name
+                ex = extras
+                if ex:
+                    if ex.get("eoi_status_text"): obj.tutor_current = ex["eoi_status_text"]
+                    if ex.get("location_text"): obj.location_text = ex["location_text"]
+                    try:
+                        g = ex.get("gpa"); obj.gpa = float(g) if str(g or "").strip() not in {"", "nan"} else obj.gpa
+                    except Exception: pass
+                    if ex.get("supervisor"): obj.supervisor = ex["supervisor"]
+                    if ex.get("applied_units"): obj.applied_units = ex["applied_units"]
+                    if ex.get("tutoring_experience"): obj.tutoring_experience = ex["tutoring_experience"]
+                    try:
+                        h = ex.get("hours_available"); obj.hours_available = int(h) if str(h or "").strip().isdigit() else obj.hours_available
+                    except Exception: pass
+                    if ex.get("scholarship_received") is not None:
+                        v = str(ex["scholarship_received"]).strip().lower()
+                        obj.scholarship_received = True if v in {"y","yes","true","1"} else False if v in {"n","no","false","0"} else obj.scholarship_received
+                    if ex.get("transcript_link"): obj.transcript_link = ex["transcript_link"]
+                    if ex.get("cv_link"): obj.cv_link = ex["cv_link"]
+                obj.save()
+                updated += 1
+            else:
+                created += 1
+
+    return {
+        "result": "ok",
+        "target": "eoi_app",
+        "inserted": created,
+        "updated": updated,
+    }
 
     # Fallback: make sure `master_eoi` exists, then insert via SQL
     _ensure_master_eoi_table(using)       # DDL (no atomic)
@@ -1205,30 +1297,130 @@ def _write_master_classes(rows: List[Dict[str, Any]], *, using: str) -> int:
 
 # ---------- public import API (used by the view) ----------
 
-def import_eoi_excel(fileobj, job, *, using: str) -> Dict[str, Any]:
+def import_eoi_excel(fileobj, job, using: str):
     """
-    1) Parse workbook across unit tabs → normalized rows
-    2) Write staging (eoi_imports)
-    3) Ensure Campus + Unit reference rows exist
-    4) Upsert normalized rows into eoi.MasterEOI
+    Parse the Casual Master EOI Spreadsheet and write rows directly into eoi.EoiApp,
+    creating Units/Campuses/Users as needed in the current semester DB.
     """
-    rows = _normalize_workbook_to_eoi_rows(fileobj)
+    rows = _normalize_workbook_to_rows(fileobj)
+    # If the normalizer could not parse, the earlier fallback (pandas) in _normalize_workbook_to_rows will have populated rows.
+    if not rows:
+        raise ValidationError("No EOI rows parsed from the workbook.")
 
+    from eoi.models import EoiApp
+    from units.models import Unit
+    from users.models import Campus, User
+
+    # campus synonym map
+    CAMPUS_MAP = {
+        "hobart": "SB",
+        "sandy bay": "SB",
+        "launceston": "IR",
+        "inveresk": "IR",
+        "online": "ONLINE",
+        "distance": "ONLINE",
+    }
+
+    created = 0
+    updated = 0
     with transaction.atomic(using=using):
-        staged = _write_eoi_staging(rows, job=job, using=using)
-        campus_new = _ensure_campuses(rows, using=using)
-        unit_new = _ensure_units(rows, using=using)
-        created, updated = _upsert_master_eoi(rows, using=using)
+        for r in rows:
+            unit_code = (r.get("unit_code") or "").strip().upper()
+            if not unit_code:
+                continue
+            # ensure unit
+            unit, _ = Unit.objects.using(using).get_or_create(
+                unit_code=unit_code,
+                defaults={"unit_name": unit_code}
+            )
+            # campus
+            campus_txt = (r.get("campus") or "").strip()
+            campus_key = CAMPUS_MAP.get(campus_txt.lower(), None)
+            campus = None
+            if campus_key:
+                campus, _ = Campus.objects.using(using).get_or_create(
+                    campus_name=campus_key,
+                    defaults={"campus_location": campus_txt or campus_key}
+                )
+            # user
+            email = (r.get("tutor_email") or "").strip().lower()
+            if not email or "@" not in email:
+                continue
+            # Try to split name from extras
+            tutor_name = ""
+            extras = r.get("_extra") or {}
+            if extras:
+                tutor_name = (extras.get("tutor_name") or "").strip()
+            first, last = "", ""
+            if tutor_name:
+                parts = tutor_name.split()
+                first = parts[0]
+                last = " ".join(parts[1:]) if len(parts) > 1 else ""
+            user, _ = User.objects.using(using).get_or_create(
+                email=email,
+                defaults={"first_name": first, "last_name": last, "is_active": False}
+            )
+            # upsert EoiApp (SCD handled by model .save())
+            obj, created_flag = EoiApp.objects.using(using).get_or_create(
+                applicant_user=user,
+                unit=unit,
+                campus=campus,
+                defaults={
+                    "status": "Submitted",
+                    "remarks": "",
+                    "preference": int(r.get("preference") or 0),
+                    "qualifications": r.get("qualifications") or "",
+                    "availability": r.get("availability") or "",
+                    "tutor_email": email,
+                    "tutor_name": tutor_name,
+                    "tutor_current": extras.get("eoi_status_text") or "",
+                    "location_text": extras.get("location_text") or campus_txt or "",
+                    "gpa": (float(extras.get("gpa")) if str(extras.get("gpa") or "").strip() not in {"", "nan"} else None),
+                    "supervisor": extras.get("supervisor") or "",
+                    "applied_units": extras.get("applied_units") or None,
+                    "tutoring_experience": extras.get("tutoring_experience") or "",
+                    "hours_available": (int(extras.get("hours_available")) if str(extras.get("hours_available") or "").strip().isdigit() else None),
+                    "scholarship_received": None if (extras.get("scholarship_received") is None) else str(extras.get("scholarship_received")).strip().lower() in {"y", "yes", "true", "1"},
+                    "transcript_link": extras.get("transcript_link") or "",
+                    "cv_link": extras.get("cv_link") or "",
+                }
+            )
+            if not created_flag:
+                # update mutable fields and save to trigger SCD if changed
+                obj.preference = int(r.get("preference") or obj.preference or 0)
+                obj.qualifications = r.get("qualifications") or obj.qualifications or ""
+                obj.availability = r.get("availability") or obj.availability or ""
+                # extras
+                if tutor_name:
+                    obj.tutor_name = tutor_name
+                ex = extras
+                if ex:
+                    if ex.get("eoi_status_text"): obj.tutor_current = ex["eoi_status_text"]
+                    if ex.get("location_text"): obj.location_text = ex["location_text"]
+                    try:
+                        g = ex.get("gpa"); obj.gpa = float(g) if str(g or "").strip() not in {"", "nan"} else obj.gpa
+                    except Exception: pass
+                    if ex.get("supervisor"): obj.supervisor = ex["supervisor"]
+                    if ex.get("applied_units"): obj.applied_units = ex["applied_units"]
+                    if ex.get("tutoring_experience"): obj.tutoring_experience = ex["tutoring_experience"]
+                    try:
+                        h = ex.get("hours_available"); obj.hours_available = int(h) if str(h or "").strip().isdigit() else obj.hours_available
+                    except Exception: pass
+                    if ex.get("scholarship_received") is not None:
+                        v = str(ex["scholarship_received"]).strip().lower()
+                        obj.scholarship_received = True if v in {"y","yes","true","1"} else False if v in {"n","no","false","0"} else obj.scholarship_received
+                    if ex.get("transcript_link"): obj.transcript_link = ex["transcript_link"]
+                    if ex.get("cv_link"): obj.cv_link = ex["cv_link"]
+                obj.save()
+                updated += 1
+            else:
+                created += 1
 
     return {
         "result": "ok",
-        "target": "master_eoi",
-        "inserted": created + updated,
-        "staged": staged,
-        "upsert_created": created,
-        "upsert_updated": updated,
-        "created_campuses": campus_new,
-        "created_units": unit_new,
+        "target": "eoi_app",
+        "inserted": created,
+        "updated": updated,
     }
 
 
@@ -1257,5 +1449,8 @@ def import_master_class_list(fileobj, job, *, using: str) -> Dict[str, Any]:
 
 IMPORT_DISPATCH = {
     "eoi": import_eoi_excel,
-    "master_class_list": import_master_class_list,
+    "master_class_list": import_master_classes_xlsx,
+    "master_classes": import_master_classes_xlsx,
+    "tutorial_allocations": import_tutorial_allocations_xlsx,
 }
+
