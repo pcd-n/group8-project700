@@ -76,30 +76,43 @@
   <script>
     /* ---------------- Auth / API helpers ---------------- */
     const API = {
-      base: "/api",
-      unit: (id) => `/units/${id}/`,
-      applicants: (unitId) => `/eoi/applicants/?unit_id=${encodeURIComponent(unitId)}`,
-      savePrefs: "/eoi/preferences/",
+      eoiApplicants: "/api/eoi/applicants/",
+      savePrefs: "/api/eoi/preferences/",
+      semestersCurrent: "/api/semesters/current/",
+      semestersList: "/api/semesters/",
     };
 
     function getAccessToken() { return localStorage.getItem("access"); }
     function authHeaders(extra = {}) {
+      const h = { ...extra };
       const t = getAccessToken();
-      return t ? { ...extra, Authorization: `Bearer ${t}` } : extra;
+      if (t) h.Authorization = `Bearer ${t}`;
+      return h;
     }
     async function apiGet(path) {
-      const res = await fetch(`${API.base}${path}`, { headers: authHeaders() });
-      if (res.status === 401) { window.location.href = "/"; throw new Error("Unauthorized"); }
-      if (!res.ok) throw new Error(`Error ${res.status}`);
+      const res = await fetch(path, { headers: authHeaders() });
+      if (res.status === 401) { location.href = "/"; throw new Error("Unauthorized"); }
+      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
       return res.json();
     }
+    async function getCurrentAlias() {
+      try {
+        const { alias } = await apiGet(API.semestersCurrent);
+        return alias;
+      } catch {
+        const list = await apiGet(API.semestersList);
+        const cur = (list || []).find(s => s.is_current) || (list || [])[0];
+        if (!cur) throw new Error("No semesters available");
+        return cur.alias;
+      }
+    }
     async function apiPostJSON(path, body) {
-      const res = await fetch(`${API.base}${path}`, {
+      const res = await fetch(path, {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(body),
       });
-      if (res.status === 401) { window.location.href = "/"; throw new Error("Unauthorized"); }
+      if (res.status === 401) { location.href = "/"; throw new Error("Unauthorized"); }
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || err.error || `Error ${res.status}`);
@@ -135,144 +148,79 @@
 
     let isEditing = false;
 
-    document.addEventListener("DOMContentLoaded", init);
+    document.addEventListener("DOMContentLoaded", async () => {
+      const params = new URLSearchParams(location.search);
+      const unitCode = params.get("code") || "";
+      const unitName = decodeURIComponent(params.get("name") || unitCode);
+      const titleEl = document.getElementById("unitTitle");
+      if (titleEl) titleEl.textContent = unitName || unitCode;
 
-    async function init() {
-      // ---------- BACKEND MODE ----------
-      if (getAccessToken() && unitId) {
-        try {
-          // 1) Title from backend (optional)
-          const unit = await apiGet(API.unit(unitId)).catch(() => ({}));
-          const code = unit.unit_code || unit.code || unitCode || "";
-          const name = unit.unit_name || unit.name || "";
-          if (code || name) {
-            document.getElementById("unitTitle").textContent = `${code} ${name}`.trim();
-          }
+      const alertBox = document.getElementById("noData");
 
-          // 2) Applicants for this unit
-          const applicants = (await apiGet(API.applicants(unitId))) || [];
-          if (Array.isArray(applicants) && applicants.length) {
-            renderFromAPI(applicants, code);
-            hookEditSubmit({ mode: "api", unitId, codeForKey: code });
-            return;
-          }
-        } catch {
-          // fall back to spreadsheet
+      if (!unitCode) { alertBox.classList.remove("d-none"); return; }
+
+      try {
+        await getCurrentAlias(); // avoid /semesters/current/ 404
+
+        // Fetch applicants for this unit
+        const data = await apiGet(`${API.eoiApplicants}?unit_code=${encodeURIComponent(unitCode)}`);
+        const list = Array.isArray(data?.results) ? data.results : (Array.isArray(data) ? data : []);
+
+        // NEW: get the unit id for saving preferences
+        const apiUnitId =
+          (list[0] && (list[0].unit || list[0].unit_id)) ? (list[0].unit || list[0].unit_id) : null;
+
+        // NEW: keep server-side preference in each item
+        const applicants = list.map(a => ({
+          name: a.applicant_name || [a.first_name, a.last_name].filter(Boolean).join(" ") || a.tutor_name || "",
+          email: a.tutor_email || a.applicant_email || a.email || "",
+          you_are: a.tutor_current || a.status || "",
+          location: a.location_text || a.campus_name || (a.campus?.campus_name || a.campus || ""),
+          preference: a.preference ?? ""   // <-- keep server preference
+        }));
+
+        if (!applicants.length) {
+          alertBox.textContent = "No applicants yet for this unit.";
+          alertBox.classList.remove("d-none");
+          return;
         }
+
+        renderFromAPI(applicants, unitCode);
+        hookEditSubmit({ mode: "api", unitId: apiUnitId, codeForKey: unitCode });
+
+        alertBox.classList.add("d-none");
+      } catch (e) {
+        console.error(e);
+        alertBox.textContent = "Failed to load applicants. Please try again.";
+        alertBox.classList.remove("d-none");
       }
+    });
 
-      // ---------- SPREADSHEET FALLBACK ----------
-      const store = localStorage.getItem(SHEETS_KEY);
-      if (!store) { document.getElementById("noData").classList.remove("d-none"); return; }
-      const AOA = JSON.parse(store) || {};
-      const rows = (AOA && AOA[sheetName]) || [];
-      // Detect header row
-      const required = ["name", "email", "you are", "tutoring location"];
-      let headerIdx = -1;
-      for (let r = 0; r < Math.min(rows.length, 250); r++) {
-        const lower = rows[r].map((c) => String(c).trim().toLowerCase());
-        const ok = required.every((k) => lower.some((x) => x.includes(k)));
-        if (ok) { headerIdx = r; break; }
-      }
-      if (headerIdx === -1) { document.getElementById("noData").classList.remove("d-none"); return; }
-
-      const headerRow = rows[headerIdx];
-      const idx = (label) => headerRow.findIndex((h) => String(h).toLowerCase().includes(label));
-      const nameCol = idx("name");
-      const emailCol = idx("email");
-      const locCol = idx("tutoring location");
-
-      const prefs = JSON.parse(localStorage.getItem(PREF_KEY) || "{}");
-      const bodyRows = rows.slice(headerIdx + 1).filter((r) => r.some((c) => String(c).trim() !== ""));
-      const groups = { Hobart: [], Launceston: [], Other: [] };
-      bodyRows.forEach((r) => {
-        const loc = (r[locCol] || "").toString().trim().toLowerCase();
-        if (loc === "hobart") groups.Hobart.push(r);
-        else if (loc === "launceston") groups.Launceston.push(r);
-        else groups.Other.push(r);
-      });
-
-      buildSection("hobart", hobartHead, hobartBody, groups.Hobart, headerRow, prefs, emailCol);
-      buildSection("launc", launcHead, launcBody, groups.Launceston, headerRow, prefs, emailCol);
-      buildSection("other", otherHead, otherBody, groups.Other, headerRow, prefs, emailCol);
-
-      if (groups.Hobart.length) hobartBlock.classList.remove("d-none");
-      if (groups.Launceston.length) launcBlock.classList.remove("d-none");
-      if (groups.Other.length) otherBlock.classList.remove("d-none");
-
-      hookEditSubmit({ mode: "fallback", codeForKey: unitCode });
-
-      // helpers for fallback table
-      function buildSection(prefix, headEl, bodyEl, dataRows, headerRow, prefs, emailCol) {
-        if (!dataRows.length) return;
-
-        const trh = document.createElement("tr");
-        const thPref = document.createElement("th"); thPref.textContent = "Preference";
-        trh.appendChild(thPref);
-        headerRow.forEach((h) => {
-          if (!String(h).trim()) return;
-          const th = document.createElement("th"); th.textContent = h; trh.appendChild(th);
-        });
-        headEl.appendChild(trh);
-
-        dataRows.forEach((r) => {
-          const tr = document.createElement("tr");
-
-          // Preference select (disabled until EDIT)
-          const tdPref = document.createElement("td");
-          const sel = document.createElement("select");
-          sel.className = "form-select form-select-sm pref-select";
-          sel.disabled = true;
-          const key = `${unitCode}|${(r[emailCol] || "").toString().trim()}`;
-
-          const optBlank = document.createElement("option");
-          optBlank.value = ""; optBlank.textContent = "—"; sel.appendChild(optBlank);
-          for (let i = 1; i <= 10; i++) {
-            const o = document.createElement("option");
-            o.value = String(i); o.textContent = String(i); sel.appendChild(o);
-          }
-          const saved = prefs[key]; if (saved) sel.value = saved;
-          sel.dataset.prefKey = key;
-
-          tdPref.appendChild(sel);
-          tr.appendChild(tdPref);
-
-          // Original columns
-          headerRow.forEach((_, c) => {
-            const td = document.createElement("td");
-            td.textContent = (r[c] ?? "").toString();
-            tr.appendChild(td);
-          });
-
-          bodyEl.appendChild(tr);
-        });
-      }
-    }
 
     // --- API rendering (same visual structure) ---
     function renderFromAPI(applicants, codeForKey) {
-      const headerRow = ["Name", "Email", "You are", "Tutoring Location"];
+      const headerRow = ["Name", "Email", "Current Status", "Tutoring Location"];
       const prefs = JSON.parse(localStorage.getItem(PREF_KEY) || "{}");
       const groups = { Hobart: [], Launceston: [], Other: [] };
 
       applicants.forEach((a) => {
-        const loc = String(a.location || a.tutoring_location || "").trim().toLowerCase();
-        const row = [a.name || "", a.email || "", a.you_are || a.role || "", a.location || a.tutoring_location || ""];
-        if (loc === "hobart") groups.Hobart.push(row);
-        else if (loc === "launceston") groups.Launceston.push(row);
-        else groups.Other.push(row);
+        const loc = String(a.location || "").trim().toLowerCase();
+        const item = { name: a.name || "", email: a.email || "", you_are: a.you_are || "", location: a.location || "", preference: a.preference || "" };
+        if (loc === "hobart") groups.Hobart.push(item);
+        else if (loc === "launceston") groups.Launceston.push(item);
+        else groups.Other.push(item);
       });
 
-      buildSectionFromAPI(hobartHead, hobartBody, groups.Hobart);
-      buildSectionFromAPI(launcHead, launcBody, groups.Launceston);
-      buildSectionFromAPI(otherHead, otherBody, groups.Other);
+      buildSection(hobartHead, hobartBody, groups.Hobart);
+      buildSection(launcHead, launcBody, groups.Launceston);
+      buildSection(otherHead, otherBody, groups.Other);
 
       if (groups.Hobart.length) hobartBlock.classList.remove("d-none");
       if (groups.Launceston.length) launcBlock.classList.remove("d-none");
       if (groups.Other.length) otherBlock.classList.remove("d-none");
 
-      function buildSectionFromAPI(headEl, bodyEl, dataRows) {
-        if (!dataRows.length) return;
+      function buildSection(headEl, bodyEl, rows) {
+        if (!rows.length) return;
 
         const trh = document.createElement("tr");
         const thPref = document.createElement("th"); thPref.textContent = "Preference";
@@ -280,25 +228,34 @@
         headerRow.forEach((h) => { const th = document.createElement("th"); th.textContent = h; trh.appendChild(th); });
         headEl.appendChild(trh);
 
-        dataRows.forEach((r) => {
+        rows.forEach((r) => {
           const tr = document.createElement("tr");
 
           const tdPref = document.createElement("td");
           const sel = document.createElement("select");
           sel.className = "form-select form-select-sm pref-select";
           sel.disabled = true;
-          const key = `${codeForKey || ""}|${(r[1] || "").toString().trim()}`; // r[1] = email
-          const optBlank = document.createElement("option");
-          optBlank.value = ""; optBlank.textContent = "—"; sel.appendChild(optBlank);
-          for (let i = 1; i <= 10; i++) { const o = document.createElement("option"); o.value = String(i); o.textContent = String(i); sel.appendChild(o); }
-          const saved = prefs[key]; if (saved) sel.value = saved;
+
+          const key = `${codeForKey || ""}|${(r.email || "").toString().trim()}`;
+          const optBlank = document.createElement("option"); optBlank.value = ""; optBlank.textContent = "—";
+          sel.appendChild(optBlank);
+          for (let i = 1; i <= 10; i++) {
+            const o = document.createElement("option"); o.value = String(i); o.textContent = String(i); sel.appendChild(o);
+          }
+
+          // NEW: prefer server's preference, fallback to local cache
+          const fromServer = r.preference ? String(r.preference) : "";
+          const fromLocal = prefs[key] ? String(prefs[key]) : "";
+          sel.value = fromServer || fromLocal || "";
           sel.dataset.prefKey = key;
+
           tdPref.appendChild(sel);
           tr.appendChild(tdPref);
 
-          headerRow.forEach((_, c) => {
+          // Cells in order: Name, Email, You are, Tutoring Location
+          [r.name, r.email, r.you_are, r.location].forEach((val) => {
             const td = document.createElement("td");
-            td.textContent = (r[c] ?? "").toString();
+            td.textContent = (val ?? "").toString();
             tr.appendChild(td);
           });
 
@@ -319,16 +276,15 @@
       btnSubmit.addEventListener("click", async () => {
         if (!isEditing) return;
 
-        // Collect current selections from the table
         const prefsNow = JSON.parse(localStorage.getItem(PREF_KEY) || "{}");
-        const bulk = []; // for backend: [{email, preference}]
+        const bulk = [];
         document.querySelectorAll(".pref-select").forEach((sel) => {
           const key = sel.dataset.prefKey; // "<unitCode>|<email>"
           const val = sel.value.trim();
           if (!key) return;
+          const email = key.split("|")[1] || "";
           if (val) {
             prefsNow[key] = val;
-            const email = key.split("|")[1] || "";
             if (email) bulk.push({ email, preference: parseInt(val, 10) });
           } else {
             delete prefsNow[key];
@@ -336,14 +292,12 @@
         });
 
         try {
-          // If logged in and unitId is known -> save to backend
-          if (mode === "api" && unitId && getAccessToken()) {
+          const canPost = Boolean(unitId && getAccessToken());   // <= unitId was set from API
+          if (canPost && bulk.length) {
             await apiPostJSON(API.savePrefs, { unit_id: parseInt(unitId, 10), prefs: bulk });
-            // keep local cache in sync (optional)
-            localStorage.setItem(PREF_KEY, JSON.stringify(prefsNow));
+            localStorage.setItem(PREF_KEY, JSON.stringify(prefsNow)); // keep local cache in sync
             alert("Preferences saved to server.");
           } else {
-            // fallback: local only
             localStorage.setItem(PREF_KEY, JSON.stringify(prefsNow));
             alert("Preferences saved locally.");
           }
@@ -352,7 +306,6 @@
           return;
         }
 
-        // lock UI again
         isEditing = false;
         btnSubmit.classList.add("d-none");
         btnEdit.classList.remove("btn-secondary");

@@ -70,63 +70,59 @@ class EoiApp(models.Model):
         null=True,
         help_text="Tutor qualifications provided via EOI"
     )
-# --- Extra fields from EOI template ---
-tutor_email = models.EmailField(
-    max_length=254,
-    db_index=True,
-    help_text="Tutor email from EOI form"
-)
-tutor_name = models.CharField(
-    max_length=255,
-    blank=True,
-    help_text="Tutor full name from EOI form"
-)
-tutor_current = models.CharField(
-    max_length=100,
-    blank=True,
-    help_text="Raw text from 'You are' (EOI)"
-)
-location_text = models.CharField(
-    max_length=100,
-    blank=True,
-    help_text="Raw campus/location text from EOI"
-)
-gpa = models.DecimalField(
-    max_digits=4, decimal_places=2, null=True, blank=True,
-    help_text="GPA as per EOI"
-)
-supervisor = models.CharField(
-    max_length=255,
-    blank=True,
-    help_text="Supervisor / references"
-)
-applied_units = models.JSONField(
-    null=True, blank=True,
-    help_text="Array of applied unit codes from EOI"
-)
-tutoring_experience = models.TextField(
-    blank=True,
-    help_text="Tutoring experience listed in EOI"
-)
-hours_available = models.PositiveIntegerField(
-    null=True, blank=True,
-    help_text="Total tutoring hours available"
-)
-scholarship_received = models.BooleanField(
-    null=True, blank=True,
-    help_text="Scholarship received (PhD only)"
-)
-transcript_link = models.URLField(
-    max_length=500, blank=True,
-    help_text="Transcript link"
-)
-cv_link = models.URLField(
-    max_length=500, blank=True,
-    help_text="CV link"
-)
+    # --- Extra fields from EOI template ---
+    tutor_email = models.EmailField(max_length=254, db_index=True, null=True, blank=True) # null temporarily accepted
+    tutor_name = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Tutor full name from EOI form"
+    )
+    tutor_current = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Raw text from 'You are' (EOI)"
+    )
+    location_text = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Raw campus/location text from EOI"
+    )
+    gpa = models.DecimalField(
+        max_digits=4, decimal_places=2, null=True, blank=True,
+        help_text="GPA as per EOI"
+    )
+    supervisor = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Supervisor / references"
+    )
+    applied_units = models.JSONField(
+        null=True, blank=True,
+        help_text="Array of applied unit codes from EOI"
+    )
+    tutoring_experience = models.TextField(
+        blank=True,
+        help_text="Tutoring experience listed in EOI"
+    )
+    hours_available = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text="Total tutoring hours available"
+    )
+    scholarship_received = models.BooleanField(
+        null=True, blank=True,
+        help_text="Scholarship received (PhD only)"
+    )
+    transcript_link = models.URLField(
+        max_length=500, blank=True,
+        help_text="Transcript link"
+    )
+    cv_link = models.URLField(
+        max_length=500, blank=True,
+        help_text="CV link"
+    )
 
-# Existing
-availability = models.TextField(
+    # Existing
+    availability = models.TextField(
         blank=True,
         null=True,
         help_text="Tutor availability provided via EOI"

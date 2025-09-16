@@ -19,7 +19,9 @@ class Unit(models.Model):
     )
     credits = models.PositiveIntegerField(
         validators=[MinValueValidator(1)],
-        help_text="Number of credit points for this unit"
+        null=True,
+        blank=True,
+        help_text="Credit points for the unit (may be null if unknown)"
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -154,7 +156,7 @@ class UnitCourse(models.Model):
         ]
 
     def __str__(self):
-        campus_str = f" at {self.campus.name}" if self.campus else ""
+        campus_str = f" at {self.campus.campus_name}" if self.campus else ""
         term_str = f" ({self.term})" if self.term else ""
         return f"{self.unit.unit_code} in {self.course.course_code}{campus_str}{term_str}"
 

@@ -220,6 +220,18 @@
       return payload ?? {};
     }
 
+    async function getCurrentAlias() {
+      try {
+        const { alias } = await apiGet(API.semestersCurrent);  // works if the route exists
+        return alias;
+      } catch (e) {
+        // fallback if /semesters/current/ isn't routed
+        const list = await apiGet(API.semestersList);
+        const cur = (list || []).find(s => s.is_current) || (list || [])[0];
+        if (!cur) throw new Error("No semesters available");
+        return cur.alias;
+      }
+    }
     // =========================
     // Admin tools visibility
     // =========================
@@ -328,18 +340,30 @@
       const f = eoiFile.files?.[0];
       if (!f) return;
       fileNameEl.textContent = f.name;
+
       try {
         const fd = new FormData();
         fd.append("import_type", "eoi");
         fd.append("file", f);
         await apiPostForm(API.importsUpload, fd);
+
+        // NEW: persist state + disable button after success
+        const alias = await getCurrentAlias();
+        sessionStorage.setItem("eoiPreviewAlias", alias);
+        sessionStorage.setItem("eoiFileName", f.name);
+        sessionStorage.setItem("eoiUploadDisabled", "1");
+
+        btnUpload.disabled = true;
+        btnUpload.classList.add("disabled");
+        btnUpload.textContent = "EOI uploaded";
       } catch (e) {
         alert(e.message);
       }
+
       parseEOIToLocalPreview(f);
     });
 
-    // --- local preview helpers (kept from your file) ---
+    // --- local preview helpers ---
     const unitsSection = document.getElementById("unitsSection");
     const unitsBody = document.getElementById("unitsBody");
     const recordCount = document.getElementById("recordCount");
@@ -359,38 +383,71 @@
     }
 
     function onWorkbookLoaded(wb) {
-      workbook = wb;
-      const payload = {};
-      wb.SheetNames.forEach((name) => {
-        payload[name] = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: "" });
-      });
-      try { localStorage.setItem("eoi_sheets_aoa", JSON.stringify(payload)); } catch { }
+      // Read the **first sheet** (Casual Master EOI is single-sheet)
+      const first = wb.SheetNames[0];
+      const sheet = wb.Sheets[first];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+      if (!rows.length) {
+        unitsSection.classList.remove("hidden");
+        recordCount.textContent = "0 Records Found";
+        return;
+      }
 
-      unitSheets = wb.SheetNames.map((sheetName) => {
-        const sheet = wb.Sheets[sheetName];
-        let b1 = sheet["B1"] ? String(sheet["B1"].v || sheet["B1"].w || "").trim() : "";
-        if (!b1) b1 = scanTopForCodeTitle(sheet);
-        let code = "", name = "";
-        if (b1) {
-          const m = b1.match(/^([A-Za-z]{3}\d{3,})\s+(.+)$/);
-          if (m) { code = m[1].trim(); name = m[2].trim(); }
-          else if (/^[A-Za-z]{3}\d{3,}$/.test(b1)) code = b1;
-          else name = b1;
+      // Header map (lowercased)
+      const headers = rows[0].map(h => String(h || "").trim().toLowerCase());
+      function findCol(...cands) {
+        for (const c of cands) {
+          const key = c.toLowerCase();
+          let idx = headers.indexOf(key);
+          if (idx !== -1) return idx;
+          // substring match for long labels
+          idx = headers.findIndex(h => h.includes(key));
+          if (idx !== -1) return idx;
         }
-        if (!code) {
-          const mm = sheetName.match(/^([A-Za-z]{3}\d{3,})/);
-          if (mm) code = mm[1];
-        }
-        if (!name) name = sheetName;
-        const title = `${code || ""} ${name || ""}`.trim();
-        return { sheetName, code, name, title };
-      });
+        return -1;
+      }
 
-      const seen = new Set();
-      unitSheets = unitSheets
-        .filter((u) => { const k = `${u.code}||${u.name}`; if (seen.has(k)) return false; seen.add(k); return true; })
-        .sort((a, b) => (a.code || "").localeCompare(b.code || "") || (a.name || "").localeCompare(b.name || ""));
-      renderUnits();
+      // The column that contains the tutor’s selected units
+      const colApplied = findCol("please select up to five units", "applied unit", "units");
+      if (colApplied === -1) {
+        unitsBody.innerHTML = "";
+        unitsSection.classList.remove("hidden");
+        recordCount.textContent = "0 Records Found";
+        return;
+      }
+
+      // Extract unit codes (+ optional names) from that column
+      const codeName = new Map();      // code -> name (or code as fallback)
+      const CODE_RX = /([A-Za-z]{3}\d{3})\s*(?:[-–—:\s]\s*)?([A-Za-z][^,;|]*)?/g;
+
+      for (let r = 1; r < rows.length; r++) {
+        const cell = String(rows[r][colApplied] || "").trim();
+        if (!cell) continue;
+        CODE_RX.lastIndex = 0;
+        let m;
+        while ((m = CODE_RX.exec(cell)) !== null) {
+          const code = m[1].toUpperCase();
+          let name = (m[2] || "").trim();
+          // clean trailing junk
+          name = name.replace(/\s+/g, " ").replace(/[,;|].*$/, "").trim();
+          if (!codeName.has(code)) codeName.set(code, name || code);
+        }
+      }
+
+      // Render table (Code | Name)
+      const rowsArr = Array.from(codeName.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]));
+      unitsBody.innerHTML = rowsArr.map(([code, name]) => {
+        const url = `unitdetails.html?code=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}`;
+        return `<tr>
+          <td class="fw-semibold"><a class="text-decoration-none" href="${url}">${code}</a></td>
+          <td><a class="text-decoration-none" href="${url}">${name}</a></td>
+        </tr>`;
+      }).join("");
+
+      unitsSection.classList.remove("hidden");
+      recordCount.textContent = `${rowsArr.length} Records Found`;
+      sessionStorage.setItem("eoiUnits", JSON.stringify(rowsArr));
     }
 
     function renderUnits() {
@@ -405,17 +462,6 @@
       });
       unitsSection.classList.remove("hidden");
       recordCount.textContent = `${unitSheets.length} Records Found`;
-    }
-
-    function scanTopForCodeTitle(sheet) {
-      const maxR = 6, maxC = 6;
-      for (let r = 1; r <= maxR; r++) for (let c = 1; c <= maxC; c++) {
-        const addr = XLSX.utils.encode_cell({ r: r - 1, c: c - 1 });
-        const cell = sheet[addr]; if (!cell) continue;
-        const v = String(cell.v || cell.w || "").trim();
-        if (/^[A-Za-z]{3}\d{3,}\s+.+$/.test(v)) return v;
-      }
-      return "";
     }
 
     // =========================
@@ -450,14 +496,14 @@
       try {
         btnProceed.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>Uploading class times…`;
 
-        // 1) Upload the Master Class List (change import_type if your backend expects another key)
+        // 1) Upload the Master Class List
         const fd = new FormData();
-        fd.append("import_type", "timetable");   // <-- if your service expects 'master_class', change this line
+        fd.append("import_type", "master_class_list");
         fd.append("file", f);
         await apiPostForm(API.importsUpload, fd);
 
         // 2) Which semester DB are we working with?
-        const { alias } = await apiGet(API.semestersCurrent);
+        const alias = await getCurrentAlias();
 
         // 3) Finalise EOI into canonical tables (master_eoi, tutors, skills, campus…)
         btnProceed.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>Finalising EOI…`;
@@ -490,6 +536,43 @@
       if (!token()) return (window.location.href = "/"); // require login
       await maybeShowAdminTools();
       await loadSemesters();
+      try {
+        const alias = await getCurrentAlias();
+        const savedAlias = sessionStorage.getItem("eoiPreviewAlias");
+
+        // Only restore if we're still on the same current semester DB
+        if (savedAlias && savedAlias === alias) {
+          const raw = sessionStorage.getItem("eoiUnits");
+          if (raw) {
+            const rowsArr = JSON.parse(raw); // Array<[code,name]>
+
+            unitsBody.innerHTML = rowsArr.map(([code, name]) => {
+              const url = `unitdetails.html?code=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}`;
+              return `<tr>
+                <td class="fw-semibold"><a class="text-decoration-none" href="${url}">${code}</a></td>
+                <td><a class="text-decoration-none" href="${url}">${name}</a></td>
+              </tr>`;
+            }).join("");
+
+            unitsSection.classList.remove("hidden");
+            recordCount.textContent = `${rowsArr.length} Records Found`;
+          }
+
+          if (sessionStorage.getItem("eoiUploadDisabled") === "1") {
+            btnUpload.disabled = true;
+            btnUpload.classList.add("disabled");
+            btnUpload.textContent = "EOI uploaded";
+            fileNameEl.textContent = sessionStorage.getItem("eoiFileName") || "";
+          }
+        } else {
+          // semester changed → clear stale preview/state
+          ["eoiUnits", "eoiPreviewAlias", "eoiUploadDisabled", "eoiFileName"].forEach(k =>
+            sessionStorage.removeItem(k)
+          );
+        }
+      } catch (e) {
+        console.warn("restore preview failed:", e);
+      }
     });
   </script>
 

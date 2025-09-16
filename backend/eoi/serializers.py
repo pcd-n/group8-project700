@@ -2,45 +2,37 @@ from rest_framework import serializers
 from .models import EoiApp, MasterEoI, TutorsCourses, TutorSkills, TutorSupervisors
 
 class EoiAppSerializer(serializers.ModelSerializer):
-    """Serializer for EoiApp model."""
-    applicant_email = serializers.CharField(source='applicant_user.email', read_only=True)
-    applicant_name = serializers.SerializerMethodField()
-    unit_code = serializers.CharField(source='unit.unit_code', read_only=True)
-    unit_name = serializers.CharField(source='unit.unit_name', read_only=True)
-    campus_name = serializers.CharField(source='campus.campus_name', read_only=True)
-    
+    applicant_email = serializers.CharField(source="applicant_user.email", read_only=True)
+    applicant_name  = serializers.SerializerMethodField()
+    unit_code  = serializers.CharField(source="unit.unit_code", read_only=True)
+    unit_name  = serializers.CharField(source="unit.unit_name", read_only=True)
+    campus_name = serializers.CharField(source="campus.campus_name", read_only=True)
+
     class Meta:
         model = EoiApp
         fields = [
-            'scd_id', 'eoi_app_id', 'applicant_user', 'applicant_email', 'applicant_name',
-            'unit', 'unit_code', 'unit_name', 'campus', 'campus_name',
-            'status', 'remarks', 'valid_from', 'valid_to', 'is_current', 'version',
-            'created_at', 'updated_at'
+            # identifiers
+            "scd_id", "eoi_app_id",
+            # relations (ids + denorms)
+            "applicant_user", "applicant_email", "applicant_name",
+            "unit", "unit_code", "unit_name",
+            "campus", "campus_name",
+            # status/core
+            "status", "remarks", "preference", "qualifications", "availability",
+            # expose EOI extra fields used by UI
+            "tutor_email", "tutor_name", "tutor_current", "location_text",
+            "gpa", "supervisor", "applied_units", "tutoring_experience",
+            "hours_available", "scholarship_received", "transcript_link", "cv_link",
+            # SCD/audit
+            "valid_from", "valid_to", "is_current", "version", "created_at", "updated_at",
         ]
-        read_only_fields = ['scd_id', 'eoi_app_id', 'valid_from', 'valid_to', 'is_current', 'version', 'created_at', 'updated_at']
-    
-    def get_applicant_name(self, obj):
-        """Get full name of applicant."""
-        return obj.applicant_user.get_full_name()
-    
-    def validate_status(self, value):
-        """Validate status transitions."""
-        if self.instance:
-            current_status = self.instance.status
-            valid_transitions = {
-                'Submitted': ['Reviewed', 'Rejected'],
-                'Reviewed': ['Accepted', 'Rejected'],
-                'Accepted': ['Rejected'],  # Can be revoked
-                'Rejected': []  # Terminal state
-            }
-            
-            if value != current_status and value not in valid_transitions.get(current_status, []):
-                raise serializers.ValidationError(
-                    f"Invalid status transition from '{current_status}' to '{value}'"
-                )
-        
-        return value
+        read_only_fields = [
+            "scd_id","eoi_app_id","valid_from","valid_to","is_current",
+            "version","created_at","updated_at"
+        ]
 
+    def get_applicant_name(self, obj):
+        return obj.applicant_user.get_full_name()
 
 class MasterEoISerializer(serializers.ModelSerializer):
     """Serializer for MasterEoI model."""
