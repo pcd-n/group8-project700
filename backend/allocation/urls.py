@@ -7,9 +7,11 @@ from .views import (
     TutorTimetableView,
     SessionsByUnitCode,
     AssignTutor,
+    RunAllocationView,
 )
 
 urlpatterns = [
+    path("run/", RunAllocationView.as_view(), name="allocation-run"),
     path("", AllocationListView.as_view(), name="allocation_list"),
     path("assign-manual/", ManualAssignView.as_view(), name="manual_assign"),
     path("auto/", AutoAllocateView.as_view(), name="auto_allocate"),

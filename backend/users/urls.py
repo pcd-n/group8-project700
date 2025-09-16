@@ -47,4 +47,6 @@ urlpatterns = [
     # =====================================================
     path('user-roles/', views.UserRolesListView.as_view(), name='user_roles_list'),
     path('user-roles/<int:user_id>/', views.UserRolesView.as_view(), name='user_roles_manage'),
+
+    path('search/', views.UserSearchView.as_view(), name='user_search'),
 ]

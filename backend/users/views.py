@@ -1,4 +1,5 @@
 from django.shortcuts import render
+from django.db.models import Q
 from rest_framework import status, generics, serializers
 from rest_framework.permissions import AllowAny, IsAuthenticated, BasePermission
 from rest_framework.response import Response
@@ -342,6 +343,29 @@ class RoleDetailView(generics.RetrieveUpdateDestroyAPIView):
     def delete(self, request, *args, **kwargs):
         return super().delete(request, *args, **kwargs)
 
+class UserSearchView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        q = (request.query_params.get("q") or "").strip()
+        if not q:
+            return Response([], status=200)
+
+        qs = User.objects.all()
+        if "@" in q:
+            qs = qs.filter(email__icontains=q)
+        else:
+            qs = qs.filter(Q(first_name__icontains=q) | Q(last_name__icontains=q))
+
+        data = [
+            {
+                "id": u.id,
+                "name": (u.get_full_name() or u.email),
+                "email": u.email,
+            }
+            for u in qs.order_by("first_name", "last_name")[:10]
+        ]
+        return Response(data, status=200)
 
 class PermissionListCreateView(generics.ListCreateAPIView):
     """List all permissions or create new ones."""

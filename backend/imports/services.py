@@ -602,13 +602,36 @@ def _finalise_log(log: TimetableImportLog, stats: ImportStats, total: int, ok_st
 
 def import_master_classes_xlsx(file_like, job, using: str):
     """
-    Import MasterClassTime rows (teaching activities/timetable templates).
+    Import MasterClassTime rows (teaching activities/timetable templates)
+    and ensure Units/UnitCourses/TimeTable are created for allocation.
+    Also updates Unit.unit_name from subject_description when provided.
     """
     df = pd.read_excel(file_like)
     col = _validate_headers("master_classes", df)
 
     stats = ImportStats()
     log = _create_log(getattr(job.file, "name", "master_classes.xlsx"), job.created_by)
+
+    # Derive year/term from alias (e.g., 2025S2)
+    year = None
+    term = None
+    try:
+        m = re.search(r"(\d{4})", using or "")
+        if m: year = int(m.group(1))
+        m2 = re.search(r"(S\d|T\d)", (using or ""), re.I)
+        if m2: term = m2.group(1).upper()
+    except Exception:
+        pass
+
+
+    # Campus normalisation
+    def norm_campus(value: str) -> str:
+        v = (value or "").strip().lower()
+        if v in {"sb", "hobart", "sandy bay"}: return "SB"
+        if v in {"ir", "launceston", "inveresk"}: return "IR"
+        if v in {"online", "distance", "web"}: return "ONLINE"
+        return (value or "").strip().upper() or "SB"
+
 
     total = len(df)
     for i, row in df.iterrows():
@@ -618,18 +641,56 @@ def import_master_classes_xlsx(file_like, job, using: str):
             activity_group_code = _strip(row[col["activity_group_code"]])
             activity_code = _strip(row[col["activity_code"]])
             activity_description = _strip(row[col["activity_description"]])
-            campus = _strip(row[col["campus"]])
+            campus_txt = _strip(row[col["campus"]])
+            campus_code = norm_campus(campus_txt)
             location = _strip(row[col["location"]])
             day = _as_day_name(_strip(row[col["day_of_week"]]))
             start = _as_time(row[col["start_time"]])
+            end_time = _as_time(row[col["end_time"]]) if "end_time" in col else None
             weeks = _strip(row[col["weeks"]])
-            staff = _strip(row[col["staff"]])
-            size = int(row[col["size"]]) if pd.notna(row[col["size"]]) else 0
-
+            staff = _strip(row[col["staff"]]) if "staff" in col else ""
+            size = int(row[col["size"]]) if ("size" in col and pd.notna(row[col["size"]])) else 0
+            
             if not subject_code or not activity_group_code or not activity_code or not day or not start:
                 raise ValueError("Missing one of required identifying fields")
 
-            # Use a natural key for upsert
+            # Resolve unit_code (first 6 chars like KIT101)
+            unit_code = None
+            mcode = UNIT_CODE_RX.search(subject_code or "") if 'UNIT_CODE_RX' in globals() else None
+            if mcode:
+                unit_code = mcode.group(1).upper()
+            else:
+                unit_code = (subject_code or "")[:6].upper()
+
+            unit, created_unit = Unit.objects.using(using).get_or_create(
+                unit_code=unit_code,
+                defaults={"unit_name": subject_description or unit_code},
+            )
+
+            if subject_description and unit.unit_name != subject_description:
+                unit.unit_name = subject_description
+                unit.save(using=using, update_fields=["unit_name"])
+
+            # Ensure Campus exists in semester DB
+            from users.models import Campus
+            campus_obj, _ = Campus.objects.using(using).get_or_create(
+                campus_name=campus_code,
+                defaults={"campus_location": campus_txt or campus_code},
+            )
+
+            # Ensure UnitCourse for this unit+campus+term/year
+            uc_defaults = {"status": "Active"}
+            if year: uc_defaults["year"] = year
+            if term: uc_defaults["term"] = term
+            uc, _ = UnitCourse.objects.using(using).get_or_create(
+                unit=unit,
+                campus=campus_obj,
+                year=year,
+                term=term,
+                defaults=uc_defaults,
+            )
+
+            # Upsert MasterClassTime (natural key)
             lookup = dict(
                 subject_code=subject_code,
                 activity_group_code=activity_group_code,
@@ -637,10 +698,11 @@ def import_master_classes_xlsx(file_like, job, using: str):
                 day_of_week=day,
                 start_time=start,
             )
+
             defaults = dict(
                 subject_description=subject_description,
                 activity_description=activity_description,
-                campus=campus,
+                campus=campus_code,
                 location=location,
                 weeks=weeks,
                 staff=staff,
@@ -657,10 +719,29 @@ def import_master_classes_xlsx(file_like, job, using: str):
                 available_for_allocation=True,
                 updated_at=timezone.now(),
             )
-            MasterClassTime.objects.using(using).update_or_create(
-                **lookup, defaults=defaults
+
+            mct, _ = MasterClassTime.objects.using(using).update_or_create(**lookup, defaults=defaults)
+            
+            # Seed a TimeTable row for allocation (unassigned)
+            tt_lookup = dict(
+                unit_course=uc,
+                day_of_week=day,
+                start_time=start,
+                room=location or "",
             )
+            tt_defaults = dict(
+                end_time=end_time,
+                start_date=None,
+                end_date=None,
+                campus=campus_obj,
+                master_class=mct,
+                tutor_user=None,
+                updated_at=timezone.now(),
+            )
+            TimeTable.objects.using(using).update_or_create(**tt_lookup, defaults=tt_defaults)
+                        
             stats.inc()
+
         except Exception as ex:
             stats.log(f"Row {i + 2}: {ex}")
 
@@ -670,7 +751,6 @@ def import_master_classes_xlsx(file_like, job, using: str):
     job.ok = stats.err == 0
     job.finished_at = timezone.now()
     job.save(update_fields=["rows_ok", "rows_error", "ok", "finished_at"])
-
 
 # ===========================
 # Tutorial allocations import

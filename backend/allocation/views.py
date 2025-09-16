@@ -1,4 +1,5 @@
 from django.shortcuts import get_object_or_404
+from django.contrib.auth import get_user_model
 from rest_framework import generics, status, serializers
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -9,7 +10,7 @@ from eoi.models import EoiApp
 from .serializers import AllocationSerializer, ManualAssignSerializer
 from timetable.models import TimeTable
 from timetable.serializers import TimeTableSessionSerializer
-from django.contrib.auth import get_user_model
+from semesters.threadlocal import force_write_alias
 
 User = get_user_model()
 
@@ -178,3 +179,74 @@ class SessionsByUnitCode(APIView):
         qs = TimeTable.objects.filter(unit__unit_code__iexact=code).select_related("unit").prefetch_related("allocations__tutor")
         data = TimeTableSessionSerializer(qs, many=True).data
         return Response(data, status=200)
+
+class RunAllocationView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        alias = request.query_params.get("alias")
+        created_count = 0
+        ctx = force_write_alias(alias) if alias else None
+        if ctx:
+            ctx.__enter__()
+
+        try:
+            qs = TimeTable.objects.all()
+            # Optional: restrict by year/term parsed from alias
+            year = term = None
+
+            if alias:
+                m = re.search(r"(\d{4})", alias)
+                if m:
+                    year = int(m.group(1))
+                m2 = re.search(r"(S\d|T\d)", alias, re.I)
+                if m2:
+                    term = m2.group(1).upper()
+
+            if year:
+                qs = qs.filter(unit_course__year=year)
+            if term:
+                qs = qs.filter(unit_course__term=term)
+
+            for s in qs:
+                if Allocation.objects.filter(session=s).exists():
+                    continue
+
+                eois = EoiApp.objects.filter(unit=s.unit_course.unit).order_by("preference")
+                for e in eois:
+                    pref = int(e.preference or 0)
+                    if pref <= 0:
+                        continue
+
+                    clashes = Allocation.objects.filter(
+                        tutor=e.applicant_user,
+                        session__day_of_week=s.day_of_week,
+                        session__start_time__lt=s.end_time,
+                        session__end_time__gt=s.start_time,
+                    )
+
+                    if not clashes.exists():
+                        Allocation.objects.create(
+                            session=s,
+                            tutor=e.applicant_user,
+                            preference=pref,
+                            status="completed",
+                            created_by=request.user,
+                        )
+                        created_count += 1
+                        break
+
+            total = qs.count()
+            assigned = (
+                Allocation.objects.filter(session__in=qs)
+                .values("session")
+                .distinct()
+                .count()
+            )
+            return Response(
+                {"assigned": assigned, "unassigned": max(total - assigned, 0)},
+                status=200,
+            )
+        finally:
+            if ctx:
+                ctx.__exit__(None, None, None)

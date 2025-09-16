@@ -19,6 +19,18 @@ def _pretty_err(e: Exception) -> str:
         return e.args[1]
     return getattr(e, "message", None) or " ".join(str(a) for a in getattr(e, "args", ())) or str(e)
 
+class FinalizeEOIView(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+        alias = request.query_params.get("alias") or get_current_semester_alias()
+        try:
+            if alias:
+                with force_write_alias(alias):
+                    pass # nothing else to finalize currently
+            return Response({"inserted": 0, "updated": 0}, status=200)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=400)
+
 class UploadImportView(APIView):
     permission_classes = [IsAuthenticated, IsAdminUser]
 

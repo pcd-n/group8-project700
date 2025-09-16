@@ -142,7 +142,11 @@
     /* ---------------- Auth / API helpers ---------------- */
     const API = {
       base: "/api",
-      sessions: (code) => `/allocation/sessions/?unit_code=${encodeURIComponent(code)}`,
+      sessions: (code, alias) => {
+        if (code) return `/allocation/sessions/?unit_code=${encodeURIComponent(code)}`;
+        if (alias) return `/allocation/sessions/?alias=${encodeURIComponent(alias)}`;
+        return `/allocation/sessions/`;
+      },
       userSearch: (q) => `/users/search/?q=${encodeURIComponent(q)}`,
       assign: "/allocation/assign/",
     };
@@ -177,7 +181,10 @@
     const sheetParam = decodeURIComponent(qs.get("sheet") || "");
     const unitCode = decodeURIComponent(qs.get("code") || "");
     const unitName = decodeURIComponent(qs.get("name") || "");
-    const unitTitle = `${unitCode} ${unitName}`.trim() || sheetParam || "Unit";
+    const aliasParam = decodeURIComponent(qs.get("alias") || "");
+    const unitTitle = unitCode
+      ? `${unitCode} ${unitName}`.trim()
+      : (aliasParam ? `All Classes — ${aliasParam}` : (sheetParam || "Unit"));
     document.getElementById("title").textContent = unitTitle;
 
     /* ------------ storage helpers (existing) ------------ */
@@ -209,9 +216,9 @@
     document.addEventListener("DOMContentLoaded", init);
 
     async function init() {
-      if (getAccessToken() && unitCode) {
+      if (getAccessToken() && (unitCode || aliasParam)) {
         try {
-          const sessions = (await apiGet(API.sessions(unitCode))) || [];
+          const sessions = (await apiGet(API.sessions(unitCode, aliasParam))) || [];
           if (Array.isArray(sessions) && sessions.length) {
             renderFromAPI(sessions);
             wireEditingForAPI(sessions);
