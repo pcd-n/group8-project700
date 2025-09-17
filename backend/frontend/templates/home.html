@@ -176,6 +176,7 @@
       upload: () => `/allocation/upload/`,                 // POST (file)
       finalize: (alias) => `/allocation/finalize/?alias=${encodeURIComponent(alias)}`, // POST
       runAllocation: (alias) => `/allocation/run/?alias=${encodeURIComponent(alias)}`, // POST
+      meCandidates: ["/users/me/", "/me/"],
     };
 
     // =========================
@@ -237,18 +238,26 @@
     // =========================
     const adminCard = document.getElementById("adminSemesterTools");
     async function maybeShowAdminTools() {
-      for (const p of API.meCandidates) {
+      const candidates = Array.isArray(API.meCandidates) ? API.meCandidates : [];
+      if (candidates.length === 0) {
+        // no way to check → show UI; server will still enforce perms on POST
+        adminCard.classList.remove("d-none");
+        return;
+      }
+      for (const p of candidates) {
         try {
           const me = await apiGet(p);
           const isAdmin =
             !!me?.is_staff ||
             (Array.isArray(me?.roles) && me.roles.includes("Admin")) ||
             me?.role === "Admin";
-          if (isAdmin) adminCard.classList.remove("d-none");
-          return;
-        } catch { }
+          if (isAdmin) {
+            adminCard.classList.remove("d-none");
+            return;
+          }
+        } catch (_) {
+        }
       }
-      // fallback: show (server still enforces perms on POST)
       adminCard.classList.remove("d-none");
     }
 

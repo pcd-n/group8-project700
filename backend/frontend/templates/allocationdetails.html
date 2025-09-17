@@ -142,13 +142,63 @@
     /* ---------------- Auth / API helpers ---------------- */
     const API = {
       base: "/api",
-      sessions: (code, alias) => {
-        if (code) return `/allocation/sessions/?unit_code=${encodeURIComponent(code)}`;
-        if (alias) return `/allocation/sessions/?alias=${encodeURIComponent(alias)}`;
-        return `/allocation/sessions/`;
+
+      _withSlashCombos(paths) {
+        const out = [];
+        for (const p of paths) {
+          out.push(p);
+          const i = p.indexOf("/?");     // keep the leading "/", drop only the extra slash before "?"
+          if (i !== -1) out.push(p.slice(0, i) + p.slice(i + 1));
+        }
+        return out;
       },
-      userSearch: (q) => `/users/search/?q=${encodeURIComponent(q)}`,
-      assign: "/allocation/assign/",
+
+      sessionPaths(code, alias) {
+        const qp = code
+          ? `?unit_code=${encodeURIComponent(code)}`
+          : alias
+            ? `?alias=${encodeURIComponent(alias)}`
+            : "";
+
+        // Try several server shapes (first 200 wins):
+        const base = [
+          // allocations app
+          `/allocations/sessions/${qp}`,
+          `/allocation/sessions/${qp}`,
+          `/allocations/${qp}`,              // some installs list straight from allocations
+          // timetable app
+          `/timetable/sessions/${qp}`,
+          `/timetable/${qp}`,                // plain timetable list
+          // plain sessions
+          `/sessions/${qp}`,
+          // older param names we’ve seen in this project
+          `/allocations/sessions/?semester_alias=${encodeURIComponent(alias || "")}`,
+          `/timetable/sessions/?semester_alias=${encodeURIComponent(alias || "")}`,
+        ];
+        const paths = this._withSlashCombos(base);
+
+        // <-- add a one-off log so we can see exactly what is called in DevTools
+        console.debug("[allocdetails] trying session endpoints:", paths);
+
+        return paths;
+      },
+
+      userSearchPaths(q) {
+        const qs = `?q=${encodeURIComponent(q)}`;
+        return this._withSlashCombos([
+          `/users/search/${qs}`,
+          `/user/search/${qs}`,
+          `/users/${qs}`,
+        ]);
+      },
+
+      assignPaths() {
+        return this._withSlashCombos([
+          `/allocation/assign/`,
+          `/allocations/assign/`,
+          `/timetable/assign/`,
+        ]);
+      },
     };
 
     function getAccessToken() { return localStorage.getItem("access"); }
@@ -156,12 +206,27 @@
       const t = getAccessToken();
       return t ? { ...extra, Authorization: `Bearer ${t}` } : extra;
     }
+
     async function apiGet(path) {
       const res = await fetch(`${API.base}${path}`, { headers: authHeaders() });
       if (res.status === 401) { window.location.href = "/"; throw new Error("Unauthorized"); }
       if (!res.ok) throw new Error(`GET ${path} -> ${res.status}`);
       return res.json();
     }
+
+    // Try a list of GET paths; return the first non-empty array (or first 200 JSON)
+    async function apiGetFirst(paths) {
+      let lastErr = null;
+      for (const p of paths) {
+        try {
+          const data = await apiGet(p);
+          if (Array.isArray(data) ? data.length : data) return data;
+        } catch (e) { lastErr = e; }
+      }
+      if (lastErr) throw lastErr;
+      return [];
+    }
+
     async function apiPostJSON(path, body) {
       const res = await fetch(`${API.base}${path}`, {
         method: "POST",
@@ -176,18 +241,65 @@
       return res.json().catch(() => ({}));
     }
 
+    async function apiPostFirst(paths, body) {
+      let lastErr = null;
+      for (const p of paths) {
+        try { return await apiPostJSON(p, body); } catch (e) { lastErr = e; }
+      }
+      throw lastErr || new Error("All POST endpoints failed");
+    }
+
     /* ------------ query + title (existing) ------------ */
     const qs = new URLSearchParams(location.search);
     const sheetParam = decodeURIComponent(qs.get("sheet") || "");
     const unitCode = decodeURIComponent(qs.get("code") || "");
     const unitName = decodeURIComponent(qs.get("name") || "");
     const aliasParam = decodeURIComponent(qs.get("alias") || "");
-    const unitTitle = unitCode
-      ? `${unitCode} ${unitName}`.trim()
+    const unitTitle = unitCode ? `${unitCode} ${unitName}`.trim()
       : (aliasParam ? `All Classes — ${aliasParam}` : (sheetParam || "Unit"));
     document.getElementById("title").textContent = unitTitle;
 
-    /* ------------ storage helpers (existing) ------------ */
+    // --- Normalise backend session payloads to one shape the UI expects
+    function toMinutes(hhmm) {
+      const m = String(hhmm || "").match(/^(\d{1,2}):(\d{2})/);
+      if (!m) return null;
+      return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+    }
+    function normSession(s) {
+      const start = s.start_time ?? s.start ?? s.time ?? "";
+      const end = s.end_time ?? s.end ?? "";
+      const dur = s.duration ?? s.dur ?? ((start && end) ? (toMinutes(end) - toMinutes(start)) : "");
+
+      // staff may be string or array
+      const staff = Array.isArray(s.staff) ? s.staff
+        : (s.staff_names ?? s.tutors ?? s.tutor ?? s.staff ?? "");
+
+      // campus may be code or name; we’ll keep the code-ish value
+      const campus = s.campus ?? s.campus_code ?? s.campus_name ?? "";
+
+      return {
+        session_id: s.session_id ?? s.timetable_id ?? s.id ?? s.pk ?? null,
+        activity: s.activity_code ?? s.activity ?? s.act ?? "",
+        day_of_week: s.day_of_week ?? s.day ?? s.dow ?? "",
+        start_time: start,
+        duration: dur,
+        location: s.location ?? s.room ?? "",
+        weeks: s.weeks ?? s.teaching_weeks ?? s.week_pattern ?? "",
+        staff,
+        campus,
+      };
+    }
+
+    // Grouping map: DB uses SB/IR/ONLINE; show friendly labels
+    function campusBucket(c) {
+      const v = String(c || "").toUpperCase();
+      if (v.startsWith("SB") || v.includes("HOB")) return "HOBART";
+      if (v.startsWith("IR") || v.includes("LNC") || v.includes("LTN")) return "LAUNCESTON";
+      if (v.includes("ONLINE")) return "ONLINE";
+      return "OTHER";
+    }
+
+    /* ------------ storage helpers (unchanged) ------------ */
     function safeLoad(key) {
       try { const s = sessionStorage.getItem(key); if (s) return JSON.parse(s); } catch { }
       try { const s = localStorage.getItem(key); if (s) return JSON.parse(s); } catch { }
@@ -198,56 +310,39 @@
       try { sessionStorage.setItem(key, JSON.stringify(obj)); return; } catch { }
     }
 
-    // Edit state (existing)
+    // Edit state
     let isEditing = false;
     const btnEdit = document.getElementById("btnEdit");
     const btnSubmit = document.getElementById("btnSubmit");
     const content = document.getElementById("content");
 
-    // Columns (existing detection logic will be used for fallback)
-    const candidates = [
-      "subject_code", "subject code", "subject_description", "subject description",
-      "activity_code", "activity code", "campus", "day_of_week", "day of week", "day",
-      "start_time", "start time", "time", "weeks", "teaching_weeks", "teaching weeks",
-      "duration", "location", "staff", "staffs",
-    ];
-
-    // Try backend first if logged in and unitCode present
+    // Kick off
     document.addEventListener("DOMContentLoaded", init);
 
     async function init() {
       if (getAccessToken() && (unitCode || aliasParam)) {
         try {
-          const sessions = (await apiGet(API.sessions(unitCode, aliasParam))) || [];
-          if (Array.isArray(sessions) && sessions.length) {
+          const raw = await apiGetFirst(API.sessionPaths(unitCode, aliasParam));
+          const sessions = Array.isArray(raw) ? raw.map(normSession).filter(s => s.session_id) : [];
+          if (sessions.length) {
             renderFromAPI(sessions);
             wireEditingForAPI(sessions);
             return;
           }
-        } catch (e) {
-          // ignore and try spreadsheet fallback
-        }
+        } catch { /* fall through to spreadsheet mode */ }
       }
-      // ----- Spreadsheet fallback (existing behavior) -----
-      await initFallback();
+      await initFallback(); // unchanged below
     }
 
     /* ======================= API MODE ======================= */
     function renderFromAPI(sessions) {
-      // group by campus codes similar to current UI
-      const groups = { HBT: [], LTN: [], ONLINE: [], OTHER: [] };
-      sessions.forEach((s) => {
-        const campus = String(s.campus || "").toUpperCase();
-        if (campus.startsWith("HBT")) groups.HBT.push(s);
-        else if (campus.startsWith("LTN") || campus.startsWith("LST") || campus.startsWith("LNC")) groups.LTN.push(s);
-        else if (campus.startsWith("ONLINE")) groups.ONLINE.push(s);
-        else groups.OTHER.push(s);
-      });
+      const groups = { HOBART: [], LAUNCESTON: [], ONLINE: [], OTHER: [] };
+      sessions.forEach((s) => groups[campusBucket(s.campus)].push(s));
 
-      renderGroupAPI("HBT", groups.HBT);
-      renderGroupAPI("LTN", groups.LTN);
-      renderGroupAPI("ONLINE", groups.ONLINE);
-      if (groups.OTHER.length) renderGroupAPI("OTHER", groups.OTHER);
+      renderGroupAPI("Hobart", groups.HOBART);
+      renderGroupAPI("Launceston", groups.LAUNCESTON);
+      renderGroupAPI("Online", groups.ONLINE);
+      if (groups.OTHER.length) renderGroupAPI("Other", groups.OTHER);
 
       function renderGroupAPI(label, items) {
         if (!items.length) return;
@@ -385,9 +480,13 @@
         async function searchUser(q) {
           const key = q.toLowerCase();
           if (cache.has(key)) return cache.get(key);
-          const res = await fetch(`${API.base}${API.userSearch(q)}`, { headers: authHeaders() });
-          if (!res.ok) return [];
-          const data = await res.json();
+          let data = [];
+          for (const p of API.userSearchPaths(q)) {
+            try {
+              const res = await fetch(`${API.base}${p}`, { headers: authHeaders() });
+              if (res.ok) { data = await res.json(); break; }
+            } catch { }
+          }
           cache.set(key, data || []);
           return data || [];
         }
@@ -415,7 +514,7 @@
             if (!pick) { failures.push({ sessionId, name }); continue; }
 
             try {
-              await apiPostJSON(API.assign, { session_id: sessionId, tutor_id: pick.id });
+              await apiPostFirst(API.assignPaths(), { session_id: sessionId, tutor_id: pick.id });
             } catch (e) {
               failures.push({ sessionId, name, err: e.message });
             }

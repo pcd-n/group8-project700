@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Iterable, Tuple, Dict, Any, Optional, List, Set
-from datetime import time, datetime
+from datetime import time, datetime, timedelta
 import re
 import uuid
 
@@ -12,11 +12,11 @@ from django.apps import apps as django_apps
 from django.db import connections, transaction, models
 from django.core.exceptions import ValidationError
 from django.utils import timezone
-
-from users.models import User
-from units.models import Unit, UnitCourse
+from eoi.models import EoiApp
+from users.models import User, Campus
+from units.models import Unit, UnitCourse, Course
 from timetable.models import MasterClassTime, TimeTable, TimetableImportLog
-
+    
 try:
     from openpyxl import load_workbook
 except Exception as e:
@@ -46,6 +46,7 @@ REQUIRED_COLUMNS: Dict[str, set[str]] = {
         "location",
         "day_of_week",
         "start_time",
+        "duration",
         "weeks",
         "staff",
         "size",
@@ -77,6 +78,10 @@ HEADER_SYNONYMS: Dict[str, set[str]] = {
     "location": {"Location", "RoomLocation"},
     "day_of_week": {"Day", "DayOfWeek"},
     "start_time": {"Start", "StartTime"},
+    "duration": {
+        "Duration", "duration", "Duration (minutes)", "Duration(min)",
+        "Duration mins", "duration (mins)", "duration (min)", "Minutes"
+    },
     "weeks": {"Weeks", "TeachingWeeks"},
     "staff": {"Staff", "StaffName", "Lecturer"},
     "size": {"Size", "Capacity"},
@@ -102,10 +107,6 @@ _CAMPUS_ALIAS = {
     "distance": "ONLINE",
 }
 
-try:
-    from users.models import Campus  # prefer the real model
-except Exception:
-    Campus = django_apps.get_model("users", "Campus")
 UNIT_CODE_RX = re.compile(r"\b([A-Z]{3}\d{3})\b")
 
 EMAIL_KEYS = {"email", "email address", "email address*"}
@@ -125,6 +126,52 @@ QUAL_KEYS = {
 }
 
 CAMPUS_NAMES = {"hobart", "launceston", "online"}
+
+# campus synonym map
+CAMPUS_MAP = {
+    "sb": "SB", "sandy bay": "SB", "hobart": "SB",
+    "ir": "IR", "inveresk": "IR", "launceston": "IR",
+    "online": "ONLINE", "distance": "ONLINE", "web": "ONLINE",
+}
+
+def _norm_campus(value: str) -> str:
+    v = (value or "").strip().lower()
+    return CAMPUS_MAP.get(v, (value or "").strip().upper() or "SB")
+
+def _slot_key(uc_id: int, day_name: str, start_time: time, room: str) -> tuple:
+    """Canonical identity for a timetable row."""
+    return (
+        uc_id,
+        (day_name or "").strip(),
+        (start_time.strftime("%H:%M:%S") if isinstance(start_time, time) else str(start_time)),
+        (room or "").strip().upper(),
+    )
+
+def _infer_term_year_from_db(using: str) -> tuple[str, int]:
+    name = connections[using].settings_dict.get("NAME", "") or using
+    y = re.search(r"(\d{4})", name)
+    t = re.search(r"(S\d+|T\d+)", name, re.I)
+    year = int(y.group(1)) if y else timezone.now().year
+    term = t.group(1).upper() if t else "S1"
+    return term, year
+
+def _get_default_course(using: str) -> Course:
+    """
+    UnitCourse.course is NOT NULL in DB.
+    We attach all UnitCourse rows to a placeholder Course ('GEN') unless you later wire a real course.
+    """
+    course, _ = Course.objects.using(using).get_or_create(
+        course_code="GEN",
+        defaults={"course_name": "General (placeholder)"}
+    )
+    return course
+
+def _resolve_campus(using: str, raw: str) -> Optional[Campus]:
+    key = (raw or "").strip().lower()
+    key = CAMPUS_MAP.get(key, CAMPUS_MAP.get(key.replace(".", ""), None))
+    if not key:
+        return None
+    return Campus.objects.using(using).filter(campus_name__iexact=key).first()
 
 # Flexible header matching (lowercased, spaces collapsed)
 def _norm(s: Any) -> str:
@@ -266,6 +313,35 @@ def _ensure_master_eoi_pk_auto(using: str):
         if "auto_increment" not in pk_extra.lower():
             # make existing PK auto-increment (assume integer-like)
             c.execute(f"ALTER TABLE `master_eoi` MODIFY COLUMN `{pk_name}` INT NOT NULL AUTO_INCREMENT;")
+
+def _ensure_baseline_campuses(*, using: str) -> dict[str, Campus]:
+    """
+    Make sure SB(id=2), IR(id=1), ONLINE(id=3) exist.
+    (IDs chosen to match your DB; if an ID is taken, we keep the row by name.)
+    Returns a dict {"SB": Campus, "IR": Campus, "ONLINE": Campus}.
+    """
+    want = [
+        {"id": 1, "campus_name": "IR",     "campus_location": "Launceston"},
+        {"id": 2, "campus_name": "SB",     "campus_location": "Hobart"},
+        {"id": 3, "campus_name": "ONLINE", "campus_location": "Online"},
+    ]
+    got = {}
+    with transaction.atomic(using=using):
+        for row in want:
+            obj = Campus.objects.using(using).filter(campus_name=row["campus_name"]).first()
+            if obj is None:
+                # try to create with explicit id if it's free
+                try:
+                    obj = Campus(id=row["id"], campus_name=row["campus_name"], campus_location=row["campus_location"])
+                    obj.save(using=using, force_insert=True)
+                except Exception:
+                    # fallback without forcing the id
+                    obj, _ = Campus.objects.using(using).get_or_create(
+                        campus_name=row["campus_name"],
+                        defaults={"campus_location": row["campus_location"]}
+                    )
+            got[row["campus_name"]] = obj
+    return got
 
 def _find_unit_code(ws) -> Optional[str]:
     # Prefer sheet title first
@@ -521,29 +597,55 @@ def _as_time(cell) -> str:
     """
     Return 'HH:MM:SS' string; supports Excel/strings/pandas time.
     """
-    if pd.isna(cell):
+    return _to_time(cell)
+
+def _end_time_from_start_and_duration(start, duration_min: int):
+    if not start or not isinstance(duration_min, int) or duration_min <= 0:
         return None
-    # If already a time-like string
-    text = str(cell).strip()
-    m = re.match(r"^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?$", text, re.IGNORECASE)
-    if m:
-        h = int(m.group(1))
-        mi = int(m.group(2))
-        se = int(m.group(3) or 0)
-        ampm = m.group(4)
-        if ampm:
-            ampm = ampm.lower()
-            if ampm == "pm" and h < 12:
-                h += 12
-            if ampm == "am" and h == 12:
-                h = 0
-        return f"{h:02d}:{mi:02d}:{se:02d}"
-    # pandas datetime/time
-    try:
-        ts = pd.to_datetime(cell)
-        return ts.strftime("%H:%M:%S")
-    except Exception:
-        return text  # last resort; DB layer may still coerce
+    dt = datetime(2000, 1, 1, start.hour, start.minute)
+    dt2 = dt + timedelta(minutes=duration_min)
+    return dt2.time()
+
+def _canon_weeks_str(raw: str) -> str:
+    """
+    Accept values like '1-13', '1,2,3,5-7', even Excel numbers.
+    Return a canonical string; default to '1-13' if blank.
+    """
+    s = (raw or "").strip()
+    if not s:
+        return "1-13"
+    return s.replace(" ", "")
+
+def _count_weeks(weeks: str) -> int:
+    """
+    Count distinct week numbers in a string like '1-13' or '1,2,3,5-7'.
+    Defaults to 13 if blank.
+    """
+    s = (weeks or "").replace(" ", "")
+    if not s:
+        return 13
+    seen = set()
+    for tok in s.split(","):
+        if not tok:
+            continue
+        if "-" in tok:
+            a, b = tok.split("-", 1)
+            try:
+                x, y = int(a), int(b)
+                if x > y:
+                    x, y = y, x
+                for w in range(max(1, x), min(52, y) + 1):
+                    seen.add(w)
+            except ValueError:
+                continue
+        else:
+            try:
+                w = int(tok)
+                if 1 <= w <= 52:
+                    seen.add(w)
+            except ValueError:
+                continue
+    return max(1, len(seen))
 
 def _model_has_auto_pk(model) -> bool:
     pk = model._meta.pk
@@ -600,118 +702,104 @@ def _finalise_log(log: TimetableImportLog, stats: ImportStats, total: int, ok_st
 # ===========================
 # Master class times (MCT) import
 # ===========================
-
 def import_master_classes_xlsx(file_like, job, using: str):
     """
-    Import MasterClassTime rows (teaching activities/timetable templates)
-    and ensure Units/UnitCourses/TimeTable are created for allocation.
-    Also updates Unit.unit_name from subject_description when provided.
+    Import Master Class List.xlsx into:
+      - units (unit_code/unit_name)
+      - unit_courses (unit + course + campus + term/year)
+      - master_class_time (template rows)
+      - timetable (actual sessions used by allocation/clash)
+    Guarantees:
+      - campus exists for SB/IR/ONLINE
+      - unit_courses.course_id is NEVER NULL
+      - timetable.teaching_weeks is ALWAYS set
     """
     df = pd.read_excel(file_like)
     col = _validate_headers("master_classes", df)
 
+    # Ensure campuses baseline
+    campuses = _ensure_baseline_campuses(using=using)
+
+    term, year = _infer_term_year_from_db(using)
+    course = _get_default_course(using)
+
     stats = ImportStats()
     log = _create_log(getattr(job.file, "name", "master_classes.xlsx"), job.created_by)
-
-    # Derive year/term from alias (e.g., 2025S2)
-    year = None
-    term = None
-    try:
-        m = re.search(r"(\d{4})", using or "")
-        if m: year = int(m.group(1))
-        m2 = re.search(r"(S\d|T\d)", (using or ""), re.I)
-        if m2: term = m2.group(1).upper()
-    except Exception:
-        pass
-
-
-    # Campus normalisation
-    def norm_campus(value: str) -> str:
-        v = (value or "").strip().lower()
-        if v in {"sb", "hobart", "sandy bay"}: return "SB"
-        if v in {"ir", "launceston", "inveresk"}: return "IR"
-        if v in {"online", "distance", "web"}: return "ONLINE"
-        return (value or "").strip().upper() or "SB"
-
-
     total = len(df)
+    seen_slots: set[tuple] = set()
+
     for i, row in df.iterrows():
         try:
-            subject_code = _strip(row[col["subject_code"]])
+            subject_code        = _strip(row[col["subject_code"]])
             subject_description = _strip(row[col["subject_description"]])
             activity_group_code = _strip(row[col["activity_group_code"]])
-            activity_code = _strip(row[col["activity_code"]])
-            activity_description = _strip(row[col["activity_description"]])
-            campus_txt = _strip(row[col["campus"]])
-            campus_code = norm_campus(campus_txt)
-            location = _strip(row[col["location"]])
-            day = _as_day_name(_strip(row[col["day_of_week"]]))
-            start = _as_time(row[col["start_time"]])
-            end_time = _as_time(row[col["end_time"]]) if "end_time" in col else None
-            weeks = _strip(row[col["weeks"]])
-            staff = _strip(row[col["staff"]]) if "staff" in col else ""
-            size = int(row[col["size"]]) if ("size" in col and pd.notna(row[col["size"]])) else 0
-            
-            if not subject_code or not activity_group_code or not activity_code or not day or not start:
-                raise ValueError("Missing one of required identifying fields")
+            activity_code       = _strip(row[col["activity_code"]])
+            activity_description= _strip(row[col["activity_description"]])
+            campus_txt          = _strip(row[col["campus"]])
+            campus_code         = _norm_campus(campus_txt)
+            campus_obj          = campuses.get(campus_code) or Campus.objects.using(using).filter(campus_name=campus_code).first()
 
-            # Resolve unit_code (first 6 chars like KIT101)
-            unit_code = None
-            mcode = UNIT_CODE_RX.search(subject_code or "") if 'UNIT_CODE_RX' in globals() else None
-            if mcode:
-                unit_code = mcode.group(1).upper()
+            location            = _strip(row[col["location"]])
+            day_name            = _as_day_name(_strip(row[col["day_of_week"]]))
+            start_time          = _as_time(row[col["start_time"]])
+            duration_min = _to_int(row[col["duration"]]) or 0
+
+            if "end_time" in col and pd.notna(row[col["end_time"]]):
+                end_time = _to_time(row[col["end_time"]])
             else:
-                unit_code = (subject_code or "")[:6].upper()
+                end_time = _end_time_from_start_and_duration(start_time, duration_min)
 
-            unit, created_unit = Unit.objects.using(using).get_or_create(
+            if not end_time:
+                raise ValueError("Missing/invalid duration — cannot compute end_time")
+            weeks_raw           = _strip(row[col["weeks"]])
+            weeks_canon         = _canon_weeks_str(weeks_raw)
+            weeks_count         = _count_weeks(weeks_canon)
+            staff               = _strip(row[col["staff"]]) if "staff" in col else ""
+            size                = int(row[col["size"]]) if ("size" in col and pd.notna(row[col["size"]])) else 0
+
+            # basic identity checks
+            unit_code = (subject_code or "")[:6].upper()
+            if not unit_code or not day_name or not start_time:
+                raise ValueError("Missing unit_code/day_of_week/start_time")
+
+            # --- Unit ---
+            unit, _ = Unit.objects.using(using).get_or_create(
                 unit_code=unit_code,
-                defaults={"unit_name": subject_description or unit_code},
+                defaults={"unit_name": subject_description or unit_code, "credits": None},
             )
-
             if subject_description and unit.unit_name != subject_description:
                 unit.unit_name = subject_description
                 unit.save(using=using, update_fields=["unit_name"])
 
-            # Ensure Campus exists in semester DB
-            from users.models import Campus
-            campus_obj, _ = Campus.objects.using(using).get_or_create(
-                campus_name=campus_code,
-                defaults={"campus_location": campus_txt or campus_code},
-            )
-
-            # Ensure UnitCourse for this unit+campus+term/year
-            uc_defaults = {}
-            if year: uc_defaults["year"] = year
-            if term: uc_defaults["term"] = term
-            if subject_description:
-                uc_defaults["unit_name"] = subject_description
+            # --- UnitCourse (course_id NOT NULL) ---
             uc, _ = UnitCourse.objects.using(using).get_or_create(
                 unit=unit,
-                campus=campus_obj,
-                year=year or timezone.now().year,   # fallback to current year
-                term=term or "S1",                  # fallback sensible term
-                defaults=uc_defaults,
+                course=course,                # << required, never NULL
+                campus=campus_obj,            # may be None if campus missing; allowed by DB
+                term=term,
+                year=year,
+                defaults={"status": "Active"},
             )
 
-            # Upsert MasterClassTime (natural key)
-            lookup = dict(
+            # --- MasterClassTime (template) ---
+            mct_lookup = dict(
                 subject_code=subject_code,
                 activity_group_code=activity_group_code,
                 activity_code=activity_code,
-                day_of_week=day,
-                start_time=start,
+                day_of_week=day_name,
+                start_time=start_time,
             )
-
-            defaults = dict(
+            mct_defaults = dict(
                 subject_description=subject_description,
                 activity_description=activity_description,
                 campus=campus_code,
                 location=location,
-                weeks=weeks,
+                weeks=weeks_canon,
+                teaching_weeks=weeks_count,
                 staff=staff,
                 size=size,
                 faculty="",
-                duration=0,
+                duration=duration_min,
                 buffer=0,
                 adjusted_size=size,
                 student_count=0,
@@ -722,31 +810,41 @@ def import_master_classes_xlsx(file_like, job, using: str):
                 available_for_allocation=True,
                 updated_at=timezone.now(),
             )
+            mct, _ = MasterClassTime.objects.using(using).update_or_create(**mct_lookup, defaults=mct_defaults)
 
-            mct, _ = MasterClassTime.objects.using(using).update_or_create(**lookup, defaults=defaults)
-            
-            # Seed a TimeTable row for allocation (unassigned)
-            tt_lookup = dict(
+            # --- TimeTable (sessions used by allocation/clash) ---
+            slot_id = _slot_key(uc.pk, day_name, start_time, location)
+            if slot_id in seen_slots:
+                stats.log(
+                    f"Row {i+2}: duplicate timetable slot for {unit_code} "
+                    f"{day_name} {start_time} {location or ''} — skipped."
+                )
+                continue
+            seen_slots.add(slot_id)
+
+            lookup = dict(
                 unit_course=uc,
-                day_of_week=day,
-                start_time=start,
-                room=location or "",
+                campus=campus_obj,   
+                day_of_week=day_name,  
+                start_time=start_time,
             )
-            tt_defaults = dict(
-                end_time=end_time,
+
+            defaults = dict(
+                room=location or "",
+                end_time=end_time,         # already computed from start + duration
+                master_class=mct,
+                tutor_user=None,           # leave pending for manual assignment later
                 start_date=None,
                 end_date=None,
-                campus=campus_obj,
-                master_class=mct,
-                tutor_user=None,
                 updated_at=timezone.now(),
             )
-            TimeTable.objects.using(using).update_or_create(**tt_lookup, defaults=tt_defaults)
-                        
+
+            TimeTable.objects.using(using).update_or_create(**lookup, defaults=defaults)
             stats.inc()
 
+
         except Exception as ex:
-            stats.log(f"Row {i + 2}: {ex}")
+            stats.log(f"Row {i+2}: {ex}")
 
     _finalise_log(log, stats, total, ok_status="MASTER_CLASSES")
     job.rows_ok = stats.ok
@@ -759,13 +857,22 @@ def import_master_classes_xlsx(file_like, job, using: str):
 # Tutorial allocations import
 # ===========================
 
-def _resolve_current_unit_course(using: str, unit: Unit) -> UnitCourse | None:
+def _resolve_current_unit_course(using: str, unit: Unit) -> Optional[UnitCourse]:
     """
-    Pick a reasonable UnitCourse (latest year then created_at) for the given unit.
+    Pick (or lazily create) a UnitCourse for the given unit so later imports never fail.
     """
-    qs = UnitCourse.objects.using(using).filter(unit=unit).order_by("-year", "-created_at")
-    return qs.first()
-
+    uc = (UnitCourse.objects.using(using)
+          .filter(unit=unit)
+          .order_by("-year", "-created_at")
+          .first())
+    if uc:
+        return uc
+    # lazily create with default course & inferred term/year
+    term, year = _infer_term_year_from_db(using)
+    default_course = _get_default_course(using)
+    return UnitCourse.objects.using(using).create(
+        unit=unit, course=default_course, campus=None, term=term, year=year, status="Active"
+    )
 
 def import_tutorial_allocations_xlsx(file_like, job, using: str):
     """
@@ -818,7 +925,6 @@ def import_tutorial_allocations_xlsx(file_like, job, using: str):
             )
             defaults = dict(
                 end_time=end,
-                start_date=None,
                 end_date=None,
                 campus=uc.campus if hasattr(uc, "campus") else None,
                 master_class=mct,
@@ -881,11 +987,10 @@ def _to_time(x: Any) -> Optional[time]:
         m = int((seconds % 3600) // 60)
         s = int(seconds % 60)
         return time(h, m, s)
-    # string
     s = str(x).strip()
-    # "1:23 PM"/"13:23"
     try:
-        for fmt in ("%H:%M", "%H:%M:%S", "%I:%M %p", "%I:%M:%S %p"):
+        for fmt in ("%H:%M", "%H:%M:%S", "%H:%M:%S.%f",
+                    "%I:%M %p", "%I:%M:%S %p", "%I:%M:%S.%f %p"):
             try:
                 return datetime.strptime(s, fmt).time()
             except Exception:
@@ -893,7 +998,6 @@ def _to_time(x: Any) -> Optional[time]:
     except Exception:
         pass
     return None
-
 
 # ---------- models via apps registry (avoids hard imports & circulars) ----------
 
@@ -1207,20 +1311,6 @@ def import_eoi_excel(fileobj, job, using: str):
     creating Units/Campuses/Users as needed in the current semester DB.
     """
     rows = _parse_casual_master_eoi(fileobj)
-
-    from eoi.models import EoiApp
-    from units.models import Unit
-    from users.models import Campus, User
-
-    # campus synonym map
-    CAMPUS_MAP = {
-        "hobart": "SB",
-        "sandy bay": "SB",
-        "launceston": "IR",
-        "inveresk": "IR",
-        "online": "ONLINE",
-        "distance": "ONLINE",
-    }
 
     created = 0
     updated = 0
