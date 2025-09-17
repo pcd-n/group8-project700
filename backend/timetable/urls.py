@@ -1,5 +1,6 @@
 from django.urls import path
+from .views import sessions_list
 
 urlpatterns = [
-    # Add your URL patterns here for timetable app
+    path("sessions/", sessions_list, name="sessions-list"),
 ]

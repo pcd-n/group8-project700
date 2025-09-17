@@ -16,7 +16,8 @@ urlpatterns = [
     path("unitdetails/", TemplateView.as_view(template_name="unitdetails.html"), name="unit_details"),
     path("allocations/<int:id>/", TemplateView.as_view(template_name="allocationdetails.html"), name="alloc_details"),
     path("allocationdetails.html", TemplateView.as_view(template_name="allocationdetails.html")),
-
+    path("api/", include("timetable.urls")),
+    
     # HEALTH / STATUS (moved off '/')
     path("health/", health_view, name="health"),
 
