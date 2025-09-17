@@ -1,3 +1,4 @@
+#timetable/models.py
 from django.db import models
 from django.utils import timezone
 from units.models import UnitCourse
@@ -391,7 +392,7 @@ class TimetableImportLog(models.Model):
         help_text="User who uploaded the file"
     )
     status = models.CharField(
-        max_length=20,
+        max_length=50,
         choices=STATUS_CHOICES,
         default='Pending',
         help_text="Status of the import process"

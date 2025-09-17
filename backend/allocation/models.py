@@ -1,3 +1,4 @@
+#allocation/models.py
 from django.db import models
 from django.conf import settings
 
@@ -17,7 +18,7 @@ class Allocation(models.Model):
     )
     preference = models.IntegerField(default=0)  # copy of coordinator preference
     status = models.CharField(
-        max_length=20,
+        max_length=50,
         choices=[("pending", "Pending"), ("completed", "Completed")],
         default="pending",
     )

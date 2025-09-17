@@ -1,3 +1,4 @@
+#imports/services.py
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -574,7 +575,7 @@ def _create_log(filename: str, uploaded_by: User) -> TimetableImportLog:
     return TimetableImportLog.objects.create(
         import_id=uuid.uuid4(),
         filename=filename,
-        status="RUNNING",
+        status="Processing",
         total_rows=0,
         processed_rows=0,
         error_rows=0,
@@ -589,7 +590,7 @@ def _finalise_log(log: TimetableImportLog, stats: ImportStats, total: int, ok_st
     log.processed_rows = stats.ok
     log.error_rows = stats.err
     log.error_log = "\n".join(stats.errors)
-    log.status = "COMPLETED" if stats.err == 0 else "COMPLETED_WITH_ERRORS"
+    log.status = "Completed" if stats.err == 0 else "Failed"
     log.completed_at = timezone.now()
     log.save(update_fields=[
         "total_rows", "processed_rows", "error_rows", "error_log", "status", "completed_at"
@@ -679,14 +680,16 @@ def import_master_classes_xlsx(file_like, job, using: str):
             )
 
             # Ensure UnitCourse for this unit+campus+term/year
-            uc_defaults = {"status": "Active"}
+            uc_defaults = {}
             if year: uc_defaults["year"] = year
             if term: uc_defaults["term"] = term
+            if subject_description:
+                uc_defaults["unit_name"] = subject_description
             uc, _ = UnitCourse.objects.using(using).get_or_create(
                 unit=unit,
                 campus=campus_obj,
-                year=year,
-                term=term,
+                year=year or timezone.now().year,   # fallback to current year
+                term=term or "S1",                  # fallback sensible term
                 defaults=uc_defaults,
             )
 

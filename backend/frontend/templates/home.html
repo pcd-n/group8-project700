@@ -172,10 +172,10 @@
       semestersList: "/semesters/",
       semestersCreate: "/semesters/create/",
       semestersSelect: "/semesters/select/",
-      semestersCurrent: "/semesters/current/", // returns { alias, year, term, ... }
-
-      // whoami (optional; used to show admin panel)
-      meCandidates: ["/users/me/", "/me/"],
+      current: () => `/semesters/current/`,
+      upload: () => `/allocation/upload/`,                 // POST (file)
+      finalize: (alias) => `/allocation/finalize/?alias=${encodeURIComponent(alias)}`, // POST
+      runAllocation: (alias) => `/allocation/run/?alias=${encodeURIComponent(alias)}`, // POST
     };
 
     // =========================
@@ -222,16 +222,16 @@
 
     async function getCurrentAlias() {
       try {
-        const { alias } = await apiGet(API.semestersCurrent);  // works if the route exists
+        const { alias } = await apiGet(API.current());  // FIX: call API.current()
         return alias;
       } catch (e) {
-        // fallback if /semesters/current/ isn't routed
         const list = await apiGet(API.semestersList);
         const cur = (list || []).find(s => s.is_current) || (list || [])[0];
         if (!cur) throw new Error("No semesters available");
         return cur.alias;
       }
     }
+
     // =========================
     // Admin tools visibility
     // =========================
@@ -328,6 +328,24 @@
       }
     });
 
+    async function proceedToAllocation() {
+      try {
+        // 1) Upload EOI workbook (already current by design)
+        await apiPostFile(API.upload(), fileInput.files[0]);
+
+        // 2) Finalize workbook (still in current alias)
+        const current = await apiGet(API.current()); // { alias: "sem_2023_s4", ... }
+        await apiPostJSON(API.finalize(current.alias), {});
+
+        // 3) Run allocation (again in current alias)
+        await apiPostJSON(API.runAllocation(current.alias), {});
+
+        // 4) Redirect to allocation details for the **current** alias
+        location.href = `/allocationdetails.html?alias=${encodeURIComponent(current.alias)}`;
+      } catch (err) {
+        alert(err.message || err);
+      }
+    }
     // =========================
     // EOI upload (unchanged UX) + local preview
     // =========================
@@ -538,6 +556,7 @@
       await loadSemesters();
       try {
         const alias = await getCurrentAlias();
+        await loadUnitsFromServerForAlias(alias);
         const savedAlias = sessionStorage.getItem("eoiPreviewAlias");
 
         // Only restore if we're still on the same current semester DB
@@ -573,7 +592,40 @@
       } catch (e) {
         console.warn("restore preview failed:", e);
       }
+
+
     });
+
+    async function loadUnitsFromServerForAlias(alias) {
+      try {
+        const sessions = await apiGet(`/allocation/sessions/?alias=${encodeURIComponent(alias)}`);
+        if (!Array.isArray(sessions) || !sessions.length) return;
+
+        // deduplicate by unit_code
+        const byCode = new Map();
+        sessions.forEach(s => {
+          const code = (s.unit_code || s.subject_code || "").slice(0, 6).toUpperCase();
+          if (!code) return;
+          const name = (s.unit_name || s.subject_description || code).trim();
+          if (!byCode.has(code)) byCode.set(code, name);
+        });
+
+        const rowsArr = Array.from(byCode.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+        unitsBody.innerHTML = rowsArr.map(([code, name]) => {
+          const url = `unitdetails.html?code=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}`;
+          return `<tr>
+            <td class="fw-semibold"><a class="text-decoration-none" href="${url}">${code}</a></td>
+            <td><a class="text-decoration-none" href="${url}">${name}</a></td>
+          </tr>`;
+        }).join("");
+
+        unitsSection.classList.remove("hidden");
+        recordCount.textContent = `${rowsArr.length} Records Found`;
+      } catch (e) {
+        console.warn("No server-side units found:", e);
+      }
+    }
+
   </script>
 
 </body>

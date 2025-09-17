@@ -1,3 +1,4 @@
+#units/models.py
 from django.db import models
 from django.core.validators import MinValueValidator
 from users.models import Campus
@@ -125,7 +126,7 @@ class UnitCourse(models.Model):
         help_text="Academic year"
     )
     status = models.CharField(
-        max_length=20,
+        max_length=50,
         choices=STATUS_CHOICES,
         default='Active',
         help_text="Current status of this unit-course relationship"
