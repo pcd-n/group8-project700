@@ -13,44 +13,63 @@ DAY_MAP = {
 @require_GET
 def sessions_list(request):
     """
-    Returns timetable sessions for a semester alias, optionally filtered by unit_code and campus.
-    Response items include: activity_code (unit code), unit_name, campus, day_of_week, start/end, duration, location, weeks, notes, tutor.
+    Return timetable sessions for alias, optionally filtered by unit_code & campus.
+    Safe across old semester DBs that don't have 'notes' yet.
     """
     alias = request.GET.get("alias") or get_current_semester_alias()
     unit_code = request.GET.get("unit_code")
     campus = request.GET.get("campus")
 
-    # IMPORTANT: switch DB via router context; DO NOT call .using(alias)
     with force_write_alias(alias):
-        qs = (TimeTable.objects
-              .select_related("unit_course__unit", "unit_course__campus", "tutor_user")
-              .all())
+        qs = TimeTable.objects.select_related(
+            "unit_course__unit", "unit_course__campus", "tutor_user", "master_class"
+        )
 
         if unit_code:
             qs = qs.filter(unit_course__unit__unit_code__iexact=unit_code)
-
         if campus:
             qs = qs.filter(unit_course__campus__campus_name__iexact=campus)
 
         rows = []
         for t in qs:
-            # duration in minutes (safe even if times are None)
-            duration = 0
+            # duration
+            dur = 0
             if t.start_time and t.end_time:
                 s = t.start_time.hour * 60 + t.start_time.minute
                 e = t.end_time.hour * 60 + t.end_time.minute
-                duration = max(0, e - s)
+                dur = max(0, e - s)
 
-            # weeks string (support either weeks or teaching_weeks on master_class)
+            # weeks string (master_class may store weeks/teaching_weeks)
             weeks_str = ""
-            if getattr(t, "master_class", None) is not None:
-                weeks_str = getattr(t.master_class, "weeks", "") or ""
+            mc = getattr(t, "master_class", None)
+            if mc:
+                weeks_str = getattr(mc, "weeks", "") or ""
                 if not weeks_str:
-                    tw = getattr(t.master_class, "teaching_weeks", None)
+                    tw = getattr(mc, "teaching_weeks", None)
                     weeks_str = str(tw) if tw is not None else ""
 
             unit = t.unit_course.unit if t.unit_course else None
-            campus_name = t.unit_course.campus.campus_name if (t.unit_course and t.unit_course.campus) else ""
+            campus_name = (
+                t.unit_course.campus.campus_name
+                if (t.unit_course and t.unit_course.campus)
+                else ""
+            )
+
+            # Be defensive: older DBs may not have 'notes' column yet
+            try:
+                notes_val = t.notes or ""
+            except Exception:
+                notes_val = ""
+
+            # tutor may be missing / NULL
+            tutor_name = ""
+            tutor_email = ""
+            try:
+                if getattr(t, "tutor_user", None):
+                    tutor_name = t.tutor_user.get_full_name() or ""
+                    tutor_email = t.tutor_user.email or ""
+            except Exception:
+                pass
 
             rows.append({
                 "session_id":   getattr(t, "timetable_id", t.pk),
@@ -60,12 +79,12 @@ def sessions_list(request):
                 "day_of_week":   DAY_MAP.get(t.day_of_week, t.day_of_week),
                 "start_time":    t.start_time.strftime("%H:%M") if t.start_time else "",
                 "end_time":      t.end_time.strftime("%H:%M") if t.end_time else "",
-                "duration":      duration,
+                "duration":      dur,
                 "location":      t.room or "",
                 "weeks":         weeks_str,
-                "notes": t.notes or "",
-                "tutor": (t.tutor_user.get_full_name() if t.tutor_user else ""),
-                "tutor_email": (t.tutor_user.email if t.tutor_user else ""),
+                "notes":         notes_val,        # <- safe for old DBs
+                "tutor":         tutor_name,
+                "tutor_email":   tutor_email,
             })
 
     return JsonResponse(rows, safe=False)

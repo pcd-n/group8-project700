@@ -16,12 +16,6 @@
             margin: 2rem auto;
         }
 
-        .section-title {
-            font-weight: 600;
-            font-size: 1.25rem;
-            margin-bottom: 1rem;
-        }
-
         a.unitlink {
             text-decoration: none;
             color: inherit;
@@ -42,67 +36,91 @@
             <table class="table table-bordered align-middle">
                 <thead class="table-light">
                     <tr>
-                        <th style="width: 120px"> Unit Code</th>
-                        <th> Unit Name</th>
-                        <th style="width: 100px">Campus</th>
-                        <th style="width: 140px" class="text-end"># Sessions</th>
+                        <th style="width:120px">Unit Code</th>
+                        <th>Unit Name</th>
+                        <th style="width:100px">Campus</th>
+                        <th style="width:140px" class="text-end"># Sessions</th>
                     </tr>
                 </thead>
-                <tbody id="unitsBody"></tbody>
+                <tbody id="unitsBody">
+                    <tr>
+                        <td colspan="4" class="text-center text-muted">Loading…</td>
+                    </tr>
+                </tbody>
             </table>
         </div>
         <div id="recordCount" class="small text-muted"></div>
     </div>
 
     <script>
-        // --- read alias from query ---
-        const params = new URLSearchParams(location.search);
-        const alias = params.get("alias") || "";
-
-        // --- auth helper (match home.html) ---
+        // ---- auth / API helpers (same style as allocationdetails.html) ----
         const API_BASE = "/api";
         const token = () => localStorage.getItem("access");
-        const authHeaders = (extra = {}) => token()
-            ? { ...extra, Authorization: `Bearer ${token()}` }
-            : extra; // server will 401 if not logged in
+        const authHeaders = (extra = {}) => token() ? ({ ...extra, Authorization: `Bearer ${token()}` }) : extra;
 
         async function apiGet(path) {
             const res = await fetch(`${API_BASE}${path}`, {
                 headers: authHeaders(),
                 credentials: "include",
             });
-            // try to extract message
-            let payload = null;
-            try { payload = await res.json(); } catch { }
-            if (!res.ok) throw new Error(payload?.detail || `GET ${path} failed (${res.status})`);
-            return payload ?? [];
+
+            // Read the body ONCE as text
+            const raw = await res.text();
+
+            // Try to parse JSON from it (if any)
+            let data = null;
+            if (raw) {
+                try { data = JSON.parse(raw); } catch { /* not JSON; keep raw */ }
+            }
+
+            if (res.status === 401) {
+                window.location = "/";
+                throw new Error("Unauthorized");
+            }
+
+            if (!res.ok) {
+                // Prefer JSON error.detail, then raw text, then status line
+                const msg = (data && (data.detail || data.message)) || raw || `GET ${path} -> ${res.status}`;
+                throw new Error(msg);
+            }
+
+            // Return JSON if we parsed it, otherwise the raw text
+            return data ?? raw;
         }
 
-        // Build unit list using existing timetable endpoint
-        // /api/timetable/sessions/?alias=sem_YYYY_sX
-        async function loadUnits() {
-            document.getElementById("aliasTag").textContent = alias ? `Semester: ${alias}` : "";
+        // ---- resolve alias reliably (URL param or /semesters/current/) ----
+        async function resolveAlias() {
+            const qs = new URLSearchParams(location.search);
+            const fromUrl = qs.get("alias");
+            if (fromUrl) return fromUrl;
+            const cur = await apiGet("/semesters/current/");
+            return cur.alias;
+        }
 
-            // fetch all sessions for the alias
+        async function loadUnits() {
+            if (!token()) { window.location = "/"; return; } // require login
+
+            const alias = await resolveAlias();
+            document.getElementById("aliasTag").textContent = `Semester: ${alias}`;
+
+            // Fetch all sessions for this alias
             const sessions = await apiGet(`/timetable/sessions/?alias=${encodeURIComponent(alias)}`);
 
-            // aggregate by (unit_code, campus). sessions_list returns:
-            // { activity_code: <unit code>, campus: <campus>, ... }  (see timetable/views.py)
+            // Aggregate by (unit_code, campus); keep unit_name from API
             const byKey = new Map();
             for (const s of sessions) {
                 const code = String(s.activity_code || "").slice(0, 6).toUpperCase();
                 if (!code) continue;
                 const campus = s.campus || "";
                 const key = `${code}||${campus}`;
-                if (!byKey.has(key)) byKey.set(key, { unit_code: code, unit_name: s.unit_name || "", campus, count: 0 });
+                if (!byKey.has(key)) {
+                    byKey.set(key, { unit_code: code, unit_name: (s.unit_name || ""), campus, count: 0 });
+                }
                 byKey.get(key).count += 1;
             }
 
-            // If you also want names, you can infer from the first matching row’s master_class
-            // but sessions_list does not return name; keep blank or derive elsewhere if needed.
-
-            const rows = Array.from(byKey.values()).sort((a, b) =>
-                a.unit_code.localeCompare(b.unit_code) || a.campus.localeCompare(b.campus)
+            const rows = Array.from(byKey.values()).sort(
+                (a, b) => a.unit_code.localeCompare(b.unit_code) || a.campus.localeCompare(b.campus)
             );
 
             const tbody = document.getElementById("unitsBody");
@@ -126,10 +144,11 @@
         }
 
         document.addEventListener("DOMContentLoaded", () => {
-            if (!token()) { window.location = "/"; return; } // require login
             loadUnits().catch(err => {
                 console.error(err);
-                alert("Failed to load units.");
+                alert(`Failed to load units.\n${err.message || err}`);
+                const tbody = document.getElementById("unitsBody");
+                tbody.innerHTML = `<tr><td colspan="4" class="text-danger text-center">${(err && err.message) || "Error"}</td></tr>`;
             });
         });
     </script>
