@@ -125,7 +125,7 @@
     const sheetName = params.get("sheet") || "";
     const unitTitleStr = decodeURIComponent(params.get("title") || "");
     const unitCode = decodeURIComponent(params.get("code") || "");
-    const unitId = params.get("id") || "";     // <-- used for backend calls
+    const unitId = params.get("id") || "";
 
     document.getElementById("unitTitle").textContent = unitTitleStr || sheetName || "Unit";
 
@@ -153,8 +153,13 @@
       const unitCode = params.get("code") || "";
       const unitName = decodeURIComponent(params.get("name") || unitCode);
       const titleEl = document.getElementById("unitTitle");
-      if (titleEl) titleEl.textContent = unitName || unitCode;
-
+      if (titleEl) {
+        if (unitCode && unitName) {
+          titleEl.textContent = `${unitCode} – ${unitName}`;
+        } else {
+          titleEl.textContent = unitCode || unitName || "Unit";
+        }
+      }
       const alertBox = document.getElementById("noData");
 
       if (!unitCode) { alertBox.classList.remove("d-none"); return; }

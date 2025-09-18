@@ -101,6 +101,7 @@
         <button id="btnUpload" class="btn btn-dark btn-pill btn-wide" type="button">
           Upload EOI Spreadsheet
         </button>
+        <div id="eoiInfoRow" class="file-note mt-1"></div>
         <div id="fileName" class="file-note"></div>
 
         <!-- Tutor Allocations upload -->
@@ -108,6 +109,7 @@
         <button id="btnProceedAlloc" class="btn btn-success btn-pill btn-wide mt-2" type="button">
           Proceed to Tutor Allocation
         </button>
+        <div id="allocInfoRow" class="file-note mt-1"></div>
         <div id="allocFileName" class="file-note"></div>
       </div>
     </div>
@@ -311,7 +313,12 @@
           make_current: true,
         });
         alert(`Created ${created?.year} ${created?.term} and set as current.`);
-        await loadSemesters();
+        // Clear any cached preview state
+        ["eoiUnits", "eoiPreviewAlias", "eoiUploadDisabled", "eoiFileName"].forEach(k =>
+          sessionStorage.removeItem(k)
+        );
+        // Reload the page to start fresh on the new semester
+        location.reload();
       } catch (e) {
         alert(e.message || "Failed to create semester.");
       }
@@ -336,6 +343,19 @@
         alert(e.message || "Failed to reset view.");
       }
     });
+
+    async function semesterHasAnyData(alias) {
+      try {
+        const list = await apiGet(`/timetable/sessions/?alias=${encodeURIComponent(alias)}`);
+        return Array.isArray(list) && list.length > 0;
+      } catch { return false; }
+    }
+    async function semesterHasClassList(alias) {
+      try {
+        const list = await apiGet(`/timetable/sessions/?alias=${encodeURIComponent(alias)}`);
+        return Array.isArray(list) && list.some(s => s.start_time && s.day_of_week);
+      } catch { return false; }
+    }
 
     async function proceedToAllocation() {
       try {
@@ -499,12 +519,18 @@
     const allocFileName = document.getElementById("allocFileName");
 
     // Click -> pick file if none, otherwise run workflow
-    btnProceed?.addEventListener("click", () => {
-      if (!allocFile.files?.length) allocFile.click();
-      else startAllocationWorkflow();
-    });
+    function proceedUploadOrRun(e) {
+      if (!allocFile.files?.length) {
+        e.preventDefault();
+        e.stopPropagation();
+        allocFile.click();
+      } else {
+        startAllocationWorkflow();
+      }
+    }
+    btnProceed.addEventListener("click", proceedUploadOrRun);
 
-    // When user selects the master class list, run the workflow
+    // Keep your existing onchange:
     allocFile.addEventListener("change", () => {
       const f = allocFile.files?.[0];
       if (f) {
@@ -566,6 +592,65 @@
       try {
         const alias = await getCurrentAlias();
         await loadUnitsFromServerForAlias(alias);
+
+        // === Toggle EOI upload state if DB already exists ===
+        const btnProceed = document.getElementById("btnProceedAlloc");
+        const allocFile = document.getElementById("allocFile");
+        const btnUpload = document.getElementById("btnUpload");
+        const eoiInfoRow = document.getElementById("eoiInfoRow");
+
+        if (await semesterHasAnyData(alias)) {
+          btnUpload.disabled = true;
+          btnUpload.classList.add("disabled");
+          btnUpload.textContent = "EOI already loaded";
+          if (eoiInfoRow) {
+            eoiInfoRow.innerHTML = `
+              <div>
+                Database for <b>${alias}</b> already exists.
+                If you want to re-upload and <b>overwrite</b> it,
+                <button id="btnReuploadEOI" class="btn btn-link p-0 align-baseline">click here</button>.
+              </div>`;
+            document.getElementById("btnReuploadEOI").addEventListener("click", () => {
+              if (!confirm("This will overwrite existing EOI-derived data for this semester. Continue?")) return;
+              btnUpload.disabled = false;
+              btnUpload.classList.remove("disabled");
+              btnUpload.textContent = "Upload EOI Spreadsheet";
+              document.getElementById("eoiFile").click();
+            });
+          }
+        }
+        // If the Master Class List is already present → go straight to units
+        const hasClassList = await semesterHasClassList(alias);
+        if (hasClassList) {
+          // 2) Remove the upload-first click behavior and just navigate
+          btnProceed.removeEventListener("click", proceedUploadOrRun);
+          btnProceed.onclick = () => {
+            location.href = `/allocationunits.html?alias=${encodeURIComponent(alias)}`;
+          };
+          // (Optional) Show the overwrite note/button next to Proceed:
+          const allocInfoRow = document.getElementById("allocInfoRow");
+          if (allocInfoRow) {
+            allocInfoRow.innerHTML = `
+              <div>
+                Master Class List for <b>${alias}</b> is already loaded.
+                Click “Proceed to Tutor Allocation” to open existing data.
+                To re-upload and <b>overwrite</b> it,
+                <button id="btnReuploadClass" class="btn btn-link p-0 align-baseline">click here</button>.
+              </div>`;
+            document.getElementById("btnReuploadClass").addEventListener("click", () => {
+              if (!confirm("Re-uploading will overwrite the current Master Class List for this semester. Continue?")) return;
+              allocFile.value = "";
+              allocFileName.textContent = "";
+              btnProceed.onclick = null;
+              btnProceed.addEventListener("click", proceedUploadOrRun, { once: false });
+              alert("Please choose the new Master Class List to upload.");
+            });
+          }
+        } else {
+          // return none
+        }
+
+
         const savedAlias = sessionStorage.getItem("eoiPreviewAlias");
 
         // Only restore if we're still on the same current semester DB
@@ -607,13 +692,17 @@
 
     async function loadUnitsFromServerForAlias(alias) {
       try {
-        const sessions = await apiGet(`/allocation/sessions/?alias=${encodeURIComponent(alias)}`);
+        const sessions = await apiGet(`/timetable/sessions/?alias=${encodeURIComponent(alias)}`);
         if (!Array.isArray(sessions) || !sessions.length) return;
 
-        // deduplicate by unit_code
+        // Deduplicate by unit_code (fall back to subject_code/activity_code)
         const byCode = new Map();
         sessions.forEach(s => {
-          const code = (s.unit_code || s.subject_code || "").slice(0, 6).toUpperCase();
+          const code =
+            (s.activity_code || s.unit_code || s.subject_code || "")
+              .toString()
+              .slice(0, 6)
+              .toUpperCase();
           if (!code) return;
           const name = (s.unit_name || s.subject_description || code).trim();
           if (!byCode.has(code)) byCode.set(code, name);

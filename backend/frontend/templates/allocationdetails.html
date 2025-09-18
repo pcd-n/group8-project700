@@ -103,7 +103,7 @@
           to view timetable.
         </div>
       </div>
-      <a href="home.html" class="btn btn-outline-secondary">← Back to Units</a>
+      <a id="backBtn" href="#" class="btn btn-outline-secondary">← Back to Units</a>
     </div>
 
     <div id="content"></div>
@@ -169,9 +169,23 @@
     const alias = qs.get("alias") || "";
     const code = (qs.get("code") || "").toUpperCase();
     const campus = qs.get("campus") || "";
+    const unitName = decodeURIComponent(qs.get("name") || "");
 
-    document.getElementById("title").textContent = code || "Unit";
+    document.addEventListener("DOMContentLoaded", () => {
+      const backBtn = document.getElementById("backBtn");
+      if (backBtn) {
+        backBtn.href = `allocationunits.html?alias=${encodeURIComponent(alias)}`;
+      }
 
+      const titleEl = document.getElementById("title");
+      if (titleEl) {
+        if (code && unitName) {
+          titleEl.textContent = `${code} – ${unitName}`;
+        } else {
+          titleEl.textContent = code || unitName || "Unit";
+        }
+      }
+    });
     /* ---------------- Page init ---------------- */
     document.addEventListener("DOMContentLoaded", init);
 
@@ -217,7 +231,14 @@
         <td>${s.duration || ""}</td>
         <td>${s.location || ""}</td>
         <td>
-          <input type="text" class="form-control form-control-sm staff-input d-none" placeholder="Start typing a tutor..." disabled>
+          <input 
+            type="text" 
+            class="form-control form-control-sm staff-input d-none" 
+            placeholder="Start typing a tutor..." 
+            value="${s.tutor || ""}"
+            data-user-id="${s.tutor_user_id || ""}"
+            data-email="${s.tutor_email || ""}"
+            disabled>
           <div class="staff-display">${s.tutor || ""}</div>
         </td>
         <td>
@@ -271,8 +292,8 @@
             if (staffInput.dataset.email) body.tutor_email = staffInput.dataset.email;
             await apiPost(`/allocation/assign/?alias=${encodeURIComponent(alias)}`, body);
           }
-          alert("Assignments saved.");
-          location.reload();
+          alert("Allocation saved.");
+          location.href = `/allocationunits.html?alias=${encodeURIComponent(alias)}`;
         } catch (e) {
           alert("Error: " + e.message);
         }

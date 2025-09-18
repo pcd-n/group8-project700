@@ -96,6 +96,8 @@ _EOI_SYNONYMS = {
     "campus": {"campus", "campus_name", "location"},
     "qualifications": {"qualifications", "skills", "technical_skills", "why"},
     "availability": {"availability", "hours", "tutoring_hours"},
+    "gpa": {"gpa"},
+    "references": {"references", "supervisor"},
 }
 
 _CAMPUS_ALIAS = {
@@ -1231,8 +1233,13 @@ def _parse_casual_master_eoi(file_like) -> list[dict]:
     c_location    = get_col("Tutoring Location", "Location", "Campus")
     c_hours       = get_col("Total number of tutoring hours you wish to work")
     c_scholarship = get_col("Do you receive a Scholarship")
-    c_gpa         = get_col("What is your GPA")
-    c_supervisor  = get_col("Please indicate your supervisor name", "references")
+    c_gpa         = get_col("What is your GPA", "GPA")
+    c_supervisor = get_col(
+        "Please indicate your supervisor name / references in School of ICT",
+        "Please indicate your supervisor name / references",
+        "Please indicate your supervisor name",
+        "reference name", "references", "supervisor"
+    )
     c_applied     = get_col("Please select up to five units", "applied unit")
     c_skills      = get_col("What technical and/or other skills", "Why do you want to teach this unit")
     c_experience  = get_col("Have you tutored any of the ICT units")
@@ -1391,7 +1398,10 @@ def import_eoi_excel(fileobj, job, using: str):
                     try:
                         g = ex.get("gpa"); obj.gpa = float(g) if str(g or "").strip() not in {"", "nan"} else obj.gpa
                     except Exception: pass
-                    if ex.get("supervisor"): obj.supervisor = ex["supervisor"]
+                    sup = ex.get("supervisor")
+                    if sup is not None:
+                        s = str(sup).strip()
+                        obj.supervisor = "" if s.lower() in {"", "nan"} else s
                     if ex.get("applied_units"): obj.applied_units = ex["applied_units"]
                     if ex.get("tutoring_experience"): obj.tutoring_experience = ex["tutoring_experience"]
                     try:

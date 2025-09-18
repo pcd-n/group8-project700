@@ -117,7 +117,7 @@ class MasterClassTime(models.Model):
         default="",
         help_text="Free text notes for this timetable slot"
     )
-        
+
     # Display and availability flags
     show_on_timetable = models.BooleanField(
         default=True,
@@ -226,6 +226,12 @@ class TimeTable(models.Model):
         blank=True,
         related_name='timetable_allocations',
         help_text="Reference to master class schedule"
+    )
+
+    notes = models.TextField(
+        blank=True,
+        default="",
+        help_text="Allocation notes for this session"
     )
     
     # Location and timing

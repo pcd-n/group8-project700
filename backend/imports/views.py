@@ -15,9 +15,16 @@ from .models import UploadJob
 from .services import IMPORT_DISPATCH 
 
 def _pretty_err(e: Exception) -> str:
-    if hasattr(e, "args") and len(e.args) >= 2 and isinstance(e.args[1], str):
-        return e.args[1]
-    return getattr(e, "message", None) or " ".join(str(a) for a in getattr(e, "args", ())) or str(e)
+    if isinstance(e, ValidationError):
+        if getattr(e, "messages", None):
+            return "; ".join(map(str, e.messages))
+        if getattr(e, "message", None):
+            return str(e.message)
+
+    if getattr(e, "args", None):
+        return " ".join(str(a) for a in e.args) or str(e)
+
+    return str(e)
 
 class FinalizeEOIView(APIView):
     permission_classes = [IsAuthenticated]

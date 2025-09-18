@@ -22,13 +22,13 @@ def sessions_list(request):
 
     with force_write_alias(alias):
         qs = TimeTable.objects.select_related(
-            "unit_course__unit", "unit_course__campus", "tutor_user", "master_class"
+            "unit_course__unit", "campus", "tutor_user", "master_class"
         )
 
         if unit_code:
             qs = qs.filter(unit_course__unit__unit_code__iexact=unit_code)
         if campus:
-            qs = qs.filter(unit_course__campus__campus_name__iexact=campus)
+            qs = qs.filter(campus__campus_name__iexact=campus)
 
         rows = []
         for t in qs:
@@ -49,11 +49,7 @@ def sessions_list(request):
                     weeks_str = str(tw) if tw is not None else ""
 
             unit = t.unit_course.unit if t.unit_course else None
-            campus_name = (
-                t.unit_course.campus.campus_name
-                if (t.unit_course and t.unit_course.campus)
-                else ""
-            )
+            campus_name = t.campus.campus_name if t.campus else ""
 
             # Be defensive: older DBs may not have 'notes' column yet
             try:
