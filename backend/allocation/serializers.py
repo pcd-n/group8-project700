@@ -26,8 +26,18 @@ class AllocationSerializer(serializers.ModelSerializer):
             "campus_id": getattr(s, "campus_id", None),
         }
 
-
 class ManualAssignSerializer(serializers.Serializer):
     session_id = serializers.IntegerField()
     tutor_id = serializers.IntegerField()
     preference = serializers.IntegerField(required=False, default=0)
+
+class AssignRequestSerializer(serializers.Serializer):
+    session_id = serializers.IntegerField()
+    tutor_user_id = serializers.IntegerField(required=False)
+    tutor_email = serializers.EmailField(required=False, allow_blank=True)
+    notes = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        if not attrs.get("tutor_user_id") and not attrs.get("tutor_email"):
+            raise serializers.ValidationError("Provide tutor_user_id or tutor_email.")
+        return attrs

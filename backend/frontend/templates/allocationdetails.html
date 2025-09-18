@@ -471,6 +471,25 @@
         }
       });
 
+      async function suggest(el, unitCode, campus) {
+        const q = el.value.trim();
+        if (!q) { hideMenu(); return; }
+        const list = await apiGet(`/allocation/suggest_tutors/?alias=${alias}&unit_code=${unitCode}&campus=${campus}&q=${encodeURIComponent(q)}`);
+        renderMenu(el, list); // build a small dropdown under the input
+      }
+      function pickSuggestion(inputEl, item) {
+        inputEl.value = `${item.name} (${item.email})${item.preference ? ' — pref ' + item.preference : ''}`;
+        inputEl.dataset.userId = item.id;        // <- used on submit
+      }
+      async function saveRow(sessionId, inputEl, notesEl) {
+        const body = {
+          session_id: sessionId,
+          tutor_user_id: Number(inputEl.dataset.userId || 0) || undefined,
+          notes: notesEl.value || "",
+        };
+        const res = await apiPost(`/allocation/assign/?alias=${alias}`, body);
+      }
+
       async function submitAssignmentsAPI() {
         const access = getAccessToken();
         if (!access) { window.location.href = "/"; return; }

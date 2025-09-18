@@ -6,7 +6,10 @@ from .views import (
     ApproveAllocationsView,
     TutorTimetableView,
     SessionsByUnitCode,
-    AssignTutor,
+    UnitSessionsView,
+    UnitsForAllocationView,
+    AssignTutorView,
+    SuggestTutorsView,
     RunAllocationView,
 )
 
@@ -18,5 +21,8 @@ urlpatterns = [
     path("approve/", ApproveAllocationsView.as_view(), name="approve_allocations"),
     path("tutor/<int:tutor_id>/", TutorTimetableView.as_view(), name="tutor_timetable"),
     path("sessions/", SessionsByUnitCode.as_view(), name="allocation-sessions"),
-    path("assign/", AssignTutor.as_view(), name="allocation-assign"),
+    path("units/", UnitsForAllocationView.as_view()),                     # GET ?alias=
+    path("unit/<str:unit_code>/sessions/", UnitSessionsView.as_view()),   # GET ?alias=&campus=
+    path("suggest_tutors/", SuggestTutorsView.as_view()),                 # GET ?alias=&unit_code=&campus=&q=
+    path("assign/", AssignTutorView.as_view()),
 ]

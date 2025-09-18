@@ -350,7 +350,7 @@
         await apiPostJSON(API.runAllocation(current.alias), {});
 
         // 4) Redirect to allocation details for the **current** alias
-        location.href = `/allocationdetails.html?alias=${encodeURIComponent(current.alias)}`;
+        location.href = `/allocationunits.html?alias=${encodeURIComponent(current.alias)}`;
       } catch (err) {
         alert(err.message || err);
       }

@@ -112,6 +112,7 @@ class MasterClassTime(models.Model):
         blank=True,
         help_text="Class group"
     )
+    notes = models.TextField(blank=True, default="")
     
     # Display and availability flags
     show_on_timetable = models.BooleanField(
