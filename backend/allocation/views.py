@@ -16,6 +16,7 @@ from semesters.threadlocal import force_write_alias
 from semesters.router import get_current_semester_alias
 from users.models import User, Campus
 from units.models import Unit, UnitCourse
+from .serializers import AssignRequestSerializer
 
 User = get_user_model()
 
@@ -27,24 +28,6 @@ class AssignSer(serializers.Serializer):
     tutor_id = serializers.IntegerField()
     preference = serializers.IntegerField(required=False, default=0)
 
-class AssignTutor(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request):
-        ser = AssignSer(data=request.data)
-        ser.is_valid(raise_exception=True)
-        tt = TimeTable.objects.get(pk=ser.validated_data["session_id"])
-        tutor = User.objects.get(pk=ser.validated_data["tutor_id"])
-        alloc, _ = Allocation.objects.get_or_create(
-            session=tt, tutor=tutor, defaults={"created_by": request.user}
-        )
-        # update optional fields
-        alloc.preference = ser.validated_data.get("preference", alloc.preference)
-        alloc.status = "completed"
-        alloc.approved = False
-        alloc.save()
-        return Response({"ok": True, "allocation_id": alloc.id}, status=status.HTTP_200_OK)
-    
 class AllocationListView(generics.ListAPIView):
     """
     List all allocations in a semester (filter by year/term).
@@ -207,10 +190,13 @@ class SessionsByUnitCode(APIView):
         if not code:
             return Response([], status=200)
 
-        qs = TimeTable.objects.filter(unit__unit_code__iexact=code).select_related("unit").prefetch_related("allocations__tutor")
+        qs = (TimeTable.objects
+              .filter(unit_course__unit__unit_code__iexact=code)
+              .select_related("unit_course__unit")
+              .prefetch_related("allocations__tutor"))
         data = TimeTableSessionSerializer(qs, many=True).data
         return Response(data, status=200)
-
+    
 class UnitSessionsView(APIView):
     """Return all sessions for one unit code (optionally filtered by campus)."""
     permission_classes = [IsAuthenticated]
@@ -299,74 +285,89 @@ class SuggestTutorsView(APIView):
             results.sort(key=lambda r: (r["preference"] is None, r["preference"] or 9999, r["name"].lower()))
             return Response(results)
 
+# allocation/views.py
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework import status
+
+from semesters.threadlocal import force_write_alias
+from semesters.router import get_current_semester_alias
+
+from users.models import User
+from timetable.models import TimeTable
+from .serializers import AssignRequestSerializer
+
+
 class AssignTutorView(APIView):
-    """Assign a tutor (by user_id or email) and set notes for a timetable session."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         alias = request.query_params.get("alias") or get_current_semester_alias()
-        payload = request.data or {}
+        ser = AssignRequestSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        data = ser.validated_data
 
-        session_id   = payload.get("session_id")
-        tutor_user_id = payload.get("tutor_user_id")
-        tutor_email   = payload.get("tutor_email")
-        notes         = payload.get("notes", "")
-
-        if not session_id:
-            return Response({"detail": "session_id is required."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Switch DB via router context; do NOT chain .using(alias)
         with force_write_alias(alias):
-            # 1) Find the session row
-            tt = TimeTable.objects.filter(pk=session_id).select_related("tutor_user").first()
+            # 1) session lookup
+            tt = TimeTable.objects.select_related("tutor_user", "master_class").filter(pk=data["session_id"]).first()
             if not tt:
                 return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
 
-            # 2) Resolve tutor (optional – we allow notes-only update)
+            # 2) resolve tutor by id OR email (email is unique)
             tutor = None
-            if tutor_user_id is not None:
-                try:
-                    tutor_user_id = int(tutor_user_id)
-                except (TypeError, ValueError):
-                    return Response({"detail": "tutor_user_id must be an integer."}, status=status.HTTP_400_BAD_REQUEST)
-                tutor = User.objects.filter(pk=tutor_user_id).first()
+            if data.get("tutor_user_id") is not None:
+                tutor = User.objects.filter(pk=data["tutor_user_id"]).first()
                 if not tutor:
                     return Response({"detail": "Tutor not found for tutor_user_id."}, status=status.HTTP_400_BAD_REQUEST)
-            elif tutor_email:
-                tutor = User.objects.filter(email__iexact=str(tutor_email).strip()).first()
+            elif data.get("tutor_email"):
+                tutor = User.objects.filter(email__iexact=data["tutor_email"]).first()
                 if not tutor:
                     return Response({"detail": "Tutor not found for tutor_email."}, status=status.HTTP_400_BAD_REQUEST)
 
-            # 3) Optional clash check if we are changing / setting a tutor
+            # 3) simple clash check if setting a tutor
             if tutor and tt.start_time and tt.end_time and tt.day_of_week:
-                clash = TimeTable.objects.filter(
+                conflict = TimeTable.objects.filter(
                     tutor_user=tutor,
                     day_of_week=tt.day_of_week,
                     start_time__lt=tt.end_time,
                     end_time__gt=tt.start_time,
                 ).exclude(pk=tt.pk).exists()
-                if clash:
+                if conflict:
                     return Response({"detail": "Tutor has a time clash for this session."}, status=status.HTTP_409_CONFLICT)
 
-            # 4) Persist
-            fields = []
+            # 4) set tutor and/or notes
+            updates = []
             if tutor is not None:
                 tt.tutor_user = tutor
-                fields.append("tutor_user")
-            if notes is not None:
-                tt.notes = notes
-                fields.append("notes")
+                updates.append("tutor_user")
 
-            if fields:
-                tt.save(update_fields=fields)   # only writes in the alias selected by the router
+            if "notes" in data:
+                tt.notes = data["notes"] or ""
+                updates.append("notes")
+
+            # 5) optional: backfill start_date/end_date from master_class if missing
+            if (not tt.start_date or not tt.end_date) and getattr(tt, "master_class", None):
+                if getattr(tt.master_class, "start_date", None):
+                    tt.start_date = tt.master_class.start_date
+                    updates.append("start_date")
+                if getattr(tt.master_class, "end_date", None):
+                    tt.end_date = tt.master_class.end_date
+                    updates.append("end_date")
+
+            if updates:
+                tt.save(update_fields=list(set(updates)))  # dedupe & save minimal fields
 
             return Response({
                 "ok": True,
                 "session_id": tt.pk,
                 "tutor_user_id": tt.tutor_user_id,
+                "tutor_email": getattr(tt.tutor_user, "email", None),
                 "notes": tt.notes or "",
+                "start_date": tt.start_date,
+                "end_date": tt.end_date,
             }, status=status.HTTP_200_OK)
-        
+
 class RunAllocationView(APIView):
     """
     Runs a simple automatic allocation for the current semester DB.

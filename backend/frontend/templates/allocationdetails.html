@@ -253,12 +253,24 @@
             const staffInput = tr.querySelector(".staff-input");
             const notesInput = tr.querySelector(".notes-input");
 
-            const tutorId = staffInput.dataset.userId ? parseInt(staffInput.dataset.userId, 10) : null;
-            await apiPost(`/allocation/assign/?alias=${encodeURIComponent(alias)}`, {
-              session_id: sessionId,
-              tutor_user_id: tutorId,
-              notes: notesInput.value
-            });
+            // Prefer an ID from a picked suggestion
+            let tutorUserId = staffInput.dataset.userId ? parseInt(staffInput.dataset.userId, 10) : null;
+            let tutorEmail = staffInput.dataset.email || "";
+
+            // If they typed manually and didn't pick, try to extract an email from the text
+            if (!tutorUserId && !tutorEmail) {
+              const m = staffInput.value.match(/[\w\.\-\+]+@[\w\.\-]+\.\w+/);
+              if (m) tutorEmail = m[0];
+            }
+
+            const body = {
+              session_id: Number(sessionId),
+              notes: notesInput.value || ""
+            };
+            if (tutorUserId) body.tutor_user_id = tutorUserId;
+            else if (tutorEmail) body.tutor_email = tutorEmail;
+
+            await apiPost(`/allocation/assign/?alias=${encodeURIComponent(alias)}`, body);
           }
           alert("Assignments saved.");
           location.reload();
@@ -279,23 +291,35 @@
       if (!q) return;
 
       const list = await apiGet(`/allocation/suggest_tutors/?alias=${alias}&unit_code=${code}&campus=${campus}&q=${encodeURIComponent(q)}`);
-      let datalist = inputEl.nextElementSibling;
-      if (!datalist || datalist.tagName !== "DATALIST") {
-        datalist = document.createElement("datalist");
-        datalist.id = "dl-" + Math.random().toString(36).slice(2);
-        inputEl.setAttribute("list", datalist.id);
-        inputEl.after(datalist);
+
+      // build/update a datalist under the input
+      let dl = inputEl.nextElementSibling;
+      if (!dl || dl.tagName !== "DATALIST") {
+        dl = document.createElement("datalist");
+        dl.id = "dl-" + Math.random().toString(36).slice(2);
+        inputEl.setAttribute("list", dl.id);
+        inputEl.after(dl);
       }
-      datalist.innerHTML = list.map(t =>
-        `<option data-id="${t.id}" value="${t.name} (${t.email})${t.preference ? " pref " + t.preference : ""}"></option>`
+
+      // Keep BOTH id and email on each option
+      dl.innerHTML = list.map(t =>
+        `<option data-id="${t.id}" data-email="${t.email}" value="${t.name} (${t.email})${t.preference ? " — pref " + t.preference : ""}"></option>`
       ).join("");
 
-      // record chosen tutor id when user selects
+      // whenever a value is chosen, copy id/email into data-attrs on the input
       inputEl.addEventListener("change", () => {
-        const opt = Array.from(datalist.options).find(o => o.value === inputEl.value);
-        if (opt) inputEl.dataset.userId = opt.dataset.id;
-      });
+        const opt = Array.from(dl.options).find(o => o.value === inputEl.value);
+        if (opt) {
+          inputEl.dataset.userId = opt.dataset.id || "";
+          inputEl.dataset.email = opt.dataset.email || "";
+        } else {
+          // clear if they typed something else
+          inputEl.dataset.userId = "";
+          inputEl.dataset.email = "";
+        }
+      }, { once: true });
     }
+
   </script>
 
 </body>

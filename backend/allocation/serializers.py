@@ -32,12 +32,13 @@ class ManualAssignSerializer(serializers.Serializer):
     preference = serializers.IntegerField(required=False, default=0)
 
 class AssignRequestSerializer(serializers.Serializer):
-    session_id = serializers.IntegerField()
-    tutor_user_id = serializers.IntegerField(required=False)
-    tutor_email = serializers.EmailField(required=False, allow_blank=True)
-    notes = serializers.CharField(required=False, allow_blank=True)
+    session_id     = serializers.IntegerField()
+    tutor_user_id  = serializers.IntegerField(required=False, allow_null=True)
+    tutor_email    = serializers.EmailField(required=False, allow_blank=True)
+    notes          = serializers.CharField(required=False, allow_blank=True)
 
     def validate(self, attrs):
-        if not attrs.get("tutor_user_id") and not attrs.get("tutor_email"):
-            raise serializers.ValidationError("Provide tutor_user_id or tutor_email.")
+        # allow notes-only, but require at least one of tutor fields or notes to be present
+        if not attrs.get("tutor_user_id") and not attrs.get("tutor_email") and "notes" not in attrs:
+            raise serializers.ValidationError("Provide tutor_user_id, tutor_email, or notes.")
         return attrs
