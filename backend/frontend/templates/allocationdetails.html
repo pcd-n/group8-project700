@@ -267,9 +267,8 @@
               session_id: Number(sessionId),
               notes: notesInput.value || ""
             };
-            if (tutorUserId) body.tutor_user_id = tutorUserId;
-            else if (tutorEmail) body.tutor_email = tutorEmail;
-
+            if (staffInput.dataset.userId) body.tutor_user_id = parseInt(staffInput.dataset.userId, 10);
+            if (staffInput.dataset.email) body.tutor_email = staffInput.dataset.email;
             await apiPost(`/allocation/assign/?alias=${encodeURIComponent(alias)}`, body);
           }
           alert("Assignments saved.");

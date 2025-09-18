@@ -285,20 +285,6 @@ class SuggestTutorsView(APIView):
             results.sort(key=lambda r: (r["preference"] is None, r["preference"] or 9999, r["name"].lower()))
             return Response(results)
 
-# allocation/views.py
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from rest_framework import status
-
-from semesters.threadlocal import force_write_alias
-from semesters.router import get_current_semester_alias
-
-from users.models import User
-from timetable.models import TimeTable
-from .serializers import AssignRequestSerializer
-
-
 class AssignTutorView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -309,34 +295,89 @@ class AssignTutorView(APIView):
         data = ser.validated_data
 
         with force_write_alias(alias):
-            # 1) session lookup
-            tt = TimeTable.objects.select_related("tutor_user", "master_class").filter(pk=data["session_id"]).first()
+            # --- 1) find the session in the semester DB ---
+            tt = (TimeTable.objects
+                  .select_related("tutor_user", "master_class", "unit_course")
+                  .filter(pk=data["session_id"])
+                  .first())
             if not tt:
                 return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
 
-            # 2) resolve tutor by id OR email (email is unique)
             tutor = None
-            if data.get("tutor_user_id") is not None:
-                tutor = User.objects.filter(pk=data["tutor_user_id"]).first()
-                if not tutor:
-                    return Response({"detail": "Tutor not found for tutor_user_id."}, status=status.HTTP_400_BAD_REQUEST)
-            elif data.get("tutor_email"):
-                tutor = User.objects.filter(email__iexact=data["tutor_email"]).first()
-                if not tutor:
-                    return Response({"detail": "Tutor not found for tutor_email."}, status=status.HTTP_400_BAD_REQUEST)
+            # helpers
+            def get_semester_user_by_id(uid: int):
+                return User.objects.using(alias).filter(pk=uid).first()
 
-            # 3) simple clash check if setting a tutor
+            def get_semester_user_by_email(email: str):
+                return User.objects.using(alias).filter(email__iexact=email).first()
+
+            def get_default_user_by_id(uid: int):
+                return User.objects.filter(pk=uid).first()
+
+            def get_default_user_by_email(email: str):
+                return User.objects.filter(email__iexact=email).first()
+
+            sent_uid   = data.get("tutor_user_id")
+            sent_email = (data.get("tutor_email") or "").strip()
+
+            # --- 2) resolve tutor robustly ---
+            # Try: semester by ID
+            if sent_uid is not None:
+                tutor = get_semester_user_by_id(sent_uid)
+
+            # If not found and we have email, try semester by email
+            if tutor is None and sent_email:
+                tutor = get_semester_user_by_email(sent_email)
+
+            # If still not found, see if default has it → map by email back to semester
+            if tutor is None:
+                default_user = None
+                if sent_uid is not None:
+                    default_user = get_default_user_by_id(sent_uid)
+                if not default_user and sent_email:
+                    default_user = get_default_user_by_email(sent_email)
+
+                if default_user:
+                    # map by email to semester DB
+                    mapped = get_semester_user_by_email(default_user.email or "")
+                    if mapped:
+                        tutor = mapped
+                    else:
+                        # If there is no same-email user in the semester DB, we cannot set FK.
+                        # Return a clear error so the coordinator knows to create/clone the user for this semester.
+                        return Response(
+                            {"detail": "Tutor exists only in default DB; create this tutor in the current semester database or add them to the EOI/users sync."},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+
+            # If they provided both id and email and they clash, prefer semester record; else error
+            if tutor and sent_uid is not None and sent_email:
+                sem_check = get_semester_user_by_id(sent_uid)
+                if sem_check and sem_check.email and sem_check.email.lower() != sent_email.lower():
+                    return Response(
+                        {"detail": "Provided tutor_user_id and tutor_email refer to different users."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+            # If final tutor is still None and they sent an id/email, report not found
+            if tutor is None and (sent_uid is not None or sent_email):
+                return Response({"detail": "Tutor not found for tutor_user_id / tutor_email."},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+            # --- 3) clash check (only if we are assigning a tutor) ---
             if tutor and tt.start_time and tt.end_time and tt.day_of_week:
-                conflict = TimeTable.objects.filter(
-                    tutor_user=tutor,
-                    day_of_week=tt.day_of_week,
-                    start_time__lt=tt.end_time,
-                    end_time__gt=tt.start_time,
-                ).exclude(pk=tt.pk).exists()
+                conflict = (TimeTable.objects
+                            .filter(tutor_user=tutor,
+                                    day_of_week=tt.day_of_week,
+                                    start_time__lt=tt.end_time,
+                                    end_time__gt=tt.start_time)
+                            .exclude(pk=tt.pk)
+                            .exists())
                 if conflict:
-                    return Response({"detail": "Tutor has a time clash for this session."}, status=status.HTTP_409_CONFLICT)
+                    return Response({"detail": "Tutor has a time clash for this session."},
+                                    status=status.HTTP_409_CONFLICT)
 
-            # 4) set tutor and/or notes
+            # --- 4) save updates in semester DB ---
             updates = []
             if tutor is not None:
                 tt.tutor_user = tutor
@@ -346,7 +387,7 @@ class AssignTutorView(APIView):
                 tt.notes = data["notes"] or ""
                 updates.append("notes")
 
-            # 5) optional: backfill start_date/end_date from master_class if missing
+            # optional: backfill start/end dates from master_class if missing
             if (not tt.start_date or not tt.end_date) and getattr(tt, "master_class", None):
                 if getattr(tt.master_class, "start_date", None):
                     tt.start_date = tt.master_class.start_date
@@ -356,7 +397,7 @@ class AssignTutorView(APIView):
                     updates.append("end_date")
 
             if updates:
-                tt.save(update_fields=list(set(updates)))  # dedupe & save minimal fields
+                tt.save(update_fields=list(set(updates)))
 
             return Response({
                 "ok": True,
