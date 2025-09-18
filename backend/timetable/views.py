@@ -12,12 +12,15 @@ DAY_MAP = {
 def sessions_list(request):
     alias = request.GET.get("alias") or "current"
     unit_code = request.GET.get("unit_code")
+    campus = request.GET.get("campus")  # NEW
 
     qs = (TimeTable.objects.using(alias)
           .select_related("unit_course__unit", "campus", "master_class"))
 
     if unit_code:
         qs = qs.filter(unit_course__unit__unit_code__iexact=unit_code)
+    if campus:
+        qs = qs.filter(campus__campus_name__iexact=campus)
 
     rows = []
     for t in qs:
@@ -26,7 +29,7 @@ def sessions_list(request):
         if t.start_time and t.end_time:
             dur = (t.end_time.hour * 60 + t.end_time.minute) - (t.start_time.hour * 60 + t.start_time.minute)
 
-        # weeks (prefer the human-readable range string; fall back to count)
+        # weeks string
         weeks_str = ""
         if t.master_class:
             weeks_str = getattr(t.master_class, "weeks", "") or ""
@@ -36,7 +39,8 @@ def sessions_list(request):
 
         rows.append({
             "session_id":    getattr(t, "timetable_id", t.pk),
-            "activity_code": getattr(getattr(t.unit_course, "unit", None), "unit_code", ""),  # unit code
+            "activity_code": getattr(getattr(t.unit_course, "unit", None), "unit_code", ""),
+            "unit_name":     getattr(getattr(t.unit_course, "unit", None), "unit_name", ""),
             "campus":        getattr(getattr(t, "campus", None), "campus_name", "") or "",
             "day_of_week":   DAY_MAP.get(t.day_of_week, t.day_of_week),
             "start_time":    t.start_time.strftime("%H:%M") if t.start_time else "",

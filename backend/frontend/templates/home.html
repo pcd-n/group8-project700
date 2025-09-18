@@ -547,7 +547,7 @@
         console.log(msg);
         alert("Allocation completed.");
 
-        location.href = `/allocationdetails.html?alias=${encodeURIComponent(alias)}`;
+        location.href = `/allocationunits.html?alias=${encodeURIComponent(alias)}`;
       } catch (e) {
         alert(e.message || "Failed to run allocation.");
         btnProceed.disabled = false;

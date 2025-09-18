@@ -140,671 +140,161 @@
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
     /* ---------------- Auth / API helpers ---------------- */
-    const API = {
-      base: "/api",
-
-      _withSlashCombos(paths) {
-        const out = [];
-        for (const p of paths) {
-          out.push(p);
-          const i = p.indexOf("/?");     // keep the leading "/", drop only the extra slash before "?"
-          if (i !== -1) out.push(p.slice(0, i) + p.slice(i + 1));
-        }
-        return out;
-      },
-
-      sessionPaths(code, alias) {
-        const qp = code
-          ? `?unit_code=${encodeURIComponent(code)}`
-          : alias
-            ? `?alias=${encodeURIComponent(alias)}`
-            : "";
-
-        // Try several server shapes (first 200 wins):
-        const base = [
-          // allocations app
-          `/allocations/sessions/${qp}`,
-          `/allocation/sessions/${qp}`,
-          `/allocations/${qp}`,              // some installs list straight from allocations
-          // timetable app
-          `/timetable/sessions/${qp}`,
-          `/timetable/${qp}`,                // plain timetable list
-          // plain sessions
-          `/sessions/${qp}`,
-          // older param names we’ve seen in this project
-          `/allocations/sessions/?semester_alias=${encodeURIComponent(alias || "")}`,
-          `/timetable/sessions/?semester_alias=${encodeURIComponent(alias || "")}`,
-        ];
-        const paths = this._withSlashCombos(base);
-
-        // <-- add a one-off log so we can see exactly what is called in DevTools
-        console.debug("[allocdetails] trying session endpoints:", paths);
-
-        return paths;
-      },
-
-      userSearchPaths(q) {
-        const qs = `?q=${encodeURIComponent(q)}`;
-        return this._withSlashCombos([
-          `/users/search/${qs}`,
-          `/user/search/${qs}`,
-          `/users/${qs}`,
-        ]);
-      },
-
-      assignPaths() {
-        return this._withSlashCombos([
-          `/allocation/assign/`,
-          `/allocations/assign/`,
-          `/timetable/assign/`,
-        ]);
-      },
-    };
-
-    function getAccessToken() { return localStorage.getItem("access"); }
-    function authHeaders(extra = {}) {
-      const t = getAccessToken();
-      return t ? { ...extra, Authorization: `Bearer ${t}` } : extra;
-    }
+    const API_BASE = "/api";
+    const token = () => localStorage.getItem("access");
+    const authHeaders = (extra = {}) => token() ? { ...extra, Authorization: `Bearer ${token()}` } : extra;
 
     async function apiGet(path) {
-      const res = await fetch(`${API.base}${path}`, { headers: authHeaders() });
-      if (res.status === 401) { window.location.href = "/"; throw new Error("Unauthorized"); }
-      if (!res.ok) throw new Error(`GET ${path} -> ${res.status}`);
-      return res.json();
+      const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders(), credentials: "include" });
+      let data = null; try { data = await res.json(); } catch { }
+      if (res.status === 401) { window.location = "/"; throw new Error("Unauthorized"); }
+      if (!res.ok) throw new Error(data?.detail || `GET ${path} -> ${res.status}`);
+      return data;
     }
 
-    // Try a list of GET paths; return the first non-empty array (or first 200 JSON)
-    async function apiGetFirst(paths) {
-      let lastErr = null;
-      for (const p of paths) {
-        try {
-          const data = await apiGet(p);
-          if (Array.isArray(data) ? data.length : data) return data;
-        } catch (e) { lastErr = e; }
-      }
-      if (lastErr) throw lastErr;
-      return [];
-    }
-
-    async function apiPostJSON(path, body) {
-      const res = await fetch(`${API.base}${path}`, {
+    async function apiPost(path, body) {
+      const res = await fetch(`${API_BASE}${path}`, {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(body),
+        body: JSON.stringify(body)
       });
-      if (res.status === 401) { window.location.href = "/"; throw new Error("Unauthorized"); }
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || err.error || `POST ${path} -> ${res.status}`);
-      }
-      return res.json().catch(() => ({}));
+      let data = null; try { data = await res.json(); } catch { }
+      if (res.status === 401) { window.location = "/"; throw new Error("Unauthorized"); }
+      if (!res.ok) throw new Error(data?.detail || `POST ${path} -> ${res.status}`);
+      return data;
     }
 
-    async function apiPostFirst(paths, body) {
-      let lastErr = null;
-      for (const p of paths) {
-        try { return await apiPostJSON(p, body); } catch (e) { lastErr = e; }
-      }
-      throw lastErr || new Error("All POST endpoints failed");
-    }
-
-    /* ------------ query + title (existing) ------------ */
+    /* ---------------- Query params ---------------- */
     const qs = new URLSearchParams(location.search);
-    const sheetParam = decodeURIComponent(qs.get("sheet") || "");
-    const unitCode = decodeURIComponent(qs.get("code") || "");
-    const unitName = decodeURIComponent(qs.get("name") || "");
-    const aliasParam = decodeURIComponent(qs.get("alias") || "");
-    const unitTitle = unitCode ? `${unitCode} ${unitName}`.trim()
-      : (aliasParam ? `All Classes — ${aliasParam}` : (sheetParam || "Unit"));
-    document.getElementById("title").textContent = unitTitle;
+    const alias = qs.get("alias") || "";
+    const code = (qs.get("code") || "").toUpperCase();
+    const campus = qs.get("campus") || "";
 
-    // --- Normalise backend session payloads to one shape the UI expects
-    function toMinutes(hhmm) {
-      const m = String(hhmm || "").match(/^(\d{1,2}):(\d{2})/);
-      if (!m) return null;
-      return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-    }
-    function normSession(s) {
-      const start = s.start_time ?? s.start ?? s.time ?? "";
-      const end = s.end_time ?? s.end ?? "";
-      const dur = s.duration ?? s.dur ?? ((start && end) ? (toMinutes(end) - toMinutes(start)) : "");
+    document.getElementById("title").textContent = code || "Unit";
 
-      // staff may be string or array
-      const staff = Array.isArray(s.staff) ? s.staff
-        : (s.staff_names ?? s.tutors ?? s.tutor ?? s.staff ?? "");
-
-      // campus may be code or name; we’ll keep the code-ish value
-      const campus = s.campus ?? s.campus_code ?? s.campus_name ?? "";
-
-      return {
-        session_id: s.session_id ?? s.timetable_id ?? s.id ?? s.pk ?? null,
-        activity: s.activity_code ?? s.activity ?? s.act ?? "",
-        day_of_week: s.day_of_week ?? s.day ?? s.dow ?? "",
-        start_time: start,
-        duration: dur,
-        location: s.location ?? s.room ?? "",
-        weeks: s.weeks ?? s.teaching_weeks ?? s.week_pattern ?? "",
-        staff,
-        campus,
-      };
-    }
-
-    // Grouping map: DB uses SB/IR/ONLINE; show friendly labels
-    function campusBucket(c) {
-      const v = String(c || "").toUpperCase();
-      if (v.startsWith("SB") || v.includes("HOB")) return "HOBART";
-      if (v.startsWith("IR") || v.includes("LNC") || v.includes("LTN")) return "LAUNCESTON";
-      if (v.includes("ONLINE")) return "ONLINE";
-      return "OTHER";
-    }
-
-    /* ------------ storage helpers (unchanged) ------------ */
-    function safeLoad(key) {
-      try { const s = sessionStorage.getItem(key); if (s) return JSON.parse(s); } catch { }
-      try { const s = localStorage.getItem(key); if (s) return JSON.parse(s); } catch { }
-      return null;
-    }
-    function safeSave(key, obj) {
-      try { localStorage.setItem(key, JSON.stringify(obj)); return; } catch { }
-      try { sessionStorage.setItem(key, JSON.stringify(obj)); return; } catch { }
-    }
-
-    // Edit state
-    let isEditing = false;
-    const btnEdit = document.getElementById("btnEdit");
-    const btnSubmit = document.getElementById("btnSubmit");
-    const content = document.getElementById("content");
-
-    // Kick off
+    /* ---------------- Page init ---------------- */
     document.addEventListener("DOMContentLoaded", init);
 
     async function init() {
-      if (getAccessToken() && (unitCode || aliasParam)) {
-        try {
-          const raw = await apiGetFirst(API.sessionPaths(unitCode, aliasParam));
-          const sessions = Array.isArray(raw) ? raw.map(normSession).filter(s => s.session_id) : [];
-          if (sessions.length) {
-            renderFromAPI(sessions);
-            wireEditingForAPI(sessions);
-            return;
-          }
-        } catch { /* fall through to spreadsheet mode */ }
+      try {
+        const sessions = await apiGet(`/timetable/sessions/?alias=${encodeURIComponent(alias)}&unit_code=${encodeURIComponent(code)}&campus=${encodeURIComponent(campus)}`);
+        if (!sessions.length) {
+          document.getElementById("noData").classList.remove("d-none");
+          return;
+        }
+        renderSessions(sessions);
+        wireEditing(sessions);
+      } catch (e) {
+        console.error(e);
+        alert("Failed to load sessions: " + e.message);
       }
-      await initFallback(); // unchanged below
     }
 
-    /* ======================= API MODE ======================= */
-    function renderFromAPI(sessions) {
-      const groups = { HOBART: [], LAUNCESTON: [], ONLINE: [], OTHER: [] };
-      sessions.forEach((s) => groups[campusBucket(s.campus)].push(s));
+    /* ---------------- Render sessions ---------------- */
+    function renderSessions(sessions) {
+      const wrap = document.createElement("div");
+      wrap.className = "table-responsive";
+      const table = document.createElement("table");
+      table.className = "table table-bordered align-middle";
 
-      renderGroupAPI("Hobart", groups.HOBART);
-      renderGroupAPI("Launceston", groups.LAUNCESTON);
-      renderGroupAPI("Online", groups.ONLINE);
-      if (groups.OTHER.length) renderGroupAPI("Other", groups.OTHER);
+      const thead = document.createElement("thead");
+      thead.innerHTML = `<tr>
+      <th>Activity</th><th>Day</th><th>Start</th><th>Weeks</th><th>Duration</th><th>Location</th>
+      <th>Staff</th><th>Notes</th>
+    </tr>`;
+      table.appendChild(thead);
 
-      function renderGroupAPI(label, items) {
-        if (!items.length) return;
+      const tbody = document.createElement("tbody");
+      sessions.forEach(s => {
+        const tr = document.createElement("tr");
+        tr.dataset.sessionId = s.session_id;
 
-        const badge = document.createElement("div");
-        badge.className = "campus-title"; badge.textContent = label;
-        content.appendChild(badge);
-
-        const wrap = document.createElement("div"); wrap.className = "table-responsive mb-4";
-        const table = document.createElement("table"); table.className = "table table-bordered align-middle";
-
-        const thead = document.createElement("thead"); thead.className = "table-light";
-        const thr = document.createElement("tr");
-        ["Activity", "Day", "Start time", "Weeks", "Duration", "Location", "Staff", "Notes"].forEach((h) => {
-          const th = document.createElement("th"); th.textContent = h; thr.appendChild(th);
-        });
-        thead.appendChild(thr);
-
-        const tbody = document.createElement("tbody");
-        items.forEach((s) => {
-          const tr = document.createElement("tr");
-          tr.setAttribute("data-session-id", s.session_id); // << used on submit
-
-          const staffStr = Array.isArray(s.staff) ? s.staff.join(", ") : (s.staff || "");
-          const cols = [
-            s.activity_code || s.activity || "",
-            s.day_of_week || s.day || "",
-            s.start_time || s.time || "",
-            s.weeks || s.teaching_weeks || "",
-            s.duration || "",
-            s.location || "",
-            { staff: staffStr }, // editable via input
-            { notes: "" },       // local note only
-          ];
-
-          cols.forEach((c) => {
-            const td = document.createElement("td");
-            if (typeof c === "object" && "staff" in c) {
-              td.classList.add("staff-cell");
-              const initial = String(c.staff || "");
-              const disp = document.createElement("div");
-              disp.className = "staff-display";
-              disp.innerHTML = chipsHTML(splitNames(initial));
-              td.appendChild(disp);
-
-              const input = document.createElement("input");
-              input.type = "text";
-              input.className = "form-control form-control-sm cell-input editable-input staff-input d-none";
-              input.value = initial; input.placeholder = "Comma-separated names or emails";
-              input.disabled = true; input.dataset.field = "staff";
-              td.appendChild(input);
-            } else if (typeof c === "object" && "notes" in c) {
-              const input = document.createElement("input");
-              input.type = "text";
-              input.className = "form-control form-control-sm notes-input editable-input";
-              input.value = ""; input.placeholder = "Add notes";
-              input.disabled = true; input.dataset.field = "notes";
-              td.appendChild(input);
-            } else {
-              td.textContent = String(c ?? "");
-            }
-            tr.appendChild(td);
-          });
-
-          tbody.appendChild(tr);
-        });
-
-        table.appendChild(thead); table.appendChild(tbody);
-        wrap.appendChild(table); content.appendChild(wrap);
-      }
-
-      // chips + modal
-      document.addEventListener("click", (e) => {
-        const chip = e.target.closest(".staff-chip");
-        if (!chip || isEditing) return;
-        const staffName = chip.getAttribute("data-staff");
-        openTimetableModalAPI(staffName, sessions);
+        tr.innerHTML = `
+        <td>${s.activity_code || ""}</td>
+        <td>${s.day_of_week || ""}</td>
+        <td>${s.start_time || ""}</td>
+        <td>${s.weeks || ""}</td>
+        <td>${s.duration || ""}</td>
+        <td>${s.location || ""}</td>
+        <td>
+          <input type="text" class="form-control form-control-sm staff-input d-none" placeholder="Start typing a tutor..." disabled>
+          <div class="staff-display">${s.tutor || ""}</div>
+        </td>
+        <td>
+          <input type="text" class="form-control form-control-sm notes-input" value="${s.notes || ""}" disabled>
+        </td>
+      `;
+        tbody.appendChild(tr);
       });
-
-      function openTimetableModalAPI(staffName, sessions) {
-        const events = [];
-        sessions.forEach((s) => {
-          const staffStr = Array.isArray(s.staff) ? s.staff.join(", ") : (s.staff || "");
-          const names = staffStr.split(/[;,/]+/).map(n => n.trim().toLowerCase()).filter(Boolean);
-          if (!names.includes(String(staffName || "").toLowerCase())) return;
-
-          const day = String(s.day_of_week || s.day || "");
-          const time = String(s.start_time || s.time || "");
-          const dur = parseInt(String(s.duration || "60").match(/\d+/)?.[0] || "60", 10);
-          const loc = String(s.location || "");
-          const act = String(s.activity_code || s.activity || "");
-          const weeks = String(s.weeks || s.teaching_weeks || "");
-
-          events.push({ day, time, dur, loc, act, weeks });
-        });
-
-        renderTimetable(staffName, events);
-        const modal = new bootstrap.Modal(document.getElementById("ttModal"));
-        modal.show();
-      }
+      table.appendChild(tbody);
+      wrap.appendChild(table);
+      document.getElementById("content").appendChild(wrap);
     }
 
-    function wireEditingForAPI(sessions) {
+    /* ---------------- Editing logic ---------------- */
+    let isEditing = false;
+    const btnEdit = document.getElementById("btnEdit");
+    const btnSubmit = document.getElementById("btnSubmit");
+
+    function wireEditing(sessions) {
       btnEdit.addEventListener("click", () => {
         isEditing = true;
-        document.querySelectorAll(".editable-input").forEach((i) => i.disabled = false);
-        document.querySelectorAll(".staff-display").forEach((s) => s.classList.add("d-none"));
-        document.querySelectorAll(".staff-input").forEach((i) => i.classList.remove("d-none"));
+        document.querySelectorAll(".staff-input, .notes-input").forEach(i => i.disabled = false);
+        document.querySelectorAll(".staff-input").forEach(i => i.classList.remove("d-none"));
+        document.querySelectorAll(".staff-display").forEach(d => d.classList.add("d-none"));
         btnSubmit.classList.remove("d-none");
-        btnEdit.classList.add("btn-secondary");
       });
 
       btnSubmit.addEventListener("click", async () => {
         try {
-          await submitAssignmentsAPI();
-          // lock UI again
-          isEditing = false;
-          document.querySelectorAll(".editable-input").forEach((i) => i.disabled = true);
-          document.querySelectorAll(".staff-input").forEach((i) => i.classList.add("d-none"));
-          document.querySelectorAll(".staff-display").forEach((s) => s.classList.remove("d-none"));
-          btnSubmit.classList.add("d-none");
-          btnEdit.classList.remove("btn-secondary");
-          alert("Assignments submitted to server.");
+          const rows = document.querySelectorAll("tr[data-session-id]");
+          for (const tr of rows) {
+            const sessionId = tr.dataset.sessionId;
+            const staffInput = tr.querySelector(".staff-input");
+            const notesInput = tr.querySelector(".notes-input");
+
+            const tutorId = staffInput.dataset.userId ? parseInt(staffInput.dataset.userId, 10) : null;
+            await apiPost(`/allocation/assign/?alias=${encodeURIComponent(alias)}`, {
+              session_id: sessionId,
+              tutor_user_id: tutorId,
+              notes: notesInput.value
+            });
+          }
+          alert("Assignments saved.");
+          location.reload();
         } catch (e) {
-          alert(e.message);
+          alert("Error: " + e.message);
         }
       });
 
-      async function suggest(el, unitCode, campus) {
-        const q = el.value.trim();
-        if (!q) { hideMenu(); return; }
-        const list = await apiGet(`/allocation/suggest_tutors/?alias=${alias}&unit_code=${unitCode}&campus=${campus}&q=${encodeURIComponent(q)}`);
-        renderMenu(el, list); // build a small dropdown under the input
-      }
-      function pickSuggestion(inputEl, item) {
-        inputEl.value = `${item.name} (${item.email})${item.preference ? ' — pref ' + item.preference : ''}`;
-        inputEl.dataset.userId = item.id;        // <- used on submit
-      }
-      async function saveRow(sessionId, inputEl, notesEl) {
-        const body = {
-          session_id: sessionId,
-          tutor_user_id: Number(inputEl.dataset.userId || 0) || undefined,
-          notes: notesEl.value || "",
-        };
-        const res = await apiPost(`/allocation/assign/?alias=${alias}`, body);
-      }
-
-      async function submitAssignmentsAPI() {
-        const access = getAccessToken();
-        if (!access) { window.location.href = "/"; return; }
-
-        // cache searches to reduce API calls
-        const cache = new Map(); // key: query (name/email) -> [{id,name,email}, ...]
-        async function searchUser(q) {
-          const key = q.toLowerCase();
-          if (cache.has(key)) return cache.get(key);
-          let data = [];
-          for (const p of API.userSearchPaths(q)) {
-            try {
-              const res = await fetch(`${API.base}${p}`, { headers: authHeaders() });
-              if (res.ok) { data = await res.json(); break; }
-            } catch { }
-          }
-          cache.set(key, data || []);
-          return data || [];
-        }
-
-        // iterate visible session rows
-        const rows = document.querySelectorAll('tr[data-session-id]');
-        const failures = [];
-        for (const tr of rows) {
-          const sessionId = parseInt(tr.getAttribute("data-session-id"), 10);
-          if (!sessionId) continue;
-
-          const input = tr.querySelector(".staff-input");
-          const display = tr.querySelector(".staff-display");
-          const raw = input ? input.value : (display ? display.textContent : "");
-          const names = String(raw || "").split(/[;,/]+/).map(s => s.trim()).filter(Boolean);
-
-          for (const name of names) {
-            // try to resolve by email or exact name; fall back to first result
-            const list = await searchUser(name);
-            let pick = null;
-            const lower = name.toLowerCase();
-            pick = list.find(u => (u.email || "").toLowerCase() === lower) ||
-              list.find(u => (u.name || "").toLowerCase() === lower) ||
-              list[0];
-            if (!pick) { failures.push({ sessionId, name }); continue; }
-
-            try {
-              await apiPostFirst(API.assignPaths(), { session_id: sessionId, tutor_id: pick.id });
-            } catch (e) {
-              failures.push({ sessionId, name, err: e.message });
-            }
-          }
-
-          // refresh chips display from the edited input
-          if (input && display) display.innerHTML = chipsHTML(splitNames(input.value));
-        }
-
-        if (failures.length) {
-          const lines = failures.slice(0, 8).map(f => `• ${f.name} (session ${f.sessionId})`).join("\n");
-          throw new Error(`Some assignments could not be resolved or saved:\n${lines}${failures.length > 8 ? "\n…" : ""}`);
-        }
-      }
-    }
-
-    /* ==================== FALLBACK (SPREADSHEET) ==================== */
-    async function initFallback() {
-      const current = safeLoad("alloc_sheet_current"); // { key, rows }
-      let rows = current && Array.isArray(current.rows) ? current.rows : null;
-
-      if (!rows) {
-        const AOA = safeLoad("alloc_sheets_aoa");
-        if (AOA) {
-          const keys = Object.keys(AOA);
-          let key =
-            keys.find((k) => k === sheetParam) ||
-            keys.find((k) => k.trim().toLowerCase() === sheetParam.trim().toLowerCase()) ||
-            keys.find((k) => unitCode && k.toLowerCase().includes(unitCode.toLowerCase())) ||
-            keys[0];
-          rows = AOA[key];
-        }
-      }
-
-      if (!rows || !rows.length) {
-        const nd = document.getElementById("noData");
-        nd.textContent = "No saved workbook (alloc_sheets_aoa). Upload on the home page first.";
-        nd.classList.remove("d-none");
-        throw new Error("no data for details");
-      }
-
-      // Detect header row
-      let headerIdx = -1, header = [];
-      for (let r = 0; r < Math.min(200, rows.length); r++) {
-        const lower = rows[r].map((x) => String(x).trim().toLowerCase());
-        const hits = candidates.filter((k) => lower.includes(k)).length;
-        if (hits >= 4) { headerIdx = r; header = rows[r]; break; }
-      }
-      if (headerIdx === -1) {
-        const nd = document.getElementById("noData");
-        nd.textContent = "Could not detect the header row on this sheet.";
-        nd.classList.remove("d-none");
-        throw new Error("header not found");
-      }
-      const lowerHeader = header.map((h) => String(h).trim().toLowerCase());
-      const col = (...aliases) => {
-        for (const a of aliases) { const i = lowerHeader.indexOf(a); if (i !== -1) return i; }
-        for (let i = 0; i < lowerHeader.length; i++) {
-          if (aliases.some((a) => lowerHeader[i].includes(a))) return i;
-        }
-        return -1;
-      };
-      const idx = {
-        activity: col("activity_code", "activity code"),
-        campus: col("campus"),
-        day: col("day_of_week", "day of week", "day"),
-        start: col("start_time", "start time", "time"),
-        weeks: col("weeks"),
-        duration: col("duration"),
-        location: col("location"),
-        staff: col("staff", "staffs"),
-      };
-
-      const body = rows.slice(headerIdx + 1).filter((r) => r.some((c) => String(c).trim() !== ""));
-
-      // persistence for edits (local only)
-      const EDITS_KEY = "alloc_edits";
-      const allEdits = safeLoad(EDITS_KEY) || {};
-      const unitEdits = allEdits[unitTitle] || {};
-      function rowKey(r) {
-        const parts = [
-          idx.activity >= 0 ? r[idx.activity] : "",
-          idx.day >= 0 ? r[idx.day] : "",
-          idx.start >= 0 ? r[idx.start] : "",
-          idx.location >= 0 ? r[idx.location] : "",
-        ].map((x) => String(x || "").trim());
-        return parts.join("|");
-      }
-      function getEdit(r) { return unitEdits[rowKey(r)] || {}; }
-
-      // group by campus + render (existing structure)
-      const groups = { HBT: [], LTN: [], ONLINE: [], OTHER: [] };
-      body.forEach((r) => {
-        const v = ((idx.campus >= 0 ? r[idx.campus] : "") || "").toString().trim().toUpperCase();
-        if (v.startsWith("HBT")) groups.HBT.push(r);
-        else if (v.startsWith("LTN") || v.startsWith("LST") || v.startsWith("LNC")) groups.LTN.push(r);
-        else if (v.startsWith("ONLINE")) groups.ONLINE.push(r);
-        else groups.OTHER.push(r);
-      });
-
-      renderGroupFallback("HBT", groups.HBT, idx, getEdit);
-      renderGroupFallback("LTN", groups.LTN, idx, getEdit);
-      renderGroupFallback("ONLINE", groups.ONLINE, idx, getEdit);
-      if (groups.OTHER.length) renderGroupFallback("OTHER", groups.OTHER, idx, getEdit);
-
-      wireEditingLocal();
-
-      // ====== fallback renderers & helpers (existing UI) ======
-      function renderGroupFallback(label, rowsForGroup, idx, getEdit) {
-        if (!rowsForGroup.length) return;
-
-        const badge = document.createElement("div");
-        badge.className = "campus-title"; badge.textContent = label;
-        content.appendChild(badge);
-
-        const wrap = document.createElement("div"); wrap.className = "table-responsive mb-4";
-        const table = document.createElement("table"); table.className = "table table-bordered align-middle";
-
-        const thead = document.createElement("thead"); thead.className = "table-light";
-        const tbody = document.createElement("tbody");
-
-        const cols = [
-          ["activity", "Activity", false], ["day", "Day", false], ["start", "Start time", false],
-          ["weeks", "Weeks", false], ["duration", "Duration", false], ["location", "Location", false],
-          ["staff", "Staff", true], ["notes", "Notes", true],
-        ].filter(([k]) => k === "staff" || k === "notes" || idx[k] >= 0);
-
-        const thr = document.createElement("tr");
-        cols.forEach(([_, labelTxt]) => { const th = document.createElement("th"); th.textContent = labelTxt; thr.appendChild(th); });
-        thead.appendChild(thr);
-
-        rowsForGroup.forEach((r) => {
-          const tr = document.createElement("tr");
-          const saved = getEdit(r);
-          const key = rowKey(r);
-
-          cols.forEach(([k]) => {
-            const td = document.createElement("td");
-            if (k === "staff") {
-              td.classList.add("staff-cell");
-              const initial = (saved.staff != null ? saved.staff : idx.staff >= 0 ? r[idx.staff] ?? "" : "").toString();
-              const disp = document.createElement("div");
-              disp.className = "staff-display";
-              disp.innerHTML = chipsHTML(splitNames(initial));
-              td.appendChild(disp);
-
-              const input = document.createElement("input");
-              input.type = "text";
-              input.className = "form-control form-control-sm cell-input editable-input staff-input d-none";
-              input.value = initial; input.placeholder = "Comma-separated names";
-              input.disabled = true; input.dataset.rowkey = key; input.dataset.field = "staff";
-              td.appendChild(input);
-            } else if (k === "notes") {
-              const initial = (saved.notes || "").toString();
-              const input = document.createElement("input");
-              input.type = "text";
-              input.className = "form-control form-control-sm notes-input editable-input";
-              input.value = initial; input.placeholder = "Add notes";
-              input.disabled = true; input.dataset.rowkey = key; input.dataset.field = "notes";
-              td.appendChild(input);
-            } else {
-              td.textContent = (idx[k] >= 0 ? r[idx[k]] ?? "" : "").toString();
-            }
-            tr.appendChild(td);
-          });
-
-          tbody.appendChild(tr);
-        });
-
-        table.appendChild(thead); table.appendChild(tbody);
-        wrap.appendChild(table); content.appendChild(wrap);
-      }
-
-      function wireEditingLocal() {
-        btnEdit.addEventListener("click", () => {
-          isEditing = true;
-          document.querySelectorAll(".editable-input").forEach((i) => i.disabled = false);
-          document.querySelectorAll(".staff-display").forEach((s) => s.classList.add("d-none"));
-          document.querySelectorAll(".staff-input").forEach((i) => i.classList.remove("d-none"));
-          btnSubmit.classList.remove("d-none");
-          btnEdit.classList.add("btn-secondary");
-        });
-
-        btnSubmit.addEventListener("click", () => {
-          // local-only save of inputs
-          document.querySelectorAll(".editable-input").forEach((inp) => { });
-          document.querySelectorAll(".staff-cell").forEach((cell) => {
-            const input = cell.querySelector(".staff-input");
-            const display = cell.querySelector(".staff-display");
-            if (input && display) display.innerHTML = chipsHTML(splitNames(input.value));
-          });
-
-          isEditing = false;
-          document.querySelectorAll(".editable-input").forEach((i) => i.disabled = true);
-          document.querySelectorAll(".staff-input").forEach((i) => i.classList.add("d-none"));
-          document.querySelectorAll(".staff-display").forEach((s) => s.classList.remove("d-none"));
-          btnSubmit.classList.add("d-none");
-          btnEdit.classList.remove("btn-secondary");
-          alert("Changes saved locally.");
-        });
-      }
-    }
-
-    /* ---------------- Shared helpers ---------------- */
-    function splitNames(v) { return String(v || "").split(/[;,/]+/).map(s => s.trim()).filter(Boolean); }
-    function chipsHTML(names) { return names.map(n => `<span class="staff-chip" data-staff="${escapeHtml(n)}">${escapeHtml(n)}</span>`).join(" "); }
-    function escapeHtml(s) { return s.replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
-
-    // Timetable renderer shared by API + fallback
-    function renderTimetable(staffName, events) {
-      document.getElementById("ttTitle").textContent = `Timetable — ${staffName}`;
-      const container = document.getElementById("ttContainer");
-      container.innerHTML = "";
-
-      const days = ["MON", "TUES", "WED", "THURS", "FRI"];
-      const startHour = 8, endHour = 20;
-      const table = document.createElement("table"); table.className = "tt-grid table";
-
-      const thead = document.createElement("thead");
-      const hr = document.createElement("tr");
-      const thEmpty = document.createElement("th"); thEmpty.className = "tt-time"; thEmpty.textContent = "TIME";
-      hr.appendChild(thEmpty);
-      days.forEach((d) => { const th = document.createElement("th"); th.textContent = d; hr.appendChild(th); });
-      thead.appendChild(hr);
-
-      const tbody = document.createElement("tbody");
-      for (let h = startHour; h <= endHour; h++) {
-        const tr = document.createElement("tr");
-        const timeLabel = document.createElement("td");
-        timeLabel.className = "tt-time"; timeLabel.textContent = formatHour(h);
-        tr.appendChild(timeLabel);
-        for (let d = 0; d < days.length; d++) {
-          const td = document.createElement("td");
-          td.className = "tt-slot"; td.dataset.day = days[d]; td.dataset.hour = h;
-          tr.appendChild(td);
-        }
-        tbody.appendChild(tr);
-      }
-
-      table.appendChild(thead); table.appendChild(tbody); container.appendChild(table);
-
-      events.forEach((ev) => {
-        const dIdx = dayIndex(ev.day); if (dIdx === -1) return;
-        const start = parseTimeToFloat(ev.time); if (isNaN(start)) return;
-
-        const hour = Math.floor(start);
-        const minuteOffset = (start - hour) * 60;
-
-        const td = tbody.querySelector(`td.tt-slot[data-day="${days[dIdx]}"][data-hour="${hour}"]`);
-        if (!td) return;
-
-        const evDiv = document.createElement("div");
-        evDiv.className = "tt-event";
-        evDiv.style.top = `${(minuteOffset / 60) * 56}px`;
-        evDiv.style.height = `${Math.max(28, (ev.dur / 60) * 56 - 4)}px`;
-        const label = [unitCode || "", ev.act || "", ev.loc ? `— ${ev.loc}` : "", ev.weeks ? ` (${ev.weeks})` : ""]
-          .filter(Boolean).join(" ").trim();
-        evDiv.textContent = label || "Class";
-        td.appendChild(evDiv);
+      // attach live suggestions for staff inputs
+      document.querySelectorAll(".staff-input").forEach(inp => {
+        inp.addEventListener("input", () => suggestTutors(inp));
       });
     }
-    function formatHour(h) { const ampm = h < 12 ? "AM" : "PM"; const hr = ((h + 11) % 12) + 1; return `${hr}:00 ${ampm}`; }
-    function dayIndex(dayStr) {
-      const s = String(dayStr || "").trim().toLowerCase();
-      if (s.startsWith("mon")) return 0; if (s.startsWith("tue")) return 1; if (s.startsWith("wed")) return 2;
-      if (s.startsWith("thu")) return 3; if (s.startsWith("fri")) return 4; return -1;
-    }
-    function parseTimeToFloat(t) {
-      const s = String(t || "").trim(); const m = s.match(/(\d{1,2}):?(\d{2})?\s*(AM|PM|am|pm)?/);
-      if (!m) return NaN; let hh = parseInt(m[1], 10); const mm = parseInt(m[2] || "0", 10); const ap = m[3] ? m[3].toUpperCase() : null;
-      if (ap === "PM" && hh < 12) hh += 12; if (ap === "AM" && hh === 12) hh = 0; return hh + mm / 60;
+
+    /* ---------------- Tutor suggestions ---------------- */
+    async function suggestTutors(inputEl) {
+      const q = inputEl.value.trim();
+      if (!q) return;
+
+      const list = await apiGet(`/allocation/suggest_tutors/?alias=${alias}&unit_code=${code}&campus=${campus}&q=${encodeURIComponent(q)}`);
+      let datalist = inputEl.nextElementSibling;
+      if (!datalist || datalist.tagName !== "DATALIST") {
+        datalist = document.createElement("datalist");
+        datalist.id = "dl-" + Math.random().toString(36).slice(2);
+        inputEl.setAttribute("list", datalist.id);
+        inputEl.after(datalist);
+      }
+      datalist.innerHTML = list.map(t =>
+        `<option data-id="${t.id}" value="${t.name} (${t.email})${t.preference ? " pref " + t.preference : ""}"></option>`
+      ).join("");
+
+      // record chosen tutor id when user selects
+      inputEl.addEventListener("change", () => {
+        const opt = Array.from(datalist.options).find(o => o.value === inputEl.value);
+        if (opt) inputEl.dataset.userId = opt.dataset.id;
+      });
     }
   </script>
 

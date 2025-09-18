@@ -304,41 +304,48 @@ class AssignTutorView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        alias = _get_alias(request)
-        s = AssignRequestSerializer(data=request.data)
-        s.is_valid(raise_exception=True)
-        data = s.validated_data
+        alias = request.query_params.get("alias") or get_current_semester_alias()
+        data = request.data
+
+        session_id = data.get("session_id")
+        tutor_id = data.get("tutor_user_id")
+        tutor_email = data.get("tutor_email")
+        notes = data.get("notes", "")
 
         with force_write_alias(alias):
-            tt = TimeTable.objects.select_related("unit_course").filter(id=data["session_id"]).first()
+            tt = TimeTable.objects.using(alias).filter(pk=session_id).first()
             if not tt:
                 return Response({"detail": "Session not found."}, status=404)
 
             tutor = None
-            if data.get("tutor_user_id"):
-                tutor = User.objects.using(alias).filter(id=data["tutor_user_id"]).first()
-            elif data.get("tutor_email"):
-                tutor = User.objects.using(alias).filter(email__iexact=data["tutor_email"]).first()
-            if not tutor:
-                return Response({"detail": "Tutor not found."}, status=400)
+            if tutor_id:
+                tutor = User.objects.using(alias).filter(pk=tutor_id).first()
+            elif tutor_email:
+                tutor = User.objects.using(alias).filter(email__iexact=tutor_email).first()
 
-            # optional simple clash check: same day overlapping time
-            if tt.start_time and tt.end_time:
-                clash = TimeTable.objects.filter(
-                    tutor_user=tutor,
-                    day_of_week=tt.day_of_week,
-                    start_time__lt=tt.end_time,
-                    end_time__gt=tt.start_time,
-                ).exclude(id=tt.id).exists()
-                if clash:
-                    return Response({"detail": "Tutor has a time clash for this session."}, status=409)
+            if tutor_id or tutor_email:
+                if not tutor:
+                    return Response({"detail": "Tutor not found."}, status=400)
 
-            tt.tutor_user = tutor
-            if data.get("notes") is not None:
-                tt.notes = data["notes"]
+                # clash check
+                if tt.start_time and tt.end_time:
+                    clash = TimeTable.objects.using(alias).filter(
+                        tutor_user=tutor,
+                        day_of_week=tt.day_of_week,
+                        start_time__lt=tt.end_time,
+                        end_time__gt=tt.start_time,
+                    ).exclude(pk=tt.pk).exists()
+                    if clash:
+                        return Response({"detail": "Tutor has a time clash."}, status=409)
+
+                tt.tutor_user = tutor
+
+            # Always save notes if provided
+            tt.notes = notes
             tt.save(update_fields=["tutor_user", "notes"])
-            return Response({"ok": True})
-           
+
+            return Response({"ok": True, "session_id": tt.pk, "tutor": str(tt.tutor_user), "notes": tt.notes})
+   
 class RunAllocationView(APIView):
     """
     Runs a simple automatic allocation for the current semester DB.

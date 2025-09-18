@@ -55,43 +55,83 @@
     </div>
 
     <script>
-        const API = { base: "/api" };
+        // --- read alias from query ---
         const params = new URLSearchParams(location.search);
-        const alias = params.get("alias");
+        const alias = params.get("alias") || "";
+
+        // --- auth helper (match home.html) ---
+        const API_BASE = "/api";
+        const token = () => localStorage.getItem("access");
+        const authHeaders = (extra = {}) => token()
+            ? { ...extra, Authorization: `Bearer ${token()}` }
+            : extra; // server will 401 if not logged in
 
         async function apiGet(path) {
-            const res = await fetch(API.base + path, { credentials: "include" });
-            if (!res.ok) throw new Error(`GET ${path} failed (${res.status})`);
-            return res.json();
+            const res = await fetch(`${API_BASE}${path}`, {
+                headers: authHeaders(),
+                credentials: "include",
+            });
+            // try to extract message
+            let payload = null;
+            try { payload = await res.json(); } catch { }
+            if (!res.ok) throw new Error(payload?.detail || `GET ${path} failed (${res.status})`);
+            return payload ?? [];
         }
 
+        // Build unit list using existing timetable endpoint
+        // /api/timetable/sessions/?alias=sem_YYYY_sX
         async function loadUnits() {
-            try {
-                document.getElementById("aliasTag").textContent = alias ? `Semester: ${alias}` : "";
-                const units = await apiGet(`/allocation/units/?alias=${encodeURIComponent(alias)}`);
-                const tbody = document.getElementById("unitsBody");
-                if (!Array.isArray(units) || !units.length) {
-                    tbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">No units found.</td></tr>`;
-                    document.getElementById("recordCount").textContent = "0 units";
-                    return;
-                }
-                tbody.innerHTML = units.map(u => {
-                    const url = `allocationdetails.html?alias=${encodeURIComponent(alias)}&code=${encodeURIComponent(u.unit_code)}&campus=${encodeURIComponent(u.campus || "")}`;
-                    return `<tr>
-            <td><a class="unitlink" href="${url}">${u.unit_code}</a></td>
-            <td><a class="unitlink" href="${url}">${u.unit_name}</a></td>
-            <td>${u.campus || ""}</td>
-            <td class="text-end">${u.session_count}</td>
-          </tr>`;
-                }).join("");
-                document.getElementById("recordCount").textContent = `${units.length} units found`;
-            } catch (e) {
-                console.error(e);
-                alert("Failed to load units.");
+            document.getElementById("aliasTag").textContent = alias ? `Semester: ${alias}` : "";
+
+            // fetch all sessions for the alias
+            const sessions = await apiGet(`/timetable/sessions/?alias=${encodeURIComponent(alias)}`);
+
+            // aggregate by (unit_code, campus). sessions_list returns:
+            // { activity_code: <unit code>, campus: <campus>, ... }  (see timetable/views.py)
+            const byKey = new Map();
+            for (const s of sessions) {
+                const code = String(s.activity_code || "").slice(0, 6).toUpperCase();
+                if (!code) continue;
+                const campus = s.campus || "";
+                const key = `${code}||${campus}`;
+                if (!byKey.has(key)) byKey.set(key, { unit_code: code, unit_name: "", campus, count: 0 });
+                byKey.get(key).count += 1;
             }
+
+            // If you also want names, you can infer from the first matching row’s master_class
+            // but sessions_list does not return name; keep blank or derive elsewhere if needed.
+
+            const rows = Array.from(byKey.values()).sort((a, b) =>
+                a.unit_code.localeCompare(b.unit_code) || a.campus.localeCompare(b.campus)
+            );
+
+            const tbody = document.getElementById("unitsBody");
+            if (!rows.length) {
+                tbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">No units found.</td></tr>`;
+                document.getElementById("recordCount").textContent = "0 units";
+                return;
+            }
+
+            tbody.innerHTML = rows.map(u => {
+                const url = `allocationdetails.html?alias=${encodeURIComponent(alias)}&code=${encodeURIComponent(u.unit_code)}&campus=${encodeURIComponent(u.campus)}`;
+                return `<tr>
+          <td><a class="unitlink" href="${url}">${u.unit_code}</a></td>
+          <td><a class="unitlink" href="${url}">${u.unit_name || ""}</a></td>
+          <td>${u.campus}</td>
+          <td class="text-end">${u.count}</td>
+        </tr>`;
+            }).join("");
+
+            document.getElementById("recordCount").textContent = `${rows.length} units found`;
         }
 
-        document.addEventListener("DOMContentLoaded", loadUnits);
+        document.addEventListener("DOMContentLoaded", () => {
+            if (!token()) { window.location = "/"; return; } // require login
+            loadUnits().catch(err => {
+                console.error(err);
+                alert("Failed to load units.");
+            });
+        });
     </script>
 </body>
 
