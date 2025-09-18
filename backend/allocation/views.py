@@ -305,47 +305,68 @@ class AssignTutorView(APIView):
 
     def post(self, request):
         alias = request.query_params.get("alias") or get_current_semester_alias()
-        data = request.data
+        payload = request.data or {}
 
-        session_id = data.get("session_id")
-        tutor_id = data.get("tutor_user_id")
-        tutor_email = data.get("tutor_email")
-        notes = data.get("notes", "")
+        session_id   = payload.get("session_id")
+        tutor_user_id = payload.get("tutor_user_id")
+        tutor_email   = payload.get("tutor_email")
+        notes         = payload.get("notes", "")
 
+        if not session_id:
+            return Response({"detail": "session_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Switch DB via router context; do NOT chain .using(alias)
         with force_write_alias(alias):
-            tt = TimeTable.objects.using(alias).filter(pk=session_id).first()
+            # 1) Find the session row
+            tt = TimeTable.objects.filter(pk=session_id).select_related("tutor_user").first()
             if not tt:
-                return Response({"detail": "Session not found."}, status=404)
+                return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
 
+            # 2) Resolve tutor (optional – we allow notes-only update)
             tutor = None
-            if tutor_id:
-                tutor = User.objects.using(alias).filter(pk=tutor_id).first()
-            elif tutor_email:
-                tutor = User.objects.using(alias).filter(email__iexact=tutor_email).first()
-
-            if tutor_id or tutor_email:
+            if tutor_user_id is not None:
+                try:
+                    tutor_user_id = int(tutor_user_id)
+                except (TypeError, ValueError):
+                    return Response({"detail": "tutor_user_id must be an integer."}, status=status.HTTP_400_BAD_REQUEST)
+                tutor = User.objects.filter(pk=tutor_user_id).first()
                 if not tutor:
-                    return Response({"detail": "Tutor not found."}, status=400)
+                    return Response({"detail": "Tutor not found for tutor_user_id."}, status=status.HTTP_400_BAD_REQUEST)
+            elif tutor_email:
+                tutor = User.objects.filter(email__iexact=str(tutor_email).strip()).first()
+                if not tutor:
+                    return Response({"detail": "Tutor not found for tutor_email."}, status=status.HTTP_400_BAD_REQUEST)
 
-                # clash check
-                if tt.start_time and tt.end_time:
-                    clash = TimeTable.objects.using(alias).filter(
-                        tutor_user=tutor,
-                        day_of_week=tt.day_of_week,
-                        start_time__lt=tt.end_time,
-                        end_time__gt=tt.start_time,
-                    ).exclude(pk=tt.pk).exists()
-                    if clash:
-                        return Response({"detail": "Tutor has a time clash."}, status=409)
+            # 3) Optional clash check if we are changing / setting a tutor
+            if tutor and tt.start_time and tt.end_time and tt.day_of_week:
+                clash = TimeTable.objects.filter(
+                    tutor_user=tutor,
+                    day_of_week=tt.day_of_week,
+                    start_time__lt=tt.end_time,
+                    end_time__gt=tt.start_time,
+                ).exclude(pk=tt.pk).exists()
+                if clash:
+                    return Response({"detail": "Tutor has a time clash for this session."}, status=status.HTTP_409_CONFLICT)
 
+            # 4) Persist
+            fields = []
+            if tutor is not None:
                 tt.tutor_user = tutor
+                fields.append("tutor_user")
+            if notes is not None:
+                tt.notes = notes
+                fields.append("notes")
 
-            # Always save notes if provided
-            tt.notes = notes
-            tt.save(update_fields=["tutor_user", "notes"])
+            if fields:
+                tt.save(update_fields=fields)   # only writes in the alias selected by the router
 
-            return Response({"ok": True, "session_id": tt.pk, "tutor": str(tt.tutor_user), "notes": tt.notes})
-   
+            return Response({
+                "ok": True,
+                "session_id": tt.pk,
+                "tutor_user_id": tt.tutor_user_id,
+                "notes": tt.notes or "",
+            }, status=status.HTTP_200_OK)
+        
 class RunAllocationView(APIView):
     """
     Runs a simple automatic allocation for the current semester DB.

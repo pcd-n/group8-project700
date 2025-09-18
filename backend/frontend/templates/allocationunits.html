@@ -42,8 +42,8 @@
             <table class="table table-bordered align-middle">
                 <thead class="table-light">
                     <tr>
-                        <th style="width: 120px">Code</th>
-                        <th>Name</th>
+                        <th style="width: 120px"> Unit Code</th>
+                        <th> Unit Name</th>
                         <th style="width: 100px">Campus</th>
                         <th style="width: 140px" class="text-end"># Sessions</th>
                     </tr>
@@ -94,7 +94,7 @@
                 if (!code) continue;
                 const campus = s.campus || "";
                 const key = `${code}||${campus}`;
-                if (!byKey.has(key)) byKey.set(key, { unit_code: code, unit_name: "", campus, count: 0 });
+                if (!byKey.has(key)) byKey.set(key, { unit_code: code, unit_name: s.unit_name || "", campus, count: 0 });
                 byKey.get(key).count += 1;
             }
 

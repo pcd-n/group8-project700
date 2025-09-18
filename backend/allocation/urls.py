@@ -24,5 +24,5 @@ urlpatterns = [
     path("units/", UnitsForAllocationView.as_view()),                     # GET ?alias=
     path("unit/<str:unit_code>/sessions/", UnitSessionsView.as_view()),   # GET ?alias=&campus=
     path("suggest_tutors/", SuggestTutorsView.as_view()),                 # GET ?alias=&unit_code=&campus=&q=
-    path("assign/", AssignTutorView.as_view()),
+    path("assign/", AssignTutorView.as_view(), name="allocation-assign"),
 ]

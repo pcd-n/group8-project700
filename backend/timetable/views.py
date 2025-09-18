@@ -48,6 +48,8 @@ def sessions_list(request):
             "duration":      dur,
             "location":      t.room or "",
             "weeks":         weeks_str,
+            "notes":         t.notes or "",
+            "tutor":         (t.tutor_user.get_full_name() if getattr(t, "tutor_user", None) else ""),
         })
 
     return JsonResponse(rows, safe=False)
