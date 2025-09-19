@@ -1,3 +1,4 @@
+#eoi/views.py
 from semesters.router import get_current_semester_alias
 from django.shortcuts import render
 from rest_framework.views import APIView
@@ -29,6 +30,8 @@ class EOIUploadView(APIView):
         except Exception as e:
             return Response({"detail": f"Error reading Excel: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
+        alias = get_current_semester_alias() or "default"
+
         created = []
         for _, row in df.iterrows():
             unit_code = str(row.get("Unit Code") or "").strip()
@@ -38,20 +41,24 @@ class EOIUploadView(APIView):
             if not unit_code or not email:
                 continue
 
-            unit, _ = Unit.objects.get_or_create(unit_code=unit_code, defaults={"unit_name": unit_name})
-            tutor, _ = User.objects.get_or_create(email=email, defaults={"username": email.split("@")[0]})
+            unit, _ = Unit.objects.using(alias).get_or_create(
+                unit_code=unit_code, defaults={"unit_name": unit_name}
+            )
+            tutor, _ = User.objects.using(alias).get_or_create(
+                email=email, defaults={"username": email.split("@")[0]}
+            )
 
-            eoi, _ = EoiApp.objects.update_or_create(
-                applicant=tutor,
+            eoi, _ = EoiApp.objects.using(alias).update_or_create(
+                applicant_user=tutor,
                 unit=unit,
                 defaults={
-                    "status": "pending",
+                    "status": "Submitted",
                     "preference": int(row.get("Preference", 0)),
                     "qualifications": row.get("Qualifications", ""),
                     "availability": row.get("Availability", ""),
                 },
             )
-            created.append(eoi.id)
+            created.append(eoi.scd_id)
 
         return Response({"created": len(created)}, status=status.HTTP_201_CREATED)
 
@@ -62,7 +69,13 @@ class ApplicantsByUnit(APIView):
         unit_code = request.query_params.get("unit_code")
         unit_id   = request.query_params.get("unit_id")
 
-        qs = EoiApp.objects.select_related("applicant_user", "unit", "campus").filter(is_current=True)
+        alias = get_current_semester_alias() or "default"
+
+        qs = (
+            EoiApp.objects.using(alias)
+            .select_related("applicant_user", "unit", "campus")
+            .filter(is_current=True)
+        )
 
         if unit_id:
             qs = qs.filter(unit_id=unit_id)
@@ -71,7 +84,6 @@ class ApplicantsByUnit(APIView):
         else:
             return Response({"detail": "unit_code or unit_id is required"}, status=400)
 
-        # was .order_by("name") -> field does not exist
         qs = qs.order_by("tutor_name", "applicant_user__first_name", "applicant_user__last_name")
 
         data = EoiAppSerializer(qs, many=True).data

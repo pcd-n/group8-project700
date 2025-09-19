@@ -1,3 +1,4 @@
+#eoi/models.py
 from django.db import models
 from django.utils import timezone
 from django.core.validators import MinValueValidator
@@ -92,9 +93,9 @@ class EoiApp(models.Model):
         help_text="GPA as per EOI"
     )
     supervisor = models.CharField(
-        max_length=255,
+        max_length=1000,
         blank=True,
-        help_text="Supervisor / references"
+        help_text="supervisor / supervisors / reference / references"
     )
     applied_units = models.JSONField(
         null=True, blank=True,
@@ -114,7 +115,7 @@ class EoiApp(models.Model):
     )
     transcript_link = models.URLField(
         max_length=500, blank=True,
-        help_text="Transcript link"
+        help_text="Transcript link / transcript "
     )
     cv_link = models.URLField(
         max_length=500, blank=True,

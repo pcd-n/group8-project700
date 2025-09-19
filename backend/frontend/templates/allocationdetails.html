@@ -191,7 +191,9 @@
 
     async function init() {
       try {
-        const sessions = await apiGet(`/timetable/sessions/?alias=${encodeURIComponent(alias)}&unit_code=${encodeURIComponent(code)}&campus=${encodeURIComponent(campus)}`);
+        const sessions = await apiGet(
+          `/allocation/sessions/?unit_code=${encodeURIComponent(code)}&campus=${encodeURIComponent(campus)}&alias=${encodeURIComponent(alias)}`
+        );
         if (!sessions.length) {
           document.getElementById("noData").classList.remove("d-none");
           return;
@@ -221,7 +223,7 @@
       const tbody = document.createElement("tbody");
       sessions.forEach(s => {
         const tr = document.createElement("tr");
-        tr.dataset.sessionId = s.session_id;
+        tr.dataset.sessionId = s.session_id ?? s.id;
 
         tr.innerHTML = `
         <td>${s.activity_code || ""}</td>
@@ -274,30 +276,43 @@
             const staffInput = tr.querySelector(".staff-input");
             const notesInput = tr.querySelector(".notes-input");
 
-            // Prefer an ID from a picked suggestion
-            let tutorUserId = staffInput.dataset.userId ? parseInt(staffInput.dataset.userId, 10) : null;
-            let tutorEmail = staffInput.dataset.email || "";
+            // Values captured from suggestion (preferred)
+            const pickedId = staffInput.dataset.userId ? parseInt(staffInput.dataset.userId, 10) : null;
+            const pickedEmail = (staffInput.dataset.email || "").trim();
 
-            // If they typed manually and didn't pick, try to extract an email from the text
-            if (!tutorUserId && !tutorEmail) {
-              const m = staffInput.value.match(/[\w\.\-\+]+@[\w\.\-]+\.\w+/);
-              if (m) tutorEmail = m[0];
-            }
+            // Fallbacks if user typed manually
+            let typedEmail = "";
+            const m = staffInput.value.match(/[\w.\-+]+@[\w.\-]+\.\w+/);
+            if (!pickedEmail && m) typedEmail = m[0];
 
             const body = {
               session_id: Number(sessionId),
               notes: notesInput.value || ""
             };
-            if (staffInput.dataset.userId) body.tutor_user_id = parseInt(staffInput.dataset.userId, 10);
-            if (staffInput.dataset.email) body.tutor_email = staffInput.dataset.email;
+
+            // The backend expects tutor_id (not tutor_user_id). Send the best identifier available.
+            if (pickedId) {
+              body.tutor_id = pickedId;                   // ✅ primary
+            } else if (pickedEmail) {
+              body.tutor_email = pickedEmail;             // fallback 1
+            } else if (typedEmail) {
+              body.tutor_email = typedEmail;              // fallback 2 (from free text)
+            }
+
+            // Also send a human name if present (useful for logging; backend can ignore if unused)
+            const freeTextName = staffInput.value.split("(")[0].trim();
+            if (freeTextName) body.tutor_name = freeTextName;
+
             await apiPost(`/allocation/assign/?alias=${encodeURIComponent(alias)}`, body);
           }
+
           alert("Allocation saved.");
           location.href = `/allocationunits.html?alias=${encodeURIComponent(alias)}`;
         } catch (e) {
           alert("Error: " + e.message);
         }
       });
+
 
       // attach live suggestions for staff inputs
       document.querySelectorAll(".staff-input").forEach(inp => {

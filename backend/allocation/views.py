@@ -47,26 +47,53 @@ class AllocationListView(generics.ListAPIView):
         return qs
 
 class UnitsForAllocationView(APIView):
-    """Return [{code, name, campus_name, sessions}] for the given alias."""
+    """Return [{unit_code, unit_name, campus, session_count, tutors}] for the given alias."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         alias = _get_alias(request)
         with force_write_alias(alias):
             qs = (TimeTable.objects
-                  .select_related("unit_course", "unit_course__unit", "unit_course__campus")
+                  .select_related("unit_course", "unit_course__unit", "unit_course__campus", "tutor_user")
                   .all())
-            seen = {}
+
+            # Aggregate by (unit_code, unit_name, campus)
+            buckets = {}
             for tt in qs:
                 unit = tt.unit_course.unit
-                campus = tt.unit_course.campus.campus_name if tt.unit_course.campus else ""
-                key = (unit.unit_code, unit.unit_name, campus)
-                seen.setdefault(key, 0)
-                seen[key] += 1
-            data = [
-                {"unit_code": u, "unit_name": n, "campus": c, "session_count": cnt}
-                for (u, n, c), cnt in seen.items()
-            ]
+                campus_name = tt.unit_course.campus.campus_name if tt.unit_course.campus else ""
+                key = (unit.unit_code, unit.unit_name, campus_name)
+
+                if key not in buckets:
+                    buckets[key] = {
+                        "unit_code": unit.unit_code,
+                        "unit_name": unit.unit_name,
+                        "campus": campus_name,
+                        "session_count": 0,
+                        "tutors": {},  # dedupe by email or name
+                    }
+
+                rec = buckets[key]
+                rec["session_count"] += 1
+
+                if tt.tutor_user_id:
+                    full = f"{tt.tutor_user.first_name} {tt.tutor_user.last_name}".strip() or (tt.tutor_user.email or "")
+                    email = tt.tutor_user.email or ""
+                    tkey = email or full
+                    if tkey:
+                        rec["tutors"][tkey] = {"name": full, "email": email}
+
+            data = []
+            for rec in buckets.values():
+                row = {
+                    "unit_code": rec["unit_code"],
+                    "unit_name": rec["unit_name"],
+                    "campus": rec["campus"],
+                    "session_count": rec["session_count"],
+                    "tutors": list(rec["tutors"].values()),
+                }
+                data.append(row)
+
             data.sort(key=lambda x: (x["unit_code"], x["campus"]))
             return Response(data)
 
@@ -183,19 +210,42 @@ class TutorTimetableView(APIView):
         return Response(AllocationSerializer(qs, many=True).data)
 
 class SessionsByUnitCode(APIView):
+    """Alias-aware sessions for one unit code; optional campus filter."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        alias = _get_alias(request)
         code = request.query_params.get("unit_code")
+        campus = request.query_params.get("campus")
         if not code:
             return Response([], status=200)
 
-        qs = (TimeTable.objects
-              .filter(unit_course__unit__unit_code__iexact=code)
-              .select_related("unit_course__unit")
-              .prefetch_related("allocations__tutor"))
-        data = TimeTableSessionSerializer(qs, many=True).data
-        return Response(data, status=200)
+        with force_write_alias(alias):
+            qs = (TimeTable.objects
+                  .select_related("unit_course", "unit_course__unit", "unit_course__campus", "tutor_user", "master_class")
+                  .filter(unit_course__unit__unit_code__iexact=code))
+            if campus:
+                qs = qs.filter(unit_course__campus__campus_name__iexact=campus)
+
+            rows = []
+            for tt in qs.order_by("day_of_week", "start_time", "timetable_id"):
+                u = tt.unit_course.unit
+                rows.append({
+                    "session_id": tt.timetable_id,                     # front-end expects session_id
+                    "unit_name": u.unit_name,
+                    "activity_code": getattr(tt, "activity_code", None) or getattr(tt.master_class, "activity_code", None) or "",
+                    "campus": tt.unit_course.campus.campus_name if tt.unit_course.campus else "",
+                    "day_of_week": tt.day_of_week,
+                    "start_time": str(tt.start_time) if tt.start_time else None,
+                    "duration": getattr(tt, "duration_minutes", None),
+                    "location": tt.room,
+                    "weeks": getattr(tt.master_class, "weeks", "") or "",
+                    "tutor": (f"{tt.tutor_user.first_name} {tt.tutor_user.last_name}".strip() if tt.tutor_user else ""),
+                    "tutor_email": (tt.tutor_user.email if tt.tutor_user else ""),
+                    "tutor_user_id": tt.tutor_user_id,
+                    "notes": tt.notes or "",
+                })
+            return Response(rows, status=200)
     
 class UnitSessionsView(APIView):
     """Return all sessions for one unit code (optionally filtered by campus)."""
@@ -211,10 +261,10 @@ class UnitSessionsView(APIView):
             if campus:
                 qs = qs.filter(unit_course__campus__campus_name__iexact=campus)
             rows = []
-            for tt in qs.order_by("day_of_week", "start_time", "id"):
+            for tt in qs.order_by("day_of_week", "start_time", "pk"):   # was "id"
                 u = tt.unit_course.unit
                 rows.append({
-                    "id": tt.id,
+                    "id": tt.pk,  # safe alias for timetable_id
                     "unit_code": u.unit_code,
                     "unit_name": u.unit_name,
                     "campus": tt.unit_course.campus.campus_name if tt.unit_course.campus else "",
@@ -222,8 +272,7 @@ class UnitSessionsView(APIView):
                     "start_time": str(tt.start_time) if tt.start_time else None,
                     "end_time": str(tt.end_time) if tt.end_time else None,
                     "location": tt.room,
-                    "tutor": (f"{tt.tutor_user.first_name} {tt.tutor_user.last_name}".strip()
-                              if tt.tutor_user else ""),
+                    "tutor": (f"{tt.tutor_user.first_name} {tt.tutor_user.last_name}".strip() if tt.tutor_user else ""),
                     "tutor_email": (tt.tutor_user.email if tt.tutor_user else ""),
                     "notes": tt.notes or "",
                 })
@@ -289,125 +338,52 @@ class AssignTutorView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        alias = request.query_params.get("alias") or get_current_semester_alias()
-        ser = AssignRequestSerializer(data=request.data)
-        ser.is_valid(raise_exception=True)
-        data = ser.validated_data
+        alias = _get_alias(request)
+        session_id = request.data.get("session_id")
+        tutor_id = request.data.get("tutor_id")
+        tutor_email = request.data.get("tutor_email")
+        notes = request.data.get("notes", "")
+
+        if not session_id:
+            return Response({"detail": "session_id is required"}, status=400)
 
         with force_write_alias(alias):
-            # --- 1) find the session in the semester DB ---
-            tt = (TimeTable.objects
-                  .select_related("tutor_user", "master_class", "unit_course")
-                  .filter(pk=data["session_id"])
-                  .first())
-            if not tt:
-                return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+            try:
+                tt = TimeTable.objects.using(alias).get(pk=session_id)
+            except TimeTable.DoesNotExist:
+                return Response({"detail": "Session not found"}, status=404)
 
             tutor = None
-            # helpers
-            def get_semester_user_by_id(uid: int):
-                return User.objects.using(alias).filter(pk=uid).first()
+            if tutor_id:
+                try:
+                    tutor = User.objects.using(alias).get(pk=tutor_id)
+                except User.DoesNotExist:
+                    return Response({"detail": f"Tutor id {tutor_id} not found"}, status=404)
+            elif tutor_email:
+                tutor = User.objects.using(alias).filter(email__iexact=tutor_email).first()
+                if not tutor:
+                    return Response({"detail": f"Tutor email {tutor_email} not found"}, status=404)
 
-            def get_semester_user_by_email(email: str):
-                return User.objects.using(alias).filter(email__iexact=email).first()
-
-            def get_default_user_by_id(uid: int):
-                return User.objects.filter(pk=uid).first()
-
-            def get_default_user_by_email(email: str):
-                return User.objects.filter(email__iexact=email).first()
-
-            sent_uid   = data.get("tutor_user_id")
-            sent_email = (data.get("tutor_email") or "").strip()
-
-            # --- 2) resolve tutor robustly ---
-            # Try: semester by ID
-            if sent_uid is not None:
-                tutor = get_semester_user_by_id(sent_uid)
-
-            # If not found and we have email, try semester by email
-            if tutor is None and sent_email:
-                tutor = get_semester_user_by_email(sent_email)
-
-            # If still not found, see if default has it → map by email back to semester
-            if tutor is None:
-                default_user = None
-                if sent_uid is not None:
-                    default_user = get_default_user_by_id(sent_uid)
-                if not default_user and sent_email:
-                    default_user = get_default_user_by_email(sent_email)
-
-                if default_user:
-                    # map by email to semester DB
-                    mapped = get_semester_user_by_email(default_user.email or "")
-                    if mapped:
-                        tutor = mapped
-                    else:
-                        # If there is no same-email user in the semester DB, we cannot set FK.
-                        # Return a clear error so the coordinator knows to create/clone the user for this semester.
-                        return Response(
-                            {"detail": "Tutor exists only in default DB; create this tutor in the current semester database or add them to the EOI/users sync."},
-                            status=status.HTTP_400_BAD_REQUEST
-                        )
-
-            # If they provided both id and email and they clash, prefer semester record; else error
-            if tutor and sent_uid is not None and sent_email:
-                sem_check = get_semester_user_by_id(sent_uid)
-                if sem_check and sem_check.email and sem_check.email.lower() != sent_email.lower():
-                    return Response(
-                        {"detail": "Provided tutor_user_id and tutor_email refer to different users."},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-
-            # If final tutor is still None and they sent an id/email, report not found
-            if tutor is None and (sent_uid is not None or sent_email):
-                return Response({"detail": "Tutor not found for tutor_user_id / tutor_email."},
-                                status=status.HTTP_400_BAD_REQUEST)
-
-            # --- 3) clash check (only if we are assigning a tutor) ---
-            if tutor and tt.start_time and tt.end_time and tt.day_of_week:
-                conflict = (TimeTable.objects
-                            .filter(tutor_user=tutor,
-                                    day_of_week=tt.day_of_week,
-                                    start_time__lt=tt.end_time,
-                                    end_time__gt=tt.start_time)
-                            .exclude(pk=tt.pk)
-                            .exists())
-                if conflict:
-                    return Response({"detail": "Tutor has a time clash for this session."},
-                                    status=status.HTTP_409_CONFLICT)
-
-            # --- 4) save updates in semester DB ---
-            updates = []
-            if tutor is not None:
+            # Assign or unassign tutor
+            if tutor:
+                ok, msg = tt.can_assign_tutor(tutor)
+                if not ok:
+                    return Response({"detail": msg}, status=400)
                 tt.tutor_user = tutor
-                updates.append("tutor_user")
+            else:
+                tt.tutor_user = None  # unassign
 
-            if "notes" in data:
-                tt.notes = data["notes"] or ""
-                updates.append("notes")
-
-            # optional: backfill start/end dates from master_class if missing
-            if (not tt.start_date or not tt.end_date) and getattr(tt, "master_class", None):
-                if getattr(tt.master_class, "start_date", None):
-                    tt.start_date = tt.master_class.start_date
-                    updates.append("start_date")
-                if getattr(tt.master_class, "end_date", None):
-                    tt.end_date = tt.master_class.end_date
-                    updates.append("end_date")
-
-            if updates:
-                tt.save(update_fields=list(set(updates)))
+            tt.notes = notes
+            tt.save(using=alias)
 
             return Response({
                 "ok": True,
                 "session_id": tt.pk,
                 "tutor_user_id": tt.tutor_user_id,
-                "tutor_email": getattr(tt.tutor_user, "email", None),
-                "notes": tt.notes or "",
-                "start_date": tt.start_date,
-                "end_date": tt.end_date,
-            }, status=status.HTTP_200_OK)
+                "tutor": tt.tutor_user.get_full_name() if tt.tutor_user else "",
+                "tutor_email": tt.tutor_user.email if tt.tutor_user else "",
+                "notes": tt.notes,
+            })
 
 class RunAllocationView(APIView):
     """

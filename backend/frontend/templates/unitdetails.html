@@ -78,8 +78,6 @@
     const API = {
       eoiApplicants: "/api/eoi/applicants/",
       savePrefs: "/api/eoi/preferences/",
-      semestersCurrent: "/api/semesters/current/",
-      semestersList: "/api/semesters/",
     };
 
     function getAccessToken() { return localStorage.getItem("access"); }
@@ -95,17 +93,6 @@
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
       return res.json();
     }
-    async function getCurrentAlias() {
-      try {
-        const { alias } = await apiGet(API.semestersCurrent);
-        return alias;
-      } catch {
-        const list = await apiGet(API.semestersList);
-        const cur = (list || []).find(s => s.is_current) || (list || [])[0];
-        if (!cur) throw new Error("No semesters available");
-        return cur.alias;
-      }
-    }
     async function apiPostJSON(path, body) {
       const res = await fetch(path, {
         method: "POST",
@@ -120,17 +107,17 @@
       return res.json().catch(() => ({}));
     }
 
-    // --- Query params ---
-    const params = new URLSearchParams(location.search);
-    const sheetName = params.get("sheet") || "";
-    const unitTitleStr = decodeURIComponent(params.get("title") || "");
-    const unitCode = decodeURIComponent(params.get("code") || "");
-    const unitId = params.get("id") || "";
+    // --- Query params (single source of truth used by page & details tab) ---
+    const QP = new URLSearchParams(location.search);
+    const UNIT_CODE = decodeURIComponent(QP.get("code") || "");
+    const UNIT_NAME_DISPLAY = decodeURIComponent(QP.get("name") || "");
+    const UNIT_TITLE = UNIT_NAME_DISPLAY
+      ? `${UNIT_CODE} – ${UNIT_NAME_DISPLAY}`
+      : (UNIT_CODE || "Unit");
 
-    document.getElementById("unitTitle").textContent = unitTitleStr || sheetName || "Unit";
+    document.getElementById("unitTitle").textContent = UNIT_TITLE;
 
     // --- Storage keys ---
-    const SHEETS_KEY = "eoi_sheets_aoa";
     const PREF_KEY = "eoi_prefs"; // { "<unitCode>|<email>": "3", ... }
 
     // Page elements
@@ -147,6 +134,7 @@
     const btnSubmit = document.getElementById("btnSubmit");
 
     let isEditing = false;
+    const EOI_BY_EMAIL = new Map();
 
     document.addEventListener("DOMContentLoaded", async () => {
       const params = new URLSearchParams(location.search);
@@ -165,24 +153,25 @@
       if (!unitCode) { alertBox.classList.remove("d-none"); return; }
 
       try {
-        await getCurrentAlias(); // avoid /semesters/current/ 404
-
-        // Fetch applicants for this unit
+        // Fetch applicants directly (no /semesters/current/ call)
         const data = await apiGet(`${API.eoiApplicants}?unit_code=${encodeURIComponent(unitCode)}`);
         const list = Array.isArray(data?.results) ? data.results : (Array.isArray(data) ? data : []);
 
-        // NEW: get the unit id for saving preferences
         const apiUnitId =
           (list[0] && (list[0].unit || list[0].unit_id)) ? (list[0].unit || list[0].unit_id) : null;
 
-        // NEW: keep server-side preference in each item
-        const applicants = list.map(a => ({
-          name: a.applicant_name || [a.first_name, a.last_name].filter(Boolean).join(" ") || a.tutor_name || "",
-          email: a.tutor_email || a.applicant_email || a.email || "",
-          you_are: a.tutor_current || a.status || "",
-          location: a.location_text || a.campus_name || (a.campus?.campus_name || a.campus || ""),
-          preference: a.preference ?? ""   // <-- keep server preference
-        }));
+        const applicants = list.map(a => {
+          const name =
+            a.applicant_name ||
+            [a.first_name, a.last_name].filter(Boolean).join(" ") ||
+            a.tutor_name || "";
+          const email = a.tutor_email || a.applicant_email || a.email || "";
+          const you_are = a.tutor_current || a.status || "";
+          const location = a.location_text || a.campus_name || (a.campus?.campus_name || a.campus || "");
+          if (email) EOI_BY_EMAIL.set(email.toLowerCase(), a);
+
+          return { name, email, you_are, location, preference: a.preference ?? "", _raw: a };
+        });
 
         if (!applicants.length) {
           alertBox.textContent = "No applicants yet for this unit.";
@@ -191,7 +180,7 @@
         }
 
         renderFromAPI(applicants, unitCode);
-        hookEditSubmit({ mode: "api", unitId: apiUnitId, codeForKey: unitCode });
+        hookEditSubmit({ unitId: apiUnitId, codeForKey: unitCode });
 
         alertBox.classList.add("d-none");
       } catch (e) {
@@ -202,7 +191,6 @@
     });
 
 
-    // --- API rendering (same visual structure) ---
     function renderFromAPI(applicants, codeForKey) {
       const headerRow = ["Name", "Email", "Current Status", "Tutoring Location"];
       const prefs = JSON.parse(localStorage.getItem(PREF_KEY) || "{}");
@@ -210,7 +198,7 @@
 
       applicants.forEach((a) => {
         const loc = String(a.location || "").trim().toLowerCase();
-        const item = { name: a.name || "", email: a.email || "", you_are: a.you_are || "", location: a.location || "", preference: a.preference || "" };
+        const item = { name: a.name || "", email: a.email || "", you_are: a.you_are || "", location: a.location || "", preference: a.preference || "", _raw: a._raw };
         if (loc === "hobart") groups.Hobart.push(item);
         else if (loc === "launceston") groups.Launceston.push(item);
         else groups.Other.push(item);
@@ -226,11 +214,15 @@
 
       function buildSection(headEl, bodyEl, rows) {
         if (!rows.length) return;
+        headEl.textContent = "";
+        bodyEl.textContent = "";
 
         const trh = document.createElement("tr");
         const thPref = document.createElement("th"); thPref.textContent = "Preference";
         trh.appendChild(thPref);
         headerRow.forEach((h) => { const th = document.createElement("th"); th.textContent = h; trh.appendChild(th); });
+        const thDetails = document.createElement("th"); thDetails.textContent = "Details";
+        trh.appendChild(thDetails);
         headEl.appendChild(trh);
 
         rows.forEach((r) => {
@@ -248,7 +240,6 @@
             const o = document.createElement("option"); o.value = String(i); o.textContent = String(i); sel.appendChild(o);
           }
 
-          // NEW: prefer server's preference, fallback to local cache
           const fromServer = r.preference ? String(r.preference) : "";
           const fromLocal = prefs[key] ? String(prefs[key]) : "";
           sel.value = fromServer || fromLocal || "";
@@ -257,20 +248,30 @@
           tdPref.appendChild(sel);
           tr.appendChild(tdPref);
 
-          // Cells in order: Name, Email, You are, Tutoring Location
           [r.name, r.email, r.you_are, r.location].forEach((val) => {
             const td = document.createElement("td");
             td.textContent = (val ?? "").toString();
             tr.appendChild(td);
           });
 
+          const tdDetails = document.createElement("td");
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "btn btn-sm btn-outline-primary";
+          btn.textContent = "View details";
+          btn.addEventListener("click", () => {
+            const raw = (r.email && EOI_BY_EMAIL.get((r.email || "").toLowerCase())) || r._raw || null;
+            openDetailsWindow(raw);
+          });
+          tdDetails.appendChild(btn);
+          tr.appendChild(tdDetails);
+
           bodyEl.appendChild(tr);
         });
       }
     }
 
-    // --- Edit / Submit logic ---
-    function hookEditSubmit({ mode, unitId = null, codeForKey = "" }) {
+    function hookEditSubmit({ unitId = null, codeForKey = "" }) {
       btnEdit.addEventListener("click", () => {
         isEditing = true;
         btnEdit.classList.add("btn-secondary");
@@ -284,7 +285,7 @@
         const prefsNow = JSON.parse(localStorage.getItem(PREF_KEY) || "{}");
         const bulk = [];
         document.querySelectorAll(".pref-select").forEach((sel) => {
-          const key = sel.dataset.prefKey; // "<unitCode>|<email>"
+          const key = sel.dataset.prefKey;
           const val = sel.value.trim();
           if (!key) return;
           const email = key.split("|")[1] || "";
@@ -297,10 +298,10 @@
         });
 
         try {
-          const canPost = Boolean(unitId && getAccessToken());   // <= unitId was set from API
+          const canPost = Boolean(unitId && getAccessToken());
           if (canPost && bulk.length) {
             await apiPostJSON(API.savePrefs, { unit_id: parseInt(unitId, 10), prefs: bulk });
-            localStorage.setItem(PREF_KEY, JSON.stringify(prefsNow)); // keep local cache in sync
+            localStorage.setItem(PREF_KEY, JSON.stringify(prefsNow));
             alert("Preferences saved to server.");
           } else {
             localStorage.setItem(PREF_KEY, JSON.stringify(prefsNow));
@@ -317,7 +318,89 @@
         document.querySelectorAll(".pref-select").forEach((s) => (s.disabled = true));
       });
     }
+
+    function openDetailsWindow(o) {
+      if (!o) { alert("No details available."); return; }
+
+      // Build "Applied unit" from the page header (code – name), fallback to API fields.
+      const appliedUnit = UNIT_CODE
+        ? `${UNIT_CODE}${UNIT_NAME_DISPLAY ? " — " + UNIT_NAME_DISPLAY : ""}`
+        : (o.unit_code || "");
+
+      const esc = (x) => (x == null ? "" : String(x)).replace(/[&<>"']/g, s => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s]));
+      const fmtBool = (v) => (v === true ? "Yes" : v === false ? "No" : "");
+      const asList = (v) => Array.isArray(v) ? v.join(", ") : (v ?? "");
+
+      const coreLines = [
+        `<strong>Name:</strong> ${esc(o.applicant_name || o.tutor_name || "")}`,
+        `<strong>Email:</strong> ${esc(o.applicant_email || o.tutor_email || o.email || "")}`,
+        `<strong>Applied unit:</strong> ${esc(appliedUnit)}`,
+        `<strong>Status:</strong> ${esc(o.status || "")}`,
+        (o.preference ? `<strong>Preference:</strong> ${esc(o.preference)}` : "")
+      ].filter(Boolean);
+
+      const extra = [
+        ["Campus", o.campus_name || o.location_text],
+        ["You are", o.tutor_current],
+        ["GPA", o.gpa],
+        ["Supervisor / Reference", o.supervisor],
+        ["Applied units (all)", asList(o.applied_units)],
+        ["Qualifications", o.qualifications],
+        ["Tutoring experience", o.tutoring_experience],
+        ["Availability", o.availability],
+        ["Hours available", o.hours_available],
+        ["Scholarship received", fmtBool(o.scholarship_received)],
+        ["Transcript link", o.transcript_link],
+        ["CV link", o.cv_link],
+        ["Remarks", o.remarks],
+        ["Created at", o.created_at],
+        ["Updated at", o.updated_at],
+      ];
+
+      const rows = extra
+        .filter(([_, v]) => v !== null && v !== undefined && String(v).trim() !== "")
+        .map(([k, v]) => {
+          const val = (k.toLowerCase().includes("link") && v)
+            ? `<a href="${esc(v)}" target="_blank" rel="noopener">${esc(v)}</a>`
+            : esc(v);
+          return `<tr><th style="white-space:nowrap;width:220px">${esc(k)}</th><td>${val}</td></tr>`;
+        })
+        .join("");
+
+      const html = `
+        <!doctype html>
+        <html>
+          <head>
+            <meta charset="utf-8" />
+            <title>EOI Details</title>
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+          </head>
+          <body class="p-3">
+            <div class="container">
+              <h2 class="h5 mb-3">EOI Details</h2>
+              <div class="mb-3">
+                ${coreLines.map(line => `<div>${line}</div>`).join("")}
+              </div>
+              <div class="table-responsive">
+                <table class="table table-sm table-bordered align-middle">
+                  <tbody>
+                    ${rows || `<tr><td colspan="2" class="text-muted">No additional information.</td></tr>`}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </body>
+        </html>
+      `;
+
+      // Open in a real new tab using a Blob URL
+      const blob = new Blob([html], { type: "text/html" });
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank");
+    }
+
   </script>
+
 
 </body>
 

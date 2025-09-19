@@ -1,3 +1,4 @@
+#eoi/serializers.py
 from rest_framework import serializers
 from .models import EoiApp, MasterEoI, TutorsCourses, TutorSkills, TutorSupervisors
 

@@ -103,53 +103,28 @@
         }
 
         async function loadUnits() {
-            if (!token()) { window.location = "/"; return; } // require login
+            if (!token()) { window.location = "/"; return; }
 
             const alias = await resolveAlias();
             document.getElementById("aliasTag").textContent = `Semester: ${alias}`;
             const backBtn = document.getElementById("backBtn");
             if (backBtn) backBtn.href = `/home.html?alias=${encodeURIComponent(alias)}`;
-            // Fetch all sessions for this alias
-            const sessions = await apiGet(`/timetable/sessions/?alias=${encodeURIComponent(alias)}`);
 
-            // Aggregate by (unit_code, campus); keep unit_name from API
-            const byKey = new Map();
-            for (const s of sessions) {
-                const code = String(s.activity_code || "").slice(0, 6).toUpperCase();
-                if (!code) continue;
-                const campus = s.campus || "";
-                const key = `${code}||${campus}`;
-                if (!byKey.has(key)) {
-                    byKey.set(key, { unit_code: code, unit_name: (s.unit_name || ""), campus, count: 0, tutors: new Map() });
-                }
-                const rec = byKey.get(key);
-                rec.count += 1;
-
-                // collect tutors (unique by email if available, else by name)
-                const name = (s.tutor || "").trim();
-                const email = (s.tutor_email || "").trim();
-                if (name) {
-                    const tKey = email || name;
-                    if (!rec.tutors.has(tKey)) rec.tutors.set(tKey, { name, email });
-                }
-            }
-
-            const rows = Array.from(byKey.values()).sort(
-                (a, b) => a.unit_code.localeCompare(b.unit_code) || a.campus.localeCompare(b.campus)
-            );
+            // NEW: use allocation/units (alias-aware) instead of timetable/sessions
+            const rows = await apiGet(`/allocation/units/?alias=${encodeURIComponent(alias)}`);
 
             const tbody = document.getElementById("unitsBody");
             if (!rows.length) {
-                tbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">No units found.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">No units found.</td></tr>`;
                 document.getElementById("recordCount").textContent = "0 units";
                 return;
             }
 
             tbody.innerHTML = rows.map(u => {
-                const url = `allocationdetails.html?alias=${encodeURIComponent(alias)}&code=${encodeURIComponent(u.unit_code)}&campus=${encodeURIComponent(u.campus)}`;
+                const url = `allocationdetails.html?alias=${encodeURIComponent(alias)}&code=${encodeURIComponent(u.unit_code)}&campus=${encodeURIComponent(u.campus)}&name=${encodeURIComponent(u.unit_name || "")}`;
 
-                // Build tutor chips (link to timetable page)
-                const tutors = Array.from(u.tutors.values());
+                // tutors already aggregated server-side
+                const tutors = Array.isArray(u.tutors) ? u.tutors : [];
                 const tutorHtml = tutors.length
                     ? tutors.map(t => {
                         const ttUrl = `tutortimetable.html?alias=${encodeURIComponent(alias)}&name=${encodeURIComponent(t.name)}${t.email ? `&email=${encodeURIComponent(t.email)}` : ""}`;
@@ -161,7 +136,7 @@
                 <td><a class="unitlink" href="${url}">${u.unit_code}</a></td>
                 <td><a class="unitlink" href="${url}">${u.unit_name || ""}</a></td>
                 <td>${u.campus}</td>
-                <td class="text-end">${u.count}</td>
+                <td class="text-end">${u.session_count}</td>
                 <td>${tutorHtml}</td>
             </tr>`;
             }).join("");
