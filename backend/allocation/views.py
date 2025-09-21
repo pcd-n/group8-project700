@@ -110,12 +110,17 @@ class ManualAssignView(APIView):
         session = get_object_or_404(TimeTable, pk=serializer.validated_data["session_id"])
         tutor = get_object_or_404(User, pk=serializer.validated_data["tutor_id"])
 
-        # clash check
-        clashes = Allocation.objects.filter(
-            tutor=tutor,
-            session__day_of_week=session.day_of_week,
-            session__start_time__lt=session.end_time,
-            session__end_time__gt=session.start_time,
+        # clash check (purely against TimeTable)
+        db = getattr(session._state, "db", None) or "default"
+        clashes = (
+            TimeTable.objects.using(db)
+            .filter(
+                tutor_user=tutor,
+                day_of_week=session.day_of_week,
+                start_time__lt=session.end_time,
+                end_time__gt=session.start_time,
+            )
+            .exclude(pk=session.pk)
         )
         if clashes.exists():
             return Response({"detail": "Clash detected"}, status=400)
@@ -137,35 +142,56 @@ class AutoAllocateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        term = request.data.get("term")
-        year = request.data.get("year")
+        # use the same alias pattern you use elsewhere
+        alias = request.GET.get("alias") or request.data.get("alias") or _get_alias(request)
+        ctx = force_write_alias(alias) if alias else None
+        if ctx:
+            ctx.__enter__()
 
-        qs = TimeTable.objects.all()
-        if year:
-            qs = qs.filter(unit_course__year=year)
-        if term:
-            qs = qs.filter(unit_course__term=term)
+        try:
+            term = request.data.get("term")
+            year = request.data.get("year")
 
-        sessions = qs
-        created = []
+            qs = TimeTable.objects.all()
+            if year:
+                qs = qs.filter(unit_course__year=year)
+            if term:
+                qs = qs.filter(unit_course__term=term)
 
-        for s in sessions:
-            # skip if already allocated
-            if Allocation.objects.filter(session=s).exists():
-                continue
+            created = []
 
-            # EOIs for this unit ordered by preference
-            eois = EoiApp.objects.filter(unit=s.unit_course.unit).order_by("preference")
-            allocated = False
-            for e in eois:
-                clashes = Allocation.objects.filter(
-                    tutor=e.applicant_user,
-                    session__day_of_week=s.day_of_week,
-                    session__start_time__lt=s.end_time,
-                    session__end_time__gt=s.start_time,
+            for s in qs:
+                db = getattr(s._state, "db", alias) or "default"
+
+                # skip if already allocated for this session (on same DB)
+                if Allocation.objects.using(db).filter(session=s).exists():
+                    continue
+
+                # EOIs for this unit ordered by preference (same DB)
+                eois = (
+                    EoiApp.objects
+                    .filter(unit=s.unit_course.unit, preference__gte=1)  # only with real preference
+                    .order_by("preference", "id")
                 )
-                if not clashes.exists():
-                    alloc = Allocation.objects.create(
+                for e in eois:
+                    if not e.preference or e.preference < 1:
+                        continue 
+                    
+                    clash_exists = (
+                        TimeTable.objects.using(db)
+                        .filter(
+                            tutor_user=e.applicant_user,
+                            day_of_week=s.day_of_week,
+                            start_time__lt=s.end_time,
+                            end_time__gt=s.start_time,
+                        )
+                        .exclude(pk=s.pk)
+                        .exists()
+                    )
+                    if clash_exists:
+                        continue
+
+                    alloc = Allocation.objects.using(db).create(
                         session=s,
                         tutor=e.applicant_user,
                         preference=e.preference,
@@ -173,11 +199,13 @@ class AutoAllocateView(APIView):
                         created_by=request.user,
                     )
                     created.append(alloc)
-                    allocated = True
-                    break
+                    break  # stop at first feasible EOI
 
-        return Response(AllocationSerializer(created, many=True).data)
+            return Response(AllocationSerializer(created, many=True).data)
 
+        finally:
+            if ctx:
+                ctx.__exit__(None, None, None)
 
 class ApproveAllocationsView(APIView):
     """

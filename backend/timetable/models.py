@@ -310,43 +310,31 @@ class TimeTable(models.Model):
 
     def can_assign_tutor(self, tutor):
         """
-        Check if a tutor can be assigned to this timetable slot.
-        Validates against existing allocations and availability.
+        Can assign if the tutor doesn't already have another class overlapping this slot.
+        Clash check is done purely on TimeTable (same DB alias as this instance).
         """
         if self.tutor_user and self.tutor_user != tutor:
             return False, f"Already assigned to {self.tutor_user.get_full_name()}"
-        
-        # Check for conflicts with other timetable assignments
-        conflicting_assignments = TimeTable.objects.filter(
-            tutor_user=tutor,
-            day_of_week=self.day_of_week,
-            start_time__lt=self.end_time,
-            end_time__gt=self.start_time
-        ).exclude(pk=self.pk)
-        
-        if conflicting_assignments.exists():
-            return False, "Tutor has conflicting assignment at this time"
-        
-        # Check if tutor has required skills for this unit
-        from eoi.models import TutorSkills
-        required_skills = self.unit_course.unit.unit_skills.filter(is_required=True)
-        
-        if required_skills.exists():
-            tutor_skills = TutorSkills.objects.filter(
+
+        db = getattr(self._state, "db", None) or "default"
+
+        # Overlap: same day; existing start < this end AND existing end > this start
+        conflicting_assignments = (
+            TimeTable.objects.using(db)
+            .filter(
                 tutor_user=tutor,
-                skill__in=[us.skill for us in required_skills],
-                verified_at__isnull=False
+                day_of_week=self.day_of_week,
+                start_time__lt=self.end_time,
+                end_time__gt=self.start_time,
             )
-            
-            missing_skills = required_skills.exclude(
-                skill__in=[ts.skill for ts in tutor_skills]
-            )
-            
-            if missing_skills.exists():
-                skill_names = [ms.skill.skill_name for ms in missing_skills]
-                return False, f"Missing required skills: {', '.join(skill_names)}"
-        
+            .exclude(pk=self.pk)
+        )
+
+        if conflicting_assignments.exists():
+            return False, "Tutor has a conflicting class in this time slot"
+
         return True, "Can be assigned"
+
 
     def assign_tutor(self, tutor, user=None):
         """Assign a tutor to this timetable slot with validation."""
