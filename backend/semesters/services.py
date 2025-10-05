@@ -1,3 +1,4 @@
+# backend/semesters/services.py
 import copy
 from django.conf import settings
 from django.db import connections

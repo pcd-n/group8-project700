@@ -1,3 +1,4 @@
+# backend/semesters/models.py
 from django.db import models
 
 class Semester(models.Model):

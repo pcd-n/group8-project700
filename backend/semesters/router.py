@@ -1,4 +1,5 @@
-# semesters/router.py
+# backend/semesters/router.py
+
 from django.conf import settings
 from .threadlocal import get_view_alias, get_write_alias
 
