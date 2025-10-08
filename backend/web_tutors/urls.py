@@ -1,3 +1,4 @@
+# backend/web_tutors/urls.py
 from django.contrib import admin
 from django.urls import include, path, re_path
 from django.http import JsonResponse
@@ -16,7 +17,6 @@ urlpatterns = [
     path("unitdetails/", TemplateView.as_view(template_name="unitdetails.html"), name="unit_details"),
     path("allocations/<int:id>/", TemplateView.as_view(template_name="allocationdetails.html"), name="alloc_details"),
     path("allocationdetails.html", TemplateView.as_view(template_name="allocationdetails.html")),
-    path("api/", include("timetable.urls")),
     
     # HEALTH / STATUS (moved off '/')
     path("health/", health_view, name="health"),
@@ -31,8 +31,8 @@ urlpatterns = [
 
     # API
     path("api/semesters/", include("semesters.urls")),
+    path('api/accounts/', include(('users.urls', 'accounts'), namespace='accounts')),
     path("api/", include([
-        path("users/", include("users.urls")),
         path("units/", include("units.urls")),
         path("eoi/", include("eoi.urls")),
         path("timetable/", include("timetable.urls")),

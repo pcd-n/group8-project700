@@ -25,11 +25,12 @@ urlpatterns = [
     path('profile/<int:user_id>/', views.UserProfileView.as_view(), name='profile_view'),
     
     # =====================================================
-    # USER MANAGEMENT ENDPOINTS (Admin/Coordinator only)
+    # USER MANAGEMENT
     # =====================================================
     path('users/update/', views.UserUpdateView.as_view(), name='user_update_self'),
     path('users/update/<int:user_id>/', views.UserUpdateView.as_view(), name='user_update_specific'),
-    
+    path('users/reset-password/', views.ResetPasswordView.as_view(), name='reset_password'),
+
     # =====================================================
     # RBAC - ROLE MANAGEMENT ENDPOINTS (Admin only)
     # =====================================================
@@ -43,10 +44,9 @@ urlpatterns = [
     path('permissions/<int:pk>/', views.PermissionDetailView.as_view(), name='permission_detail'),
     
     # =====================================================
-    # RBAC - USER ROLE ASSIGNMENT ENDPOINTS (Admin/Coordinator)
+    # RBAC - USER ROLE ASSIGNMENT ENDPOINTS (Admin only)
     # =====================================================
     path('user-roles/', views.UserRolesListView.as_view(), name='user_roles_list'),
     path('user-roles/<int:user_id>/', views.UserRolesView.as_view(), name='user_roles_manage'),
-
     path('search/', views.UserSearchView.as_view(), name='user_search'),
 ]

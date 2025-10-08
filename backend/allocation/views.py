@@ -17,6 +17,7 @@ from semesters.router import get_current_semester_alias
 from users.models import User, Campus
 from units.models import Unit, UnitCourse
 from .serializers import AssignRequestSerializer
+from users.permissions import IsAdminOrCoordinator
 
 User = get_user_model()
 
@@ -48,7 +49,7 @@ class AllocationListView(generics.ListAPIView):
 
 class UnitsForAllocationView(APIView):
     """Return [{unit_code, unit_name, campus, session_count, tutors}] for the given alias."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdminOrCoordinator]
 
     def get(self, request):
         alias = _get_alias(request)
@@ -101,7 +102,7 @@ class ManualAssignView(APIView):
     """
     Manually assign a tutor to a class slot.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdminOrCoordinator]
 
     def post(self, request):
         serializer = ManualAssignSerializer(data=request.data)
@@ -139,7 +140,7 @@ class AutoAllocateView(APIView):
     """
     Allocate tutors automatically based on EOI preference values.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdminOrCoordinator]
 
     def post(self, request):
         # use the same alias pattern you use elsewhere
@@ -211,7 +212,7 @@ class ApproveAllocationsView(APIView):
     """
     Mark all allocations in a semester as approved and publish.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdminOrCoordinator]
 
     def post(self, request):
         term = request.data.get("term")
@@ -312,7 +313,7 @@ class SuggestTutorsView(APIView):
     then by name if no preference.
     Query params: unit_code=KIT101&campus=SB&q=pha
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdminOrCoordinator]
 
     def get(self, request):
         alias = _get_alias(request)
@@ -363,7 +364,7 @@ class SuggestTutorsView(APIView):
             return Response(results)
 
 class AssignTutorView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdminOrCoordinator]
 
     def post(self, request):
         alias = _get_alias(request)
@@ -416,9 +417,8 @@ class AssignTutorView(APIView):
 class RunAllocationView(APIView):
     """
     Runs a simple automatic allocation for the current semester DB.
-    Optional ?alias=sem_2023_s4 switches the write alias during the run.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdminOrCoordinator]
 
     def post(self, request):
         alias = request.GET.get("alias") or request.data.get("alias")

@@ -1,3 +1,4 @@
+# backend/users/views.py
 from django.shortcuts import render
 from django.db.models import Q
 from rest_framework import status, generics, serializers
@@ -13,20 +14,22 @@ from .serializers import (
     RoleSerializer, PermissionSerializer, UserRolesSerializer,
     SupervisorSerializer
 )
-from .permission import CanManageRoles, CanAssignRoles
+from .permissions import (
+    IsAdminRole, IsAdminOrCoordinator, TutorReadOnly,
+    CanManageAllocations, CanSetPreferences,
+)
 from rich.console import Console
 import logging
 
+DEFAULT_DB = "default"
 # Configure rich console
 console = Console()
 logger = logging.getLogger(__name__)
 
 
 class LoginSerializer(serializers.Serializer):
-    """Serializer for login request."""
-    email = serializers.EmailField(help_text="User's email address")
+    username = serializers.CharField(help_text="User's username")
     password = serializers.CharField(write_only=True, help_text="User's password")
-
 
 class LoginResponseSerializer(serializers.Serializer):
     """Serializer for login response."""
@@ -35,186 +38,49 @@ class LoginResponseSerializer(serializers.Serializer):
 
 
 class LoginView(generics.CreateAPIView):
-    """Login user with email and password."""
+    """Login user with username and password."""
     permission_classes = [AllowAny]
     serializer_class = LoginSerializer
     
     @extend_schema(
         request=LoginSerializer,
         responses={200: LoginResponseSerializer},
-        description="Login user with email and password",
-        examples=[
-            OpenApiExample(
-                'Login Example',
-                value={
-                    'email': 'user@example.com',
-                    'password': 'password123'
-                },
-                request_only=True,
-            ),
-        ]
+        description="Login with username and password",
+        examples=[OpenApiExample(
+            'Login Example',
+            value={'username': 'uc01', 'password': 'password123'},
+            request_only=True,
+        )]
     )
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
-        email = serializer.validated_data['email']
+
+        username = serializer.validated_data['username']
         password = serializer.validated_data['password']
-        
+
         try:
-            result = User.objects.login_user(email=email, password=password)
-            
+            result = User.objects.login_user(username=username, password=password)
             if result['success']:
-                user_serializer = UserSerializer(result['user'])
                 return Response({
-                    'user': user_serializer.data,
+                    'user': UserSerializer(result['user']).data,
                     'tokens': result['tokens']
                 }, status=status.HTTP_200_OK)
-            else:
-                return Response(
-                    {'error': result['message']},
-                    status=status.HTTP_401_UNAUTHORIZED
-                )
-        
-        except Exception as e:
-            console.print(f"[red]Login error:[/red] {str(e)}")
-            return Response(
-                {'error': 'Login failed'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
+            return Response({'error': result['message']}, status=status.HTTP_401_UNAUTHORIZED)
+        except Exception:
+            return Response({'error': 'Login failed'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class RegisterView(generics.CreateAPIView):
-    """Register a new user with optional role assignment and supervisor creation."""
-    permission_classes = [AllowAny]
+    permission_classes = [IsAdminRole]   # Admin only
     serializer_class = UserCreateSerializer
     
-    @extend_schema(
-        request=UserCreateSerializer,
-        responses={201: UserSerializer},
-        description="Register a new user with optional role assignment and supervisor creation",
-        examples=[
-            OpenApiExample(
-                'User Registration Example',
-                value={
-                    'email': 'newuser@example.com',
-                    'password': 'password123',
-                    'first_name': 'John',
-                    'last_name': 'Doe',
-                    'roles': ['Member'],
-                    'is_supervisor': False
-                },
-                request_only=True,
-            ),
-        ]
-    )
     def create(self, request, *args, **kwargs):
-        try:
-            data = request.data
-            return self._single_register(data)
-        
-        except Exception as e:
-            console.print(f"[red]Registration error:[/red] {str(e)}")
-            return Response(
-                {'error': 'Registration failed'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        ser = self.get_serializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        user = ser.save()
+        tokens = User.objects.get_tokens_for_user(user)
+        return Response({'user': UserSerializer(user).data, 'tokens': tokens}, status=status.HTTP_201_CREATED)
     
-    def _single_register(self, data):
-        """Register a single user."""
-        serializer = UserCreateSerializer(data=data)
-        
-        if not serializer.is_valid():
-            return Response(
-                {'error': serializer.errors},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        with transaction.atomic():
-            # Create user
-            user_data = serializer.validated_data.copy()
-            roles = user_data.pop('roles', [])
-            is_supervisor = user_data.pop('is_supervisor', False)
-            campus_id = user_data.pop('campus_id', None)
-            
-            result = User.objects.register_user(**user_data)
-            
-            if not result['success']:
-                return Response(
-                    {'error': result['message']},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            user = result['user']
-            
-            # Assign roles
-            if roles:
-                self._assign_roles(user, roles)
-            
-            # Create supervisor instance if needed
-            if is_supervisor:
-                campus = None
-                if campus_id:
-                    try:
-                        campus = Campus.objects.get(id=campus_id)
-                    except Campus.DoesNotExist:
-                        pass
-                
-                Supervisor.objects.create(user=user, campus=campus)
-            
-            user_serializer = UserSerializer(user)
-            return Response({
-                'user': user_serializer.data,
-                'tokens': result['tokens'],
-                'is_supervisor': is_supervisor
-            }, status=status.HTTP_201_CREATED)
-    
-    def _assign_roles(self, user, role_names):
-        """Assign roles to a user (single active role only) - always create new instances for auditing."""
-        # If no roles provided, assign default Member role
-        if not role_names:
-            role_names = ['Member']
-            console.print(f"[yellow]No roles specified for user {user.email}, assigning default Member role[/yellow]")
-        
-        # Take only the first role since system enforces single active role
-        role_name = role_names[0] if isinstance(role_names, list) else role_names
-        
-        if len(role_names) > 1:
-            console.print(f"[yellow]Warning: Multiple roles provided for {user.email}, using only first role: {role_name}[/yellow]")
-        
-        try:
-            role = Role.objects.get(role_name=role_name)
-            
-            # Disable ALL existing active role assignments for this user (single active role system)
-            existing_assignments = UserRoles.objects.filter(user=user, is_active=True)
-            disabled_roles = []
-            
-            for assignment in existing_assignments:
-                assignment.disable()
-                disabled_roles.append(assignment.role.role_name)
-            
-            if disabled_roles:
-                console.print(f"[yellow]• Disabled previous roles for {user.email}: {', '.join(disabled_roles)}[/yellow]")
-            
-            # ALWAYS create a new UserRole instance for proper auditing trail
-            user_role = UserRoles.objects.create(
-                user=user,
-                role=role,
-                is_active=True
-            )
-            console.print(f"[green]✓ Created new role assignment {role_name} for user {user.email}[/green]")
-                
-        except Role.DoesNotExist:
-            # Fall back to Member role if specified role doesn't exist
-            console.print(f"[red]Warning: Role '{role_name}' does not exist, assigning Member role instead[/red]")
-            try:
-                member_role = Role.objects.get(role_name='Member')
-                UserRoles.objects.create(user=user, role=member_role, is_active=True)
-                console.print(f"[green]✓ Created new Member role assignment for user {user.email}[/green]")
-            except Role.DoesNotExist:
-                console.print(f"[red]Error: Member role does not exist! User {user.email} has no role assigned[/red]")
-
-
 class UserUpdatePermission(BasePermission):
     """Custom permission for user updates - Admin/Coordinator can update any user, users can update themselves."""
     
@@ -272,7 +138,7 @@ class UserUpdateView(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
             try:
-                user = User.objects.get(id=user_id)
+                user = User.objects.using(DEFAULT_DB).get(id=user_id)
             except User.DoesNotExist:
                 return Response(
                     {'error': 'User not found'},
@@ -292,9 +158,9 @@ class UserUpdateView(APIView):
 
 class RoleListCreateView(generics.ListCreateAPIView):
     """List all roles or create new ones."""
-    queryset = Role.objects.all()
+    queryset = Role.objects.using(DEFAULT_DB).all()
     serializer_class = RoleSerializer
-    permission_classes = [CanManageRoles]
+    permission_classes = [IsAdminRole]
     
     @extend_schema(
         request=RoleSerializer,
@@ -317,9 +183,9 @@ class RoleListCreateView(generics.ListCreateAPIView):
 
 class RoleDetailView(generics.RetrieveUpdateDestroyAPIView):
     """Retrieve, update, or delete a specific role."""
-    queryset = Role.objects.all()
+    queryset = Role.objects.using(DEFAULT_DB).all()
     serializer_class = RoleSerializer
-    permission_classes = [CanManageRoles]
+    permission_classes = [IsAdminRole]
     
     @extend_schema(
         responses={200: RoleSerializer},
@@ -351,27 +217,28 @@ class UserSearchView(APIView):
         if not q:
             return Response([], status=200)
 
-        qs = User.objects.all()
+        qs = User.objects.using(DEFAULT_DB).all()
         if "@" in q:
             qs = qs.filter(email__icontains=q)
         else:
-            qs = qs.filter(Q(first_name__icontains=q) | Q(last_name__icontains=q))
-
-        data = [
-            {
-                "id": u.id,
-                "name": (u.get_full_name() or u.email),
-                "email": u.email,
-            }
-            for u in qs.order_by("first_name", "last_name")[:10]
-        ]
+            qs = qs.filter(
+                Q(username__icontains=q) |
+                Q(first_name__icontains=q) |
+                Q(last_name__icontains=q)
+            )
+        data = [{
+            "id": u.id,
+            "name": u.get_full_name() or u.username,
+            "username": u.username,
+            "email": u.email,
+        } for u in qs.order_by("username")[:10]]
         return Response(data, status=200)
 
 class PermissionListCreateView(generics.ListCreateAPIView):
     """List all permissions or create new ones."""
-    queryset = Permission.objects.all()
+    queryset = Permission.objects.using(DEFAULT_DB).all()
     serializer_class = PermissionSerializer
-    permission_classes = [CanManageRoles]
+    permission_classes = [IsAdminRole]
     
     @extend_schema(
         request=PermissionSerializer,
@@ -394,9 +261,9 @@ class PermissionListCreateView(generics.ListCreateAPIView):
 
 class PermissionDetailView(generics.RetrieveUpdateDestroyAPIView):
     """Retrieve, update, or delete a specific permission."""
-    queryset = Permission.objects.all()
+    queryset = Permission.objects.using(DEFAULT_DB).all()
     serializer_class = PermissionSerializer
-    permission_classes = [CanManageRoles]
+    permission_classes = [IsAdminRole]
     
     @extend_schema(
         responses={200: PermissionSerializer},
@@ -439,7 +306,7 @@ class UserRolesByNameSerializer(serializers.Serializer):
 
 class UserRolesListView(APIView):
     """List all user-role assignments or assign roles generally."""
-    permission_classes = [CanAssignRoles]
+    permission_classes = [IsAdminRole]
     
     @extend_schema(
         responses={200: UserRolesSerializer(many=True)},
@@ -448,7 +315,7 @@ class UserRolesListView(APIView):
     )
     def get(self, request):
         """Get all active user-role assignments."""
-        roles = UserRoles.objects.filter(is_active=True)
+        roles = UserRoles.objects.using(DEFAULT_DB).filter(is_active=True)
         serializer = UserRolesSerializer(roles, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
     
@@ -484,12 +351,12 @@ class UserRolesListView(APIView):
             )
         
         try:
-            user = User.objects.get(id=user_id)
-            role = Role.objects.get(id=role_id)
-            
+            user = User.objects.using(DEFAULT_DB).get(id=user_id)
+            role = Role.objects.using(DEFAULT_DB).get(id=role_id)
+
             with transaction.atomic():
                 # Disable ALL current active roles for this user (single active role system)
-                current_assignments = UserRoles.objects.filter(user=user, is_active=True)
+                current_assignments = UserRoles.objects.using(DEFAULT_DB).filter(user=user, is_active=True)
                 disabled_roles = []
                 
                 for assignment in current_assignments:
@@ -497,15 +364,13 @@ class UserRolesListView(APIView):
                     disabled_roles.append(assignment.role.role_name)
                 
                 if disabled_roles:
-                    console.print(f"[yellow]• Disabled previous roles for {user.email}: {', '.join(disabled_roles)}[/yellow]")
+                    console.print(f"[yellow] Disabled previous roles for {user.username}: {', '.join(disabled_roles)}[/yellow]")
                 
                 # ALWAYS create a new UserRole instance for proper auditing trail
-                user_role = UserRoles.objects.create(
-                    user=user,
-                    role=role,
-                    is_active=True
+                user_role = UserRoles.objects.using(DEFAULT_DB).create(
+                    user=user, role=role, is_active=True
                 )
-                console.print(f"[green]✓ Created new role assignment {role.role_name} for user {user.email}[/green]")
+                console.print(f"[green] Created new role assignment {role.role_name} for user {user.username}[/green]")
             
             serializer = UserRolesSerializer(user_role)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -519,7 +384,7 @@ class UserRolesListView(APIView):
 
 class UserRolesView(APIView):
     """Manage roles for a specific user."""
-    permission_classes = [CanAssignRoles]
+    permission_classes = [IsAdminRole]
     
     @extend_schema(
         responses={200: UserRolesSerializer(many=True)},
@@ -529,8 +394,8 @@ class UserRolesView(APIView):
     def get(self, request, user_id):
         """Get roles for a specific user."""
         try:
-            user = User.objects.get(id=user_id)
-            roles = UserRoles.objects.filter(user=user, is_active=True)
+            user = User.objects.using(DEFAULT_DB).get(id=user_id)
+            roles = UserRoles.objects.using(DEFAULT_DB).filter(user=user, is_active=True)
             serializer = UserRolesSerializer(roles, many=True)
             return Response({
                 'user': UserSerializer(user).data,
@@ -541,53 +406,32 @@ class UserRolesView(APIView):
                 {'error': 'User not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
-    
-    @extend_schema(
-        request=UserRolesByNameSerializer,
-        responses={201: UserRolesSerializer},
-        description="Assign a role to a specific user using role name",
-        operation_id="user_roles_assign_to_user",
-        examples=[
-            OpenApiExample(
-                'Role Assignment by Name Example',
-                value={
-                    'role_name': 'Member'
-                },
-                request_only=True,
-            ),
-        ]
-    )
+
     def post(self, request, user_id):
         """Assign a role to a specific user using role name."""
         role_name = request.data.get('role_name')
         if not role_name:
-            return Response(
-                {'error': 'role_name is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
+            return Response({'error': 'role_name is required'}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
-            role = Role.objects.get(role_name=role_name)
+            role = Role.objects.using(DEFAULT_DB).get(role_name=role_name)
             data = {'user_id': user_id, 'role_id': role.id}
             return self._single_assign_role(data)
         except Role.DoesNotExist:
-            return Response(
-                {'error': f'Role {role_name} not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-    
+            return Response({'error': f'Role {role_name} not found'}, status=status.HTTP_404_NOT_FOUND)
+
     def _single_assign_role(self, data):
         """Assign a role to a single user (single active role system) - always create new instances."""
         user_id = data.get('user_id')
         role_id = data.get('role_id')
         
         try:
-            user = User.objects.get(id=user_id)
-            role = Role.objects.get(id=role_id)
+            user = User.objects.using(DEFAULT_DB).get(id=user_id)
+            role = Role.objects.using(DEFAULT_DB).get(id=role_id)
             
             with transaction.atomic():
                 # Disable ALL current active roles for this user (single active role system)
-                current_assignments = UserRoles.objects.filter(user=user, is_active=True)
+                current_assignments = UserRoles.objects.using(DEFAULT_DB).filter(user=user, is_active=True)
                 disabled_roles = []
                 
                 for assignment in current_assignments:
@@ -595,15 +439,13 @@ class UserRolesView(APIView):
                     disabled_roles.append(assignment.role.role_name)
                 
                 if disabled_roles:
-                    console.print(f"[yellow]• Disabled previous roles for {user.email}: {', '.join(disabled_roles)}[/yellow]")
+                    console.print(f"[yellow]• Disabled previous roles for {user.username}: {', '.join(disabled_roles)}[/yellow]")
                 
                 # ALWAYS create a new UserRole instance for proper auditing trail
-                user_role = UserRoles.objects.create(
-                    user=user,
-                    role=role,
-                    is_active=True
+                user_role = UserRoles.objects.using(DEFAULT_DB).create(
+                    user=user, role=role, is_active=True
                 )
-                console.print(f"[green]✓ Created new role assignment {role.role_name} for user {user.email}[/green]")
+                console.print(f"[green]✓ Created new role assignment {role.role_name} for user {user.username}[/green]")
             
             serializer = UserRolesSerializer(user_role)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -632,7 +474,7 @@ class UserRolesView(APIView):
     def put(self, request, user_id):
         """Update the role for a specific user (single active role system) - always create new instances."""
         try:
-            user = User.objects.get(id=user_id)
+            user = User.objects.using(DEFAULT_DB).get(id=user_id)
             role_id = request.data.get('role_id')
             
             if not role_id:
@@ -642,7 +484,7 @@ class UserRolesView(APIView):
                 )
             
             try:
-                role = Role.objects.get(id=role_id)
+                role = Role.objects.using(DEFAULT_DB).get(id=role_id)
             except Role.DoesNotExist:
                 return Response(
                     {'error': f'Role with id {role_id} does not exist'},
@@ -651,7 +493,7 @@ class UserRolesView(APIView):
             
             with transaction.atomic():
                 # Disable ALL current active roles for this user (single active role system)
-                current_assignments = UserRoles.objects.filter(user=user, is_active=True)
+                current_assignments = UserRoles.objects.using(DEFAULT_DB).filter(user=user, is_active=True)
                 disabled_roles = []
                 
                 for assignment in current_assignments:
@@ -659,15 +501,13 @@ class UserRolesView(APIView):
                     disabled_roles.append(assignment.role.role_name)
                 
                 if disabled_roles:
-                    console.print(f"[yellow]• Disabled previous roles for {user.email}: {', '.join(disabled_roles)}[/yellow]")
+                    console.print(f"[yellow]• Disabled previous roles for {user.username}: {', '.join(disabled_roles)}[/yellow]")
                 
                 # ALWAYS create a new UserRole instance for proper auditing trail
-                user_role = UserRoles.objects.create(
-                    user=user,
-                    role=role,
-                    is_active=True
+                user_role = UserRoles.objects.using(DEFAULT_DB).create(
+                    user=user, role=role, is_active=True
                 )
-                console.print(f"[green]✓ Created new role assignment {role.role_name} for user {user.email}[/green]")
+                console.print(f"[green]✓ Created new role assignment {role.role_name} for user {user.username}[/green]")
                 
                 serializer = UserRolesSerializer(user_role)
                 return Response(serializer.data, status=status.HTTP_200_OK)
@@ -678,20 +518,14 @@ class UserRolesView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
     
-    @extend_schema(
-        responses={200: UserRolesSerializer},
-        description="Remove/disable the active role for a specific user and assign Member role as fallback",
-        operation_id="user_roles_delete_for_user"
-    )
     def delete(self, request, user_id):
-        """Remove/disable the active role for a specific user and assign Member role as fallback."""
         try:
-            user = User.objects.get(id=user_id)
+            user = User.objects.using(DEFAULT_DB).get(id=user_id)
             
             with transaction.atomic():
                 # Get current active roles
-                current_assignments = UserRoles.objects.filter(user=user, is_active=True)
-                
+                current_assignments = UserRoles.objects.using(DEFAULT_DB).filter(user=user, is_active=True)
+
                 if not current_assignments.exists():
                     return Response(
                         {'error': 'User has no active roles to remove'},
@@ -704,39 +538,13 @@ class UserRolesView(APIView):
                     assignment.disable()
                     disabled_roles.append(assignment.role.role_name)
                 
-                console.print(f"[yellow]• Disabled roles for {user.email}: {', '.join(disabled_roles)}[/yellow]")
+                console.print(f"[yellow] Disabled roles for {user.email}: {', '.join(disabled_roles)}[/yellow]")
                 
-                # Assign Member role as fallback (required for all users) - always create new instance
-                try:
-                    member_role = Role.objects.get(role_name='Member')
-                    
-                    # ALWAYS create a new Member role instance for proper auditing trail
-                    member_assignment = UserRoles.objects.create(
-                        user=user,
-                        role=member_role,
-                        is_active=True
-                    )
-                    console.print(f"[green]✓ Created new Member role assignment for user {user.email}[/green]")
-                    
-                    serializer = UserRolesSerializer(member_assignment)
-                    return Response({
-                        'message': 'Previous roles disabled. User assigned Member role as fallback.',
-                        'disabled_roles': disabled_roles,
-                        'current_role': serializer.data
-                    }, status=status.HTTP_200_OK)
-                    
-                except Role.DoesNotExist:
-                    return Response(
-                        {'error': 'Member role does not exist. Cannot assign fallback role.'},
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                    )
-        
         except User.DoesNotExist:
             return Response(
                 {'error': 'User not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
-
 
 class UserProfileView(APIView):
     """Get user profile with roles and permissions."""
@@ -755,7 +563,7 @@ class UserProfileView(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
             try:
-                user = User.objects.get(id=user_id)
+                user = User.objects.using(DEFAULT_DB).get(id=user_id)
             except User.DoesNotExist:
                 return Response(
                     {'error': 'User not found'},
@@ -780,3 +588,32 @@ class UserProfileView(APIView):
             'is_supervisor': is_supervisor,
             'supervisor_details': supervisor_data
         }, status=status.HTTP_200_OK)
+
+# Add password reset functionality
+class PasswordResetSerializer(serializers.Serializer):
+    user_id = serializers.IntegerField()
+    new_password = serializers.CharField(min_length=8)
+
+# Add a view
+class ResetPasswordView(APIView):
+    permission_classes = [IsAdminRole]
+
+    @extend_schema(
+        request=PasswordResetSerializer,
+        responses={200: dict},
+        description="Admin-only: reset another user's password"
+    )
+    def post(self, request):
+        s = PasswordResetSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        user_id = s.validated_data["user_id"]
+        new_password = s.validated_data["new_password"]
+
+        try:
+            user = User.objects.using(DEFAULT_DB).get(id=user_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+
+        user.set_password(new_password)
+        user.save(using=DEFAULT_DB, update_fields=["password"])
+        return Response({"ok": True}, status=200)
