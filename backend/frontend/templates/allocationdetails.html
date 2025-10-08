@@ -233,16 +233,16 @@
         <td>${s.duration || ""}</td>
         <td>${s.location || ""}</td>
         <td>
-          <input 
-            type="text" 
-            class="form-control form-control-sm staff-input d-none" 
-            placeholder="Start typing a tutor..." 
-            value="${s.tutor || ""}"
-            data-user-id="${s.tutor_user_id || ""}"
-            data-email="${s.tutor_email || ""}"
-            data-orig-user-id="${s.tutor_user_id || ""}"
-            data-orig-email="${s.tutor_email || ""}"
+          <!-- SELECT shown only in EDIT mode -->
+          <select 
+            class="form-select form-select-sm staff-select d-none" 
+            data-user-id="${s.tutor_user_id || ""}" 
+            data-email="${s.tutor_email || ""}" 
             disabled>
+            <!-- options injected at EDIT time -->
+          </select>
+
+          <!-- Static display for VIEW mode -->
           <div class="staff-display">${s.tutor || ""}</div>
         </td>
         <td>
@@ -256,17 +256,73 @@
       document.getElementById("content").appendChild(wrap);
     }
 
+    /* ---------------- EOI Tutors (all for this unit/campus) ---------------- */
+    let TUTORS_CACHE = null;
+
+    async function loadAllTutors() {
+      if (TUTORS_CACHE) return TUTORS_CACHE;
+      // No "q" -> backend returns ONLY users who have EOI for this unit (and campus)
+      const list = await apiGet(`/allocation/suggest_tutors/?alias=${encodeURIComponent(alias)}&unit_code=${encodeURIComponent(code)}&campus=${encodeURIComponent(campus)}`);
+      // Sort by preference (nulls last), then name (backend already does this, but keep it deterministic)
+      list.sort((a, b) => {
+        const ap = a.preference ?? 9999, bp = b.preference ?? 9999;
+        if (ap !== bp) return ap - bp;
+        return (a.name || "").localeCompare(b.name || "");
+      });
+      TUTORS_CACHE = list;
+      return list;
+    }
+
+    function buildTutorOptions(selectEl, tutors) {
+      // Add "unassign" option at the top
+      const opts = [`<option value="">— Unassigned —</option>`];
+
+      for (const t of tutors) {
+        const prefTxt = (t.preference && Number.isFinite(+t.preference)) ? ` — pref ${t.preference}` : "";
+        const label = `${t.name} (${t.email})${prefTxt}`;
+        opts.push(`<option value="${t.id}" data-email="${t.email}">${label}</option>`);
+      }
+      selectEl.innerHTML = opts.join("");
+
+      // Pre-select current if we have it
+      const currentId = selectEl.dataset.userId ? String(selectEl.dataset.userId) : "";
+      const currentEmail = (selectEl.dataset.email || "").toLowerCase();
+
+      if (currentId) {
+        selectEl.value = currentId;
+      } else if (currentEmail) {
+        // If we only know email, try to pick the matching option
+        const match = Array.from(selectEl.options).find(o => (o.dataset.email || "").toLowerCase() === currentEmail);
+        if (match) selectEl.value = match.value;
+      }
+    }
+
     /* ---------------- Editing logic ---------------- */
     let isEditing = false;
     const btnEdit = document.getElementById("btnEdit");
     const btnSubmit = document.getElementById("btnSubmit");
 
     function wireEditing(sessions) {
-      btnEdit.addEventListener("click", () => {
+      btnEdit.addEventListener("click", async () => {
         isEditing = true;
-        document.querySelectorAll(".staff-input, .notes-input").forEach(i => i.disabled = false);
-        document.querySelectorAll(".staff-input").forEach(i => i.classList.remove("d-none"));
+
+        // Enable fields
+        document.querySelectorAll(".notes-input").forEach(i => i.disabled = false);
+
+        // Swap VIEW -> EDIT for staff: show <select>, hide static label
+        const selects = document.querySelectorAll(".staff-select");
         document.querySelectorAll(".staff-display").forEach(d => d.classList.add("d-none"));
+        selects.forEach(s => { s.classList.remove("d-none"); s.disabled = false; });
+
+        // Load tutors ONCE and populate every dropdown
+        try {
+          const tutors = await loadAllTutors();
+          selects.forEach(sel => buildTutorOptions(sel, tutors));
+        } catch (e) {
+          console.error(e);
+          alert("Failed to load EOI tutors: " + e.message);
+        }
+
         btnSubmit.classList.remove("d-none");
       });
 
@@ -281,24 +337,18 @@
 
         for (const tr of rows) {
           const sessionId = tr.dataset.sessionId;
-          const staffInput = tr.querySelector(".staff-input");
+          const select = tr.querySelector(".staff-select");
           const notesInput = tr.querySelector(".notes-input");
 
-          // Prefer suggestion-picked values; fall back to typed email
-          const pickedId = staffInput.dataset.userId ? parseInt(staffInput.dataset.userId, 10) : null;
-          const pickedEmail = (staffInput.dataset.email || "").trim();
-
-          let typedEmail = "";
-          const m = staffInput.value.match(/[\w.\-+]+@[\w.\-]+\.\w+/);
-          if (!pickedEmail && m) typedEmail = m[0];
+          const pickedIdStr = (select && select.value) ? select.value : "";
+          const pickedId = pickedIdStr ? Number(pickedIdStr) : null;
 
           const body = {
             session_id: Number(sessionId),
             notes: notesInput.value || ""
           };
-          if (pickedId) body.tutor_id = pickedId;
-          else if (pickedEmail) body.tutor_email = pickedEmail;
-          else if (typedEmail) body.tutor_email = typedEmail;
+          // If empty => unassign
+          body.tutor_id = pickedId ?? null;
 
           // row labels for nicer messages
           const tds = tr.querySelectorAll("td");
@@ -312,25 +362,19 @@
           } catch (e) {
             const msg = String(e?.message || "");
 
-            // If it's a clash, remember the FIRST clash only; keep going for other rows
             if (/clash|conflict/i.test(msg)) {
-              if (!firstClash) {
-                firstClash = { activity, day, start, msg };
-              }
+              if (!firstClash) firstClash = { activity, day, start, msg };
               continue;
             }
-
-            // Non-clash errors: keep going, but don’t spam the user with a second popup
             console.warn(`Session ${sessionId} failed: ${msg}`);
           }
         }
 
-        // ONE popup only:
         if (firstClash) {
           alert(
             `Clash detected for:\n${firstClash.activity} — ${firstClash.day} ${firstClash.start}\n\n` +
             `${firstClash.msg}\n\n` +
-            `Non-Clash allocations have been saved.`
+            `Non-clash allocations have been saved.`
           );
         } else {
           alert(saved ? `Allocation saved. ${saved} row(s) updated.` : `No changes to save.`);
@@ -339,53 +383,6 @@
         // Reload THIS page (stay on Allocation Details)
         const url = `/allocationdetails.html?alias=${encodeURIComponent(alias)}&code=${encodeURIComponent(code)}&campus=${encodeURIComponent(campus)}&name=${encodeURIComponent(unitName)}`;
         location.href = url;
-      });
-
-      // attach live suggestions for staff inputs
-      document.querySelectorAll(".staff-input").forEach(inp => {
-        inp.addEventListener("input", () => suggestTutors(inp));
-      });
-    }
-
-    /* ---------------- Tutor suggestions ---------------- */
-    async function suggestTutors(inputEl) {
-      const q = inputEl.value.trim();
-      if (!q) return;
-
-      const list = await apiGet(`/allocation/suggest_tutors/?alias=${alias}&unit_code=${code}&campus=${campus}&q=${encodeURIComponent(q)}`);
-
-      // build/update a datalist under the input
-      let dl = inputEl.nextElementSibling;
-      if (!dl || dl.tagName !== "DATALIST") {
-        dl = document.createElement("datalist");
-        dl.id = "dl-" + Math.random().toString(36).slice(2);
-        inputEl.setAttribute("list", dl.id);
-        inputEl.after(dl);
-      }
-
-      // Keep BOTH id and email on each option
-      dl.innerHTML = list.map(t =>
-        `<option data-id="${t.id}" data-email="${t.email}" value="${t.name} (${t.email})${t.preference ? " — pref " + t.preference : ""}"></option>`
-      ).join("");
-
-      inputEl.addEventListener("input", () => {
-        // if user clears the box, also clear data-id/email so we can unassign
-        if (!(inputEl.value || "").trim()) {
-          inputEl.dataset.userId = "";
-          inputEl.dataset.email = "";
-        }
-      });
-
-      // whenever a value is chosen, copy id/email into data-attrs on the input
-      inputEl.addEventListener("change", () => {
-        const opt = Array.from(dl.options).find(o => o.value === inputEl.value);
-        if (opt) {
-          inputEl.dataset.userId = opt.dataset.id || "";
-          inputEl.dataset.email = opt.dataset.email || "";
-        } else {
-          inputEl.dataset.userId = "";
-          inputEl.dataset.email = "";
-        }
       });
     }
 
