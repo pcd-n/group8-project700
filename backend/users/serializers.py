@@ -9,6 +9,7 @@ class UserSerializer(serializers.ModelSerializer):
     """Serializer for User model (read)."""
     full_name = serializers.SerializerMethodField()
     role_name = serializers.SerializerMethodField()
+    note = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     class Meta:
         model = User
@@ -16,7 +17,7 @@ class UserSerializer(serializers.ModelSerializer):
             'id',
             'username', 'email',
             'first_name', 'last_name', 'full_name', 'role_name',
-            'is_active', 'created_at', 'updated_at'
+            'is_active', 'note', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'role_name', 'full_name']
 
@@ -34,6 +35,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
     Admin-only usage per your policy.
     """
     password = serializers.CharField(write_only=True, min_length=8)
+    note = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     # one active role at a time; "Admin", "Coordinator", "Tutor"
     role_name = serializers.ChoiceField(
         choices=[('Admin', 'Admin'), ('Coordinator', 'Coordinator'), ('Tutor', 'Tutor')],
@@ -50,7 +52,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
             'username', 'password',
             'email', 'first_name', 'last_name',
             'role_name',
-            'is_supervisor', 'campus_id'
+            'is_supervisor', 'campus_id', 'note'
         ]
 
     # --- Validation ---
@@ -99,7 +101,7 @@ class UserUpdateSerializer(serializers.ModelSerializer):
     """Serializer for updating user information (no role or password here)."""
     class Meta:
         model = User
-        fields = ['first_name', 'last_name', 'email', 'is_active']
+        fields = ['first_name', 'last_name', 'email', 'is_active', 'note']
 
 
 # --- RBAC + objects on DEFAULT_DB --------------------------------------------
@@ -137,18 +139,16 @@ class PermissionSerializer(serializers.ModelSerializer):
 class UserRolesSerializer(serializers.ModelSerializer):
     """Serializer for UserRoles model (read)."""
     user_username = serializers.CharField(source='user.username', read_only=True)
+    user_email = serializers.CharField(source='user.email', read_only=True)
     user_name = serializers.CharField(source='user.get_full_name', read_only=True)
+    user_note = serializers.CharField(source='user.note', read_only=True)
     role_name = serializers.CharField(source='role.role_name', read_only=True)
 
     class Meta:
         model = UserRoles
-        fields = [
-            'id', 'user', 'role',
-            'user_username', 'user_name', 'role_name',
-            'assigned_at', 'is_active', 'disabled_at'
-        ]
+        fields = ['id', 'user', 'role', 'user_username', 'user_email', 'user_name',
+                  'user_note', 'role_name', 'assigned_at', 'is_active', 'disabled_at']
         read_only_fields = ['id', 'assigned_at', 'disabled_at']
-
 
 class CampusSerializer(serializers.ModelSerializer):
     class Meta:

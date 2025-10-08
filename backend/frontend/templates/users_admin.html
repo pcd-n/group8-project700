@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <title>Users Management</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <style>
+        .card-role {
+            border-radius: 16px;
+        }
+
+        .mono {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        }
+    </style>
+</head>
+
+<body class="bg-light">
+
+    <div class="container py-4">
+        <div class="d-flex align-items-center justify-content-between mb-3">
+            <h1 class="h4 m-0">Users Management</h1>
+            <div class="d-flex gap-2">
+                <a href="/home/" class="btn btn-outline-secondary">← Home</a>
+                <button id="btnRefresh" class="btn btn-outline-dark">Refresh</button>
+            </div>
+        </div>
+
+        <div id="alertBox" class="alert d-none" role="alert"></div>
+
+        <!-- Create user -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Create New User</h5>
+                <form id="formCreate" class="row g-3">
+                    <div class="col-md-3">
+                        <label class="form-label">Username</label>
+                        <input id="cuUsername" class="form-control" required />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Password</label>
+                        <input id="cuPassword" type="password" minlength="8" class="form-control" required />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Role</label>
+                        <select id="cuRole" class="form-select"></select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Email (optional)</label>
+                        <input id="cuEmail" type="email" class="form-control" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">First name</label>
+                        <input id="cuFirst" class="form-control" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Last name</label>
+                        <input id="cuLast" class="form-control" />
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Note (optional)</label>
+                        <textarea id="cuNote" class="form-control" rows="2"></textarea>
+                    </div>
+                    <div class="col-12">
+                        <button class="btn btn-dark">Create User</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Users grouped by role -->
+        <div id="groupsContainer" class="vstack gap-3"></div>
+    </div>
+
+    <script>
+        // ========= config / helpers =========
+        const API = {
+            roles: '/api/accounts/roles/',
+            listUserRoles: '/api/accounts/user-roles/',
+            assignRole: (userId) => `/api/accounts/user-roles/${userId}/`,
+            register: '/api/accounts/register/',
+            resetPassword: '/api/accounts/users/reset-password/',
+            updateUser: (id) => `/api/accounts/users/update/${id}/`,
+            profile: '/api/accounts/profile/'
+        };
+
+        const token = () => localStorage.getItem('access'); // same key as your home.html
+        const authHeaders = (extra = {}) => token()
+            ? ({ ...extra, Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' })
+            : ({ ...extra, 'Content-Type': 'application/json' });
+
+        function showAlert(msg, type = 'danger') {
+            const box = document.getElementById('alertBox');
+            box.className = `alert alert-${type}`;
+            box.textContent = msg;
+            box.classList.remove('d-none');
+            setTimeout(() => box.classList.add('d-none'), 4000);
+        }
+
+        async function getJSON(url) {
+            const res = await fetch(url, { headers: authHeaders(), credentials: 'include' });
+            if (!res.ok) throw new Error(`${url} → ${res.status}`);
+            return res.json();
+        }
+        async function postJSON(url, body) {
+            const res = await fetch(url, { method: 'POST', headers: authHeaders(), credentials: 'include', body: JSON.stringify(body || {}) });
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(payload?.error || payload?.detail || `${url} → ${res.status}`);
+            return payload;
+        }
+        async function putJSON(url, body) {
+            const res = await fetch(url, { method: 'PUT', headers: authHeaders(), credentials: 'include', body: JSON.stringify(body || {}) });
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(payload?.error || payload?.detail || `${url} → ${res.status}`);
+            return payload;
+        }
+
+        // ========= page state =========
+        let roles = []; // [{id, role_name}]
+        let rows = []; // UserRolesSerializer items
+
+        // ========= load & render =========
+        async function loadAll() {
+            try {
+                const [r, u] = await Promise.all([
+                    getJSON(API.roles),
+                    getJSON(API.listUserRoles)
+                ]);
+                roles = r;
+                rows = u;
+                renderCreateRoleOptions();
+                renderGroups();
+            } catch (e) {
+                showAlert(e.message || 'Failed to load data');
+            }
+        }
+
+        function renderCreateRoleOptions() {
+            const select = document.getElementById('cuRole');
+            select.innerHTML = roles.map(r => `<option value="${r.role_name}">${r.role_name}</option>`).join('');
+            // default to Tutor if exists
+            const tutor = roles.find(r => r.role_name === 'Tutor');
+            if (tutor) select.value = 'Tutor';
+        }
+
+        function renderGroups() {
+            const byRole = new Map();
+            rows.forEach(r => {
+                const k = r.role_name || '(No Role)';
+                if (!byRole.has(k)) byRole.set(k, []);
+                byRole.get(k).push(r);
+            });
+            const sorted = Array.from(byRole.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+            const container = document.getElementById('groupsContainer');
+            container.innerHTML = '';
+
+            sorted.forEach(([roleName, items]) => {
+                const card = document.createElement('div');
+                card.className = 'card card-role';
+                card.innerHTML = `
+          <div class="card-body">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+              <h5 class="card-title mb-0">${roleName} <span class="text-muted">(${items.length})</span></h5>
+            </div>
+            <div class="table-responsive">
+              <table class="table table-sm align-middle">
+                <thead class="table-light">
+                  <tr>
+                    <th>Username</th>
+                    <th>Name</th>
+                    <th style="width:240px">Role</th>
+                    <th style="width:260px">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${items.map(renderRow).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>`;
+                container.appendChild(card);
+            });
+
+            if (sorted.length === 0) {
+                container.innerHTML = `<div class="alert alert-secondary">No users found.</div>`;
+            }
+        }
+
+        function renderRow(r) {
+            const uname = r.user_username || r.user_email || '';
+            const display = r.user_name || '';
+            const preview = (r.user_note || '').trim();
+            const previewShort = preview ? preview.slice(0, 40) + (preview.length > 40 ? '…' : '') : '—';
+
+            const roleOpts = roles.map(opt => {
+                const sel = (opt.role_name === r.role_name) ? 'selected' : '';
+                return `<option value="${opt.role_name}" ${sel}>${opt.role_name}</option>`;
+            }).join('');
+
+            return `
+            <tr>
+            <td class="mono">${escapeHtml(uname)}</td>
+            <td>${escapeHtml(display || '—')}</td>
+            <td>
+                <select class="form-select form-select-sm" data-action="change-role" data-user="${r.user}">
+                ${roleOpts}
+                </select>
+            </td>
+            <td class="d-flex flex-column gap-2">
+                <div class="small text-muted">Note: ${escapeHtml(previewShort)}</div>
+                <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-outline-primary" data-action="edit-note" data-user="${r.user}">Edit note</button>
+                <button class="btn btn-sm btn-outline-secondary" data-action="reset" data-user="${r.user}">Reset password</button>
+                <button class="btn btn-sm btn-outline-danger" data-action="deactivate" data-user="${r.user}">Deactivate</button>
+                </div>
+            </td>
+            </tr>`;
+        }
+
+
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+        }
+
+        // ========= handlers =========
+        document.getElementById('btnRefresh').addEventListener('click', loadAll);
+
+        document.getElementById('formCreate').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const body = {
+                username: document.getElementById('cuUsername').value.trim(),
+                password: document.getElementById('cuPassword').value,
+                role_name: document.getElementById('cuRole').value,
+                email: document.getElementById('cuEmail').value.trim() || null,
+                first_name: document.getElementById('cuFirst').value.trim(),
+                last_name: document.getElementById('cuLast').value.trim(),
+                note: document.getElementById('cuNote').value.trim() || null,
+            };
+            try {
+                await postJSON(API.register, body);
+                // reset form
+                e.target.reset();
+                renderCreateRoleOptions();
+                showAlert('User created', 'success');
+                await loadAll();
+            } catch (err) {
+                showAlert(err.message || 'Create failed');
+            }
+        });
+
+        // delegate table actions
+        document.getElementById('groupsContainer').addEventListener('change', async (e) => {
+            const sel = e.target;
+            if (sel.matches('select[data-action="change-role"]')) {
+                const userId = sel.getAttribute('data-user');
+                const newRole = sel.value;
+                try {
+                    await postJSON(API.assignRole(userId), { role_name: newRole });
+                    showAlert('Role updated', 'success');
+                    await loadAll();
+                } catch (err) {
+                    showAlert(err.message || 'Role update failed');
+                }
+            }
+        });
+
+        document.getElementById('groupsContainer').addEventListener('click', async (e) => {
+            const btn = e.target.closest('button[data-action]');
+            if (!btn) return;
+            const userId = btn.getAttribute('data-user');
+
+            if (btn.dataset.action === 'edit-note') {
+                const userId = Number(btn.getAttribute('data-user'));
+                const current = rows.find(x => x.user === userId)?.user_note || '';
+                const next = prompt('Edit note for this user:', current || '');
+                if (next === null) return; // cancel
+                try {
+                    // Admin-only; backend will enforce
+                    await putJSON(API.updateUser(userId), { note: next });
+                    showAlert('Note updated', 'success');
+                    await loadAll();
+                } catch (err) {
+                    showAlert(err.message || 'Note update failed');
+                }
+            }
+
+            if (btn.dataset.action === 'reset') {
+                const pwd = prompt('Enter a new password:');
+                if (!pwd) return;
+                try {
+                    await postJSON(API.resetPassword, { user_id: Number(userId), new_password: pwd });
+                    showAlert('Password updated', 'success');
+                } catch (err) {
+                    showAlert(err.message || 'Password reset failed');
+                }
+            }
+
+            if (btn.dataset.action === 'deactivate') {
+                if (!confirm('Deactivate this user?')) return;
+                try {
+                    await putJSON(API.updateUser(Number(userId)), { is_active: false });
+                    showAlert('User deactivated', 'success');
+                    await loadAll();
+                } catch (err) {
+                    showAlert(err.message || 'Deactivate failed');
+                }
+            }
+        });
+
+        // ========= auth gate + admin check =========
+        (async function init() {
+            if (!token()) {
+                location.href = '/';
+                return;
+            }
+            try {
+                const me = await getJSON(API.profile);
+                const roles = Array.isArray(me?.roles) ? me.roles.map(r => r.name) : [];
+                const isAdmin = !!me?.is_staff || roles.includes('Admin');
+                if (!isAdmin) {
+                    document.body.innerHTML = '<div class="container py-5"><div class="alert alert-danger">Forbidden</div></div>';
+                    return;
+                }
+            } catch {
+                document.body.innerHTML = '<div class="container py-5"><div class="alert alert-danger">Unauthorized</div></div>';
+                return;
+            }
+            await loadAll();
+        })();
+    </script>
+</body>
+
+</html>

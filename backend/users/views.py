@@ -139,6 +139,10 @@ class UserUpdateView(APIView):
                 )
             try:
                 user = User.objects.using(DEFAULT_DB).get(id=user_id)
+                data = request.data or {}
+                if 'note' in data and not (request.user.is_staff or request.user.has_role('Admin')):
+                    return Response({'error': 'Only Admin can set notes'}, status=status.HTTP_403_FORBIDDEN)
+
             except User.DoesNotExist:
                 return Response(
                     {'error': 'User not found'},
@@ -549,44 +553,44 @@ class UserRolesView(APIView):
 class UserProfileView(APIView):
     """Get user profile with roles and permissions."""
     permission_classes = [IsAuthenticated]
-    
+
     @extend_schema(
         responses={200: dict},
         description="Get user profile with roles, permissions, and supervisor details",
-        operation_id="user_profile_self" if not "user_id" else "user_profile_by_id"
+        operation_id="user_profile"  # static id is fine
     )
     def get(self, request, user_id=None):
-        if user_id:
-            if not request.user.is_staff and request.user.id != user_id:
-                return Response(
-                    {'error': 'Permission denied'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
+        # Load target user
+        if user_id is not None:
+            # Only self or staff/admin can fetch arbitrary user ids
+            if not (request.user.is_staff or request.user.id == user_id or request.user.has_role('Admin')):
+                return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
             try:
                 user = User.objects.using(DEFAULT_DB).get(id=user_id)
             except User.DoesNotExist:
-                return Response(
-                    {'error': 'User not found'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
+                return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
         else:
-            user = request.user
-        
+            user = request.user  # already authenticated
+
+        # Roles & permissions (these methods are already default-DB aware)
         roles = user.get_user_roles()
         permissions = user.get_user_permissions()
-        
-        # Check if user is a supervisor
+
+        # Supervisor details
         is_supervisor = hasattr(user, 'supervisor')
-        supervisor_data = None
-        if is_supervisor:
-            supervisor_data = SupervisorSerializer(user.supervisor).data
-        
+        supervisor_data = SupervisorSerializer(user.supervisor).data if is_supervisor else None
+
+        # Build user payload and hide 'note' unless self or admin/staff
+        user_payload = UserSerializer(user).data
+        if not (request.user.is_staff or request.user.has_role('Admin') or request.user.id == user.id):
+            user_payload.pop('note', None)
+
         return Response({
-            'user': UserSerializer(user).data,
-            'roles': [{'id': role.id, 'name': role.role_name} for role in roles],
-            'permissions': [{'id': perm.id, 'key': perm.permission_key} for perm in permissions],
+            'user': user_payload,
+            'roles': [{'id': r.id, 'name': r.role_name} for r in roles],
+            'permissions': [{'id': p.id, 'key': p.permission_key} for p in permissions],
             'is_supervisor': is_supervisor,
-            'supervisor_details': supervisor_data
+            'supervisor_details': supervisor_data,
         }, status=status.HTTP_200_OK)
 
 # Add password reset functionality

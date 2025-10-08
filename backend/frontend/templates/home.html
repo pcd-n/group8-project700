@@ -111,6 +111,13 @@
         </button>
         <div id="allocInfoRow" class="file-note mt-1"></div>
         <div id="allocFileName" class="file-note"></div>
+
+        <!-- Admin-only: Users Management -->
+        <div class="d-flex justify-content-center mt-3">
+          <a id="btnUsersMgmt" href="/admin/users" class="btn btn-outline-dark btn-pill btn-wide d-none">
+            Users Management
+          </a>
+        </div>
       </div>
     </div>
   </div>
@@ -582,12 +589,33 @@
       }
     }
 
+    // --- Show the Users Management button only for Admins ---
+    async function maybeShowUsersMgmt() {
+      try {
+        const res = await fetch('/api/accounts/profile/', {
+          headers: authHeaders(),
+          credentials: 'include'
+        });
+        if (!res.ok) return; // not logged in / unauthorized
+        const data = await res.json();
+        // roles structure from your UserProfileView: roles: [{ id, name }]
+        const roles = Array.isArray(data?.roles) ? data.roles.map(r => r.name) : [];
+        const isAdmin = !!data?.is_staff || roles.includes('Admin');
+        if (isAdmin) {
+          document.getElementById('btnUsersMgmt')?.classList.remove('d-none');
+        }
+      } catch (e) {
+        // ignore - server will still enforce perms
+      }
+    }
+
     // =========================
     // Init
     // =========================
     document.addEventListener("DOMContentLoaded", async () => {
       if (!token()) return (window.location.href = "/"); // require login
-      await maybeShowAdminTools();
+      await maybeShowAdminTools();     // your existing function
+      await maybeShowUsersMgmt();      // function for Users Management button
       await loadSemesters();
       try {
         const alias = await getCurrentAlias();

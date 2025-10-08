@@ -151,6 +151,7 @@ class User(AbstractBaseUser):
     last_name   = models.CharField(max_length=150, blank=True)
     is_active   = models.BooleanField(default=True)
     is_staff    = models.BooleanField(default=False)
+    note        = models.TextField(blank=True, null=True, default=None)
     created_at  = models.DateTimeField(default=timezone.now)
     updated_at  = models.DateTimeField(auto_now=True)
 

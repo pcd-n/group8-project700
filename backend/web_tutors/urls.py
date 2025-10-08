@@ -23,7 +23,9 @@ urlpatterns = [
 
     # ADMIN
     path("admin/", admin.site.urls),
-
+    path('api/accounts/', include(('users.urls', 'accounts'), namespace='accounts')),
+    path("admin/users", TemplateView.as_view(template_name="users_admin.html"), name="users_admin"),
+    
     # API DOCS
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
@@ -31,7 +33,6 @@ urlpatterns = [
 
     # API
     path("api/semesters/", include("semesters.urls")),
-    path('api/accounts/', include(('users.urls', 'accounts'), namespace='accounts')),
     path("api/", include([
         path("units/", include("units.urls")),
         path("eoi/", include("eoi.urls")),
