@@ -5,4 +5,9 @@ class SemestersConfig(AppConfig):
     name = "semesters"
 
     def ready(self):
-        pass
+        from .services import hydrate_runtime_databases
+        try:
+            hydrate_runtime_databases()
+        except Exception:
+            # During initial migrate the semesters table may not exist yet.
+            pass

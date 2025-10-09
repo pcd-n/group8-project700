@@ -98,6 +98,8 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "semesters.middleware.SemesterMiddleware",
+    'semesters.middleware.SemesterViewAliasMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -106,7 +108,6 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'allauth.account.middleware.AccountMiddleware',
-    'semesters.middleware.SemesterViewAliasMiddleware',
 ]
 
 # Authentication backend
@@ -190,7 +191,8 @@ DATABASES = {
         },
     }
 }
-
+DATABASES["default"].setdefault("ATOMIC_REQUESTS", False)
+DATABASES["default"].setdefault("AUTOCOMMIT", True)
 # Speed up tests with faster password hashing
 if TESTING:
     PASSWORD_HASHERS = [

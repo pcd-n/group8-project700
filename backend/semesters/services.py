@@ -8,6 +8,8 @@ from django.core.exceptions import PermissionDenied
 from .models import Semester
 
 _hydrated_flag = False
+import logging
+logger = logging.getLogger(__name__)
 
 def is_hydrated() -> bool:
     return _hydrated_flag
@@ -82,13 +84,17 @@ def list_existing_semesters():
 
 def _register_alias(alias: str, db_name: str):
     """
-    Put the alias into settings.DATABASES and **force Django to create
-    a Connection** so its internal defaults are applied.
+    Put the alias into settings.DATABASES with a FULLY hydrated dict
+    (includes ATOMIC_REQUESTS, AUTOCOMMIT, etc), and force Django to
+    create a Connection so defaults are applied.
     """
-    settings.DATABASES[alias] = _build_db_settings(db_name)
-    # Touching connections[alias] makes Django normalize settings and
-    # attach defaults so code like BaseHandler.make_view_atomic won't KeyError.
+    # Build from default so keys like ATOMIC_REQUESTS exist
+    cfg = _build_db_settings(db_name)         # uses _base_from_default()
+    settings.DATABASES[alias] = cfg
+
+    # **Pre-warm** the connection so connection.settings_dict has defaults
     _ = connections[alias]
+    logger.info("Registered & warmed DB alias %s -> %s", alias, db_name)
 
 def hydrate_runtime_databases():
     """
