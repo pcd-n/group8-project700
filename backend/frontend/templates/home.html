@@ -28,7 +28,7 @@
     }
 
     .file-note {
-      font-size: 0.9rem;
+      font-size: .9rem;
       color: #6b7280;
     }
 
@@ -46,7 +46,7 @@
 
     .section-title {
       font-weight: 600;
-      letter-spacing: 0.2px;
+      letter-spacing: .2px;
     }
 
     a.rowlink {
@@ -65,7 +65,7 @@
     <div>
       <h1 class="h5 fw-semibold mb-4">Web Based Tutor Allocation System</h1>
 
-      <!-- Visible only to admins in JS once we fetch /api/users/me or decode JWT -->
+      <!-- Admin tools -->
       <div id="adminSemesterTools" class="card mb-3 d-none">
         <div class="card-body">
           <h5 class="card-title">Semester Databases</h5>
@@ -95,16 +95,15 @@
           <small class="text-muted">Uploads always go to the current semester. Old semesters are view-only.</small>
         </div>
       </div>
+
       <div class="d-flex flex-column align-items-center gap-2">
-        <!-- EOI upload (original flow) -->
+        <!-- EOI -->
         <input id="eoiFile" type="file" class="d-none" accept=".xlsx,.xls,.csv" />
-        <button id="btnUpload" class="btn btn-dark btn-pill btn-wide" type="button">
-          Upload EOI Spreadsheet
-        </button>
+        <button id="btnUpload" class="btn btn-dark btn-pill btn-wide" type="button">Upload EOI Spreadsheet</button>
         <div id="eoiInfoRow" class="file-note mt-1"></div>
         <div id="fileName" class="file-note"></div>
 
-        <!-- Tutor Allocations upload -->
+        <!-- Master Class List / Allocation -->
         <input id="allocFile" type="file" class="d-none" accept=".xlsx,.xls,.csv" />
         <button id="btnProceedAlloc" class="btn btn-success btn-pill btn-wide mt-2" type="button">
           Proceed to Tutor Allocation
@@ -114,9 +113,8 @@
 
         <!-- Admin-only: Users Management -->
         <div class="d-flex justify-content-center mt-3">
-          <a id="btnUsersMgmt" href="/admin/users" class="btn btn-outline-dark btn-pill btn-wide d-none">
-            Users Management
-          </a>
+          <a id="btnUsersMgmt" href="/admin/users" class="btn btn-outline-dark btn-pill btn-wide d-none">Users
+            Management</a>
         </div>
       </div>
     </div>
@@ -131,7 +129,7 @@
       <table class="table table-bordered align-middle units-table">
         <thead class="table-light">
           <tr>
-            <th style="width: 160px">Code</th>
+            <th style="width:160px">Code</th>
             <th>Name</th>
           </tr>
         </thead>
@@ -144,17 +142,15 @@
   <!-- Tutor Allocations: Code | Name | Staffs -->
   <div id="allocSection" class="container table-wrap hidden">
     <div class="mb-2">
-      <div class="section-title">
-        Computing And Information Systems Units For Semester 2, 2025
-      </div>
+      <div class="section-title">Computing And Information Systems Units For Semester</div>
     </div>
     <div class="table-responsive">
       <table class="table table-bordered align-middle">
         <thead class="table-light">
           <tr>
-            <th style="width: 160px">Code</th>
+            <th style="width:160px">Code</th>
             <th>Name</th>
-            <th style="width: 280px">Staffs</th>
+            <th style="width:280px">Staffs</th>
           </tr>
         </thead>
         <tbody id="allocBody"></tbody>
@@ -164,77 +160,53 @@
   </div>
 
   <script>
-    // =========================
-    // Endpoints
-    // =========================
+    // ========================= Endpoints =========================
     const API = {
       base: "/api",
-
       // imports
-      importsUpload: "/imports/upload/",       // FormData: { import_type, file }
+      importsUpload: "/imports/upload/",                 // FormData: { import_type, file }
+      importsStatus: (alias) => `/imports/status/?alias=${encodeURIComponent(alias)}`, // <— NEW
       finalizeEOI: (alias) => `/imports/finalize/?alias=${encodeURIComponent(alias)}`,
-
       // allocation
       runAllocation: (alias) => `/allocation/run/?alias=${encodeURIComponent(alias)}`,
-
       // semesters
       semestersList: "/semesters/",
       semestersCreate: "/semesters/create/",
       semestersSelect: "/semesters/select/",
       current: () => `/semesters/current/`,
-      upload: () => `/allocation/upload/`,                 // POST (file)
-      finalize: (alias) => `/allocation/finalize/?alias=${encodeURIComponent(alias)}`, // POST
-      runAllocation: (alias) => `/allocation/run/?alias=${encodeURIComponent(alias)}`, // POST
+      upload: () => `/allocation/upload/`,
+      finalize: (alias) => `/allocation/finalize/?alias=${encodeURIComponent(alias)}`,
       meCandidates: ["/users/me/", "/me/"],
     };
 
-    // =========================
-    // Auth + request helpers
-    // =========================
+    // ========================= Auth helpers =========================
     const token = () => localStorage.getItem("access");
-    const authHeaders = (extra = {}) =>
-      token() ? { ...extra, Authorization: `Bearer ${token()}` } : extra;
+    const authHeaders = (extra = {}) => token() ? ({ ...extra, Authorization: `Bearer ${token()}` }) : extra;
 
     async function apiGet(path) {
-      const res = await fetch(`${API.base}${path}`, {
-        headers: authHeaders(),
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error(`GET ${path} failed (${res.status})`);
-      return res.json();
+      const res = await fetch(`${API.base}${path}`, { headers: authHeaders(), credentials: "include" });
+      let data = null; try { data = await res.json(); } catch { }
+      if (!res.ok) throw new Error(data?.detail || `GET ${path} failed (${res.status})`);
+      return data;
     }
-
     async function apiPostJSON(path, body) {
       const res = await fetch(`${API.base}${path}`, {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        credentials: "include",
-        body: JSON.stringify(body),
+        method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), credentials: "include",
+        body: JSON.stringify(body)
       });
-      let payload = null;
-      try { payload = await res.json(); } catch { }
-      if (!res.ok) throw new Error(payload?.detail || payload?.error || `POST ${path} failed (${res.status})`);
-      return payload ?? {};
+      let data = null; try { data = await res.json(); } catch { }
+      if (!res.ok) throw new Error(data?.detail || `POST ${path} failed (${res.status})`);
+      return data ?? {};
     }
-
     async function apiPostForm(path, formData) {
-      const res = await fetch(`${API.base}${path}`, {
-        method: "POST",
-        headers: authHeaders(),
-        credentials: "include",
-        body: formData,
-      });
-      let payload = null;
-      try { payload = await res.json(); } catch { }
-      if (!res.ok) throw new Error(payload?.detail || payload?.error || `Upload failed (${res.status})`);
-      return payload ?? {};
+      const res = await fetch(`${API.base}${path}`, { method: "POST", headers: authHeaders(), credentials: "include", body: formData });
+      let data = null; try { data = await res.json(); } catch { }
+      if (!res.ok) throw new Error(data?.detail || `Upload failed (${res.status})`);
+      return data ?? {};
     }
-
     async function getCurrentAlias() {
-      try {
-        const { alias } = await apiGet(API.current());  // FIX: call API.current()
-        return alias;
-      } catch (e) {
+      try { const { alias } = await apiGet(API.current()); return alias; }
+      catch {
         const list = await apiGet(API.semestersList);
         const cur = (list || []).find(s => s.is_current) || (list || [])[0];
         if (!cur) throw new Error("No semesters available");
@@ -242,37 +214,21 @@
       }
     }
 
-    // =========================
-    // Admin tools visibility
-    // =========================
+    // ========================= Admin tools visibility =========================
     const adminCard = document.getElementById("adminSemesterTools");
     async function maybeShowAdminTools() {
-      const candidates = Array.isArray(API.meCandidates) ? API.meCandidates : [];
-      if (candidates.length === 0) {
-        // no way to check → show UI; server will still enforce perms on POST
-        adminCard.classList.remove("d-none");
-        return;
-      }
-      for (const p of candidates) {
+      for (const p of (API.meCandidates || [])) {
         try {
           const me = await apiGet(p);
-          const isAdmin =
-            !!me?.is_staff ||
-            (Array.isArray(me?.roles) && me.roles.includes("Admin")) ||
-            me?.role === "Admin";
-          if (isAdmin) {
-            adminCard.classList.remove("d-none");
-            return;
-          }
-        } catch (_) {
-        }
+          const isAdmin = !!me?.is_staff || (Array.isArray(me?.roles) && me.roles.includes("Admin")) || me?.role === "Admin";
+          if (isAdmin) { adminCard.classList.remove("d-none"); return; }
+        } catch { }
       }
+      // If we can't determine, show controls; server will enforce perms
       adminCard.classList.remove("d-none");
     }
 
-    // =========================
-    // Semester UI
-    // =========================
+    // ========================= Semester UI =========================
     const semYearInput = document.getElementById("semYear");
     const semTermSelect = document.getElementById("semTerm");
     const btnCreateSem = document.getElementById("btnCreateSem");
@@ -296,7 +252,7 @@
       try {
         const list = await apiGet(API.semestersList);
         semViewSelect.innerHTML = "";
-        (list || []).forEach((s) => {
+        (list || []).forEach(s => {
           const opt = document.createElement("option");
           opt.value = s.alias;
           const tag = s.is_current ? " (current)" : "";
@@ -304,456 +260,268 @@
           opt.textContent = `${s.year} ${termLabel}${tag}`;
           semViewSelect.appendChild(opt);
         });
-      } catch (e) {
-        console.warn("Failed to load semesters:", e);
-      }
+      } catch (e) { console.warn("Failed to load semesters:", e); }
     }
 
     btnCreateSem?.addEventListener("click", async () => {
-      const year = Number(semYearInput.value);
-      const term = semTermSelect.value; // S1/S2/S3/S4
+      const year = Number(semYearInput.value), term = semTermSelect.value;
       if (!year || year < 2000) return alert("Enter a valid year (e.g., 2026).");
       try {
-        const created = await apiPostJSON(API.semestersCreate, {
-          year,
-          term,
-          make_current: true,
-        });
+        const created = await apiPostJSON(API.semestersCreate, { year, term, make_current: true });
         alert(`Created ${created?.year} ${created?.term} and set as current.`);
-        // Clear any cached preview state
-        ["eoiUnits", "eoiPreviewAlias", "eoiUploadDisabled", "eoiFileName"].forEach(k =>
-          sessionStorage.removeItem(k)
-        );
-        // Reload the page to start fresh on the new semester
+        ["eoiUnits", "eoiPreviewAlias", "eoiUploadDisabled", "eoiFileName"].forEach(k => sessionStorage.removeItem(k));
         location.reload();
-      } catch (e) {
-        alert(e.message || "Failed to create semester.");
-      }
+      } catch (e) { alert(e.message || "Failed to create semester."); }
     });
-
     btnViewApply?.addEventListener("click", async () => {
-      const alias = semViewSelect.value;
-      if (!alias) return;
-      try {
-        await apiPostJSON(API.semestersSelect, { alias });
-        location.reload();
-      } catch (e) {
-        alert(e.message || "Failed to switch semester view.");
-      }
+      const alias = semViewSelect.value; if (!alias) return;
+      try { await apiPostJSON(API.semestersSelect, { alias }); location.reload(); }
+      catch (e) { alert(e.message || "Failed to switch semester view."); }
     });
-
     btnViewReset?.addEventListener("click", async () => {
-      try {
-        await apiPostJSON(API.semestersSelect, { alias: null });
-        location.reload();
-      } catch (e) {
-        alert(e.message || "Failed to reset view.");
-      }
+      try { await apiPostJSON(API.semestersSelect, { alias: null }); location.reload(); }
+      catch (e) { alert(e.message || "Failed to reset view."); }
     });
 
-    async function semesterHasAnyData(alias) {
-      try {
-        const list = await apiGet(`/timetable/sessions/?alias=${encodeURIComponent(alias)}`);
-        return Array.isArray(list) && list.length > 0;
-      } catch { return false; }
-    }
-    async function semesterHasClassList(alias) {
-      try {
-        const list = await apiGet(`/timetable/sessions/?alias=${encodeURIComponent(alias)}`);
-        return Array.isArray(list) && list.some(s => s.start_time && s.day_of_week);
-      } catch { return false; }
-    }
-
-    async function proceedToAllocation() {
-      try {
-        // 1) Upload EOI workbook (already current by design)
-        await apiPostFile(API.upload(), fileInput.files[0]);
-
-        // 2) Finalize workbook (still in current alias)
-        const current = await apiGet(API.current()); // { alias: "sem_2023_s4", ... }
-        await apiPostJSON(API.finalize(current.alias), {});
-
-        // 3) Run allocation (again in current alias)
-        await apiPostJSON(API.runAllocation(current.alias), {});
-
-        // 4) Redirect to allocation details for the **current** alias
-        location.href = `/allocationunits.html?alias=${encodeURIComponent(current.alias)}`;
-      } catch (err) {
-        alert(err.message || err);
-      }
-    }
-    // =========================
-    // EOI upload (unchanged UX) + local preview
-    // =========================
+    // ========================= Elements & helpers =========================
     const btnUpload = document.getElementById("btnUpload");
     const eoiFile = document.getElementById("eoiFile");
     const fileNameEl = document.getElementById("fileName");
+    const eoiInfoRow = document.getElementById("eoiInfoRow");
 
+    const btnProceed = document.getElementById("btnProceedAlloc");
+    const allocFile = document.getElementById("allocFile");
+    const allocFileName = document.getElementById("allocFileName");
+    const allocInfoRow = document.getElementById("allocInfoRow");
+
+    const unitsSection = document.getElementById("unitsSection");
+    const unitsBody = document.getElementById("unitsBody");
+    const recordCount = document.getElementById("recordCount");
+
+    // --- Server status (authoritative) ---
+    async function refreshUploadState(alias) {
+      const st = await apiGet(API.importsStatus(alias)); // {has_eoi, has_sessions, last_*}
+
+      // EOI state
+      if (st.has_eoi) {
+        btnUpload.disabled = true;
+        btnUpload.classList.add("disabled");
+        btnUpload.textContent = "EOI uploaded";
+        fileNameEl.textContent = st.last_eoi?.filename || "";
+        eoiInfoRow.innerHTML = `
+          EOI data already exists for <b>${st.alias}</b>.
+          To <b>overwrite</b> it, <button id="btnReuploadEOI" class="btn btn-link p-0 align-baseline">click here</button>.
+        `;
+        document.getElementById("btnReuploadEOI").addEventListener("click", () => {
+          if (!confirm("This will overwrite existing EOI-derived data for this semester. Continue?")) return;
+          btnUpload.disabled = false; btnUpload.classList.remove("disabled"); btnUpload.textContent = "Upload EOI Spreadsheet";
+          eoiFile.value = ""; fileNameEl.textContent = "";
+          eoiFile.click();
+        });
+      } else {
+        btnUpload.disabled = false;
+        btnUpload.classList.remove("disabled");
+        btnUpload.textContent = "Upload EOI Spreadsheet";
+        fileNameEl.textContent = "";
+        eoiInfoRow.textContent = "";
+      }
+
+      // Master Class List / sessions state
+      if (st.has_sessions) {
+        btnProceed.onclick = () => location.href = `/allocationunits.html?alias=${encodeURIComponent(st.alias)}`;
+        btnProceed.disabled = false;
+        allocFileName.textContent = st.last_master_classes?.filename || "";
+        allocInfoRow.innerHTML = `
+          Master Class List already exists for <b>${st.alias}</b>.
+          Click “Proceed to Tutor Allocation” to open existing data.
+          To <b>overwrite</b> it, <button id="btnReuploadClass" class="btn btn-link p-0 align-baseline">click here</button>.
+        `;
+        document.getElementById("btnReuploadClass").addEventListener("click", () => {
+          if (!confirm("Re-uploading will overwrite the current Master Class List for this semester. Continue?")) return;
+          allocFile.value = ""; allocFileName.textContent = ""; allocInfoRow.textContent = "";
+          btnProceed.onclick = proceedUploadOrRun;
+          proceedUploadOrRun(new Event("dummy")); // prompt file picker
+        });
+      } else {
+        // require upload path
+        btnProceed.onclick = proceedUploadOrRun;
+        allocInfoRow.textContent = "";
+        allocFileName.textContent = "";
+      }
+      return st;
+    }
+
+    // ========================= EOI upload + preview =========================
     btnUpload.addEventListener("click", () => eoiFile.click());
     eoiFile.addEventListener("change", async () => {
-      const f = eoiFile.files?.[0];
-      if (!f) return;
+      const f = eoiFile.files?.[0]; if (!f) return;
       fileNameEl.textContent = f.name;
-
       try {
         const fd = new FormData();
         fd.append("import_type", "eoi");
         fd.append("file", f);
         await apiPostForm(API.importsUpload, fd);
 
-        // NEW: persist state + disable button after success
         const alias = await getCurrentAlias();
         sessionStorage.setItem("eoiPreviewAlias", alias);
         sessionStorage.setItem("eoiFileName", f.name);
         sessionStorage.setItem("eoiUploadDisabled", "1");
 
-        btnUpload.disabled = true;
-        btnUpload.classList.add("disabled");
-        btnUpload.textContent = "EOI uploaded";
-      } catch (e) {
-        alert(e.message);
-      }
-
+        btnUpload.disabled = true; btnUpload.classList.add("disabled"); btnUpload.textContent = "EOI uploaded";
+        // re-sync from server so notes/flags are accurate
+        await refreshUploadState(alias);
+      } catch (e) { alert(e.message); }
       parseEOIToLocalPreview(f);
     });
-
-    // --- local preview helpers ---
-    const unitsSection = document.getElementById("unitsSection");
-    const unitsBody = document.getElementById("unitsBody");
-    const recordCount = document.getElementById("recordCount");
-    let workbook = null;
-    let unitSheets = [];
 
     function parseEOIToLocalPreview(file) {
       const reader = new FileReader();
       const isCSV = /\.csv$/i.test(file.name);
       reader.onload = (e) => {
-        let wb;
-        if (isCSV) wb = XLSX.read(e.target.result, { type: "string" });
-        else wb = XLSX.read(new Uint8Array(e.target.result), { type: "array" });
+        const wb = isCSV ? XLSX.read(e.target.result, { type: "string" })
+          : XLSX.read(new Uint8Array(e.target.result), { type: "array" });
         onWorkbookLoaded(wb);
       };
       isCSV ? reader.readAsText(file) : reader.readAsArrayBuffer(file);
     }
-
     function onWorkbookLoaded(wb) {
-      // Read the **first sheet** (Casual Master EOI is single-sheet)
-      const first = wb.SheetNames[0];
-      const sheet = wb.Sheets[first];
+      const first = wb.SheetNames[0], sheet = wb.Sheets[first];
       const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
-      if (!rows.length) {
-        unitsSection.classList.remove("hidden");
-        recordCount.textContent = "0 Records Found";
-        return;
-      }
-
-      // Header map (lowercased)
+      if (!rows.length) { unitsSection.classList.remove("hidden"); recordCount.textContent = "0 Records Found"; return; }
       const headers = rows[0].map(h => String(h || "").trim().toLowerCase());
-      function findCol(...cands) {
-        for (const c of cands) {
-          const key = c.toLowerCase();
-          let idx = headers.indexOf(key);
-          if (idx !== -1) return idx;
-          // substring match for long labels
-          idx = headers.findIndex(h => h.includes(key));
-          if (idx !== -1) return idx;
-        }
-        return -1;
-      }
-
-      // The column that contains the tutor’s selected units
+      const findCol = (...c) => {
+        for (const k of c) {
+          const key = k.toLowerCase();
+          let i = headers.indexOf(key); if (i !== -1) return i;
+          i = headers.findIndex(h => h.includes(key)); if (i !== -1) return i;
+        } return -1;
+      };
       const colApplied = findCol("please select up to five units", "applied unit", "units");
-      if (colApplied === -1) {
-        unitsBody.innerHTML = "";
-        unitsSection.classList.remove("hidden");
-        recordCount.textContent = "0 Records Found";
-        return;
-      }
-
-      // Extract unit codes (+ optional names) from that column
-      const codeName = new Map();      // code -> name (or code as fallback)
-      const CODE_RX = /([A-Za-z]{3}\d{3})\s*(?:[-–—:\s]\s*)?([A-Za-z][^,;|]*)?/g;
-
+      if (colApplied === -1) { unitsBody.innerHTML = ""; unitsSection.classList.remove("hidden"); recordCount.textContent = "0 Records Found"; return; }
+      const codeName = new Map(); const RX = /([A-Za-z]{3}\d{3})\s*(?:[-–—:\s]\s*)?([A-Za-z][^,;|]*)?/g;
       for (let r = 1; r < rows.length; r++) {
-        const cell = String(rows[r][colApplied] || "").trim();
-        if (!cell) continue;
-        CODE_RX.lastIndex = 0;
-        let m;
-        while ((m = CODE_RX.exec(cell)) !== null) {
-          const code = m[1].toUpperCase();
-          let name = (m[2] || "").trim();
-          // clean trailing junk
-          name = name.replace(/\s+/g, " ").replace(/[,;|].*$/, "").trim();
-          if (!codeName.has(code)) codeName.set(code, name || code);
+        const cell = String(rows[r][colApplied] || "").trim(); if (!cell) continue;
+        RX.lastIndex = 0; let m; while ((m = RX.exec(cell)) !== null) {
+          const code = m[1].toUpperCase(); let name = (m[2] || "").trim();
+          name = name.replace(/\s+/g, " ").replace(/[,;|].*$/, "").trim(); if (!codeName.has(code)) codeName.set(code, name || code);
         }
       }
-
-      // Render table (Code | Name)
-      const rowsArr = Array.from(codeName.entries())
-        .sort((a, b) => a[0].localeCompare(b[0]));
+      const rowsArr = Array.from(codeName.entries()).sort((a, b) => a[0].localeCompare(b[0]));
       unitsBody.innerHTML = rowsArr.map(([code, name]) => {
         const url = `unitdetails.html?code=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}`;
-        return `<tr>
-          <td class="fw-semibold"><a class="text-decoration-none" href="${url}">${code}</a></td>
-          <td><a class="text-decoration-none" href="${url}">${name}</a></td>
-        </tr>`;
+        return `<tr><td class="fw-semibold"><a class="text-decoration-none" href="${url}">${code}</a></td>
+                    <td><a class="text-decoration-none" href="${url}">${name}</a></td></tr>`;
       }).join("");
-
       unitsSection.classList.remove("hidden");
       recordCount.textContent = `${rowsArr.length} Records Found`;
       sessionStorage.setItem("eoiUnits", JSON.stringify(rowsArr));
     }
 
-    function renderUnits() {
-      unitsBody.innerHTML = "";
-      unitSheets.forEach((u) => {
-        const url = `unitdetails.html?sheet=${encodeURIComponent(u.sheetName)}&title=${encodeURIComponent(u.title)}&code=${encodeURIComponent(u.code)}&name=${encodeURIComponent(u.name)}`;
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td class="fw-semibold"><a class="text-decoration-none" href="${url}">${u.code || ""}</a></td>
-          <td><a class="text-decoration-none" href="${url}">${u.name || ""}</a></td>`;
-        unitsBody.appendChild(tr);
-      });
-      unitsSection.classList.remove("hidden");
-      recordCount.textContent = `${unitSheets.length} Records Found`;
-    }
-
-    // =========================
-    // Tutor allocation workflow
-    // =========================
-    const btnProceed = document.getElementById("btnProceedAlloc");
-    const allocFile = document.getElementById("allocFile");
-    const allocFileName = document.getElementById("allocFileName");
-
-    // Click -> pick file if none, otherwise run workflow
+    // ========================= Allocation workflow =========================
     function proceedUploadOrRun(e) {
-      if (!allocFile.files?.length) {
-        e.preventDefault();
-        e.stopPropagation();
-        allocFile.click();
-      } else {
-        startAllocationWorkflow();
-      }
+      if (!allocFile.files?.length) { e?.preventDefault?.(); e?.stopPropagation?.(); allocFile.click(); }
+      else { startAllocationWorkflow(); }
     }
-    btnProceed.addEventListener("click", proceedUploadOrRun);
-
-    // Keep your existing onchange:
     allocFile.addEventListener("change", () => {
-      const f = allocFile.files?.[0];
-      if (f) {
-        allocFileName.textContent = f.name;
-        startAllocationWorkflow();
-      }
+      const f = allocFile.files?.[0]; if (f) { allocFileName.textContent = f.name; startAllocationWorkflow(); }
     });
 
     async function startAllocationWorkflow() {
-      const f = allocFile.files?.[0];
-      if (!f) return;
-
-      const original = btnProceed.innerHTML;
-      btnProceed.disabled = true;
-
+      const f = allocFile.files?.[0]; if (!f) return;
+      const original = btnProceed.innerHTML; btnProceed.disabled = true;
       try {
         btnProceed.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>Uploading class times…`;
-
-        // 1) Upload the Master Class List
-        const fd = new FormData();
-        fd.append("import_type", "master_class_list");
-        fd.append("file", f);
+        const fd = new FormData(); fd.append("import_type", "master_class_list"); fd.append("file", f);
         await apiPostForm(API.importsUpload, fd);
 
-        // 2) Which semester DB are we working with?
         const alias = await getCurrentAlias();
 
-        // 3) Finalise EOI into canonical tables (master_eoi, tutors, skills, campus…)
         btnProceed.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>Finalising EOI…`;
-        const finalize = await apiPostJSON(API.finalizeEOI(alias), {});
+        await apiPostJSON(API.finalizeEOI(alias), {});
 
-        // 4) Run allocation (consumes master_class_time + master_eoi + preferences)
         btnProceed.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>Running allocation…`;
-        const alloc = await apiPostJSON(API.runAllocation(alias), {});
+        await apiPostJSON(API.runAllocation(alias), {});
 
-        // 5) Show result + navigate to details
-        const msg =
-          `EOI finalised: ${finalize?.inserted ?? 0} new, ${finalize?.updated ?? 0} updated.\n` +
-          `Allocation: ${alloc?.assigned ?? 0} assigned, ${alloc?.unassigned ?? 0} unassigned.`;
-        console.log(msg);
         alert("Allocation completed.");
-
         location.href = `/allocationunits.html?alias=${encodeURIComponent(alias)}`;
       } catch (e) {
         alert(e.message || "Failed to run allocation.");
-        btnProceed.disabled = false;
-        btnProceed.innerHTML = original;
-        return;
+        btnProceed.disabled = false; btnProceed.innerHTML = original;
       }
     }
 
-    // --- Show the Users Management button only for Admins ---
+    // --- Users management button visibility (best effort) ---
     async function maybeShowUsersMgmt() {
       try {
-        const res = await fetch('/api/accounts/profile/', {
-          headers: authHeaders(),
-          credentials: 'include'
-        });
-        if (!res.ok) return; // not logged in / unauthorized
+        const res = await fetch('/api/accounts/profile/', { headers: authHeaders(), credentials: 'include' });
+        if (!res.ok) return;
         const data = await res.json();
-        // roles structure from your UserProfileView: roles: [{ id, name }]
         const roles = Array.isArray(data?.roles) ? data.roles.map(r => r.name) : [];
         const isAdmin = !!data?.is_staff || roles.includes('Admin');
-        if (isAdmin) {
-          document.getElementById('btnUsersMgmt')?.classList.remove('d-none');
-        }
-      } catch (e) {
-        // ignore - server will still enforce perms
-      }
+        if (isAdmin) document.getElementById('btnUsersMgmt')?.classList.remove('d-none');
+      } catch { }
     }
 
-    // =========================
-    // Init
-    // =========================
+    // ========================= Init =========================
     document.addEventListener("DOMContentLoaded", async () => {
-      if (!token()) return (window.location.href = "/"); // require login
-      await maybeShowAdminTools();     // your existing function
-      await maybeShowUsersMgmt();      // function for Users Management button
+      if (!token()) return (window.location.href = "/");
+      await maybeShowAdminTools();
+      await maybeShowUsersMgmt();
       await loadSemesters();
+
       try {
         const alias = await getCurrentAlias();
         await loadUnitsFromServerForAlias(alias);
 
-        // === Toggle EOI upload state if DB already exists ===
-        const btnProceed = document.getElementById("btnProceedAlloc");
-        const allocFile = document.getElementById("allocFile");
-        const btnUpload = document.getElementById("btnUpload");
-        const eoiInfoRow = document.getElementById("eoiInfoRow");
+        // sync UI with server-side status
+        const st = await refreshUploadState(alias);
 
-        if (await semesterHasAnyData(alias)) {
-          btnUpload.disabled = true;
-          btnUpload.classList.add("disabled");
-          btnUpload.textContent = "EOI already loaded";
-          if (eoiInfoRow) {
-            eoiInfoRow.innerHTML = `
-              <div>
-                Database for <b>${alias}</b> already exists.
-                If you want to re-upload and <b>overwrite</b> it,
-                <button id="btnReuploadEOI" class="btn btn-link p-0 align-baseline">click here</button>.
-              </div>`;
-            document.getElementById("btnReuploadEOI").addEventListener("click", () => {
-              if (!confirm("This will overwrite existing EOI-derived data for this semester. Continue?")) return;
-              btnUpload.disabled = false;
-              btnUpload.classList.remove("disabled");
-              btnUpload.textContent = "Upload EOI Spreadsheet";
-              document.getElementById("eoiFile").click();
-            });
-          }
-        }
-        // If the Master Class List is already present → go straight to units
-        const hasClassList = await semesterHasClassList(alias);
-        if (hasClassList) {
-          // 2) Remove the upload-first click behavior and just navigate
-          btnProceed.removeEventListener("click", proceedUploadOrRun);
-          btnProceed.onclick = () => {
-            location.href = `/allocationunits.html?alias=${encodeURIComponent(alias)}`;
-          };
-          // (Optional) Show the overwrite note/button next to Proceed:
-          const allocInfoRow = document.getElementById("allocInfoRow");
-          if (allocInfoRow) {
-            allocInfoRow.innerHTML = `
-              <div>
-                Master Class List for <b>${alias}</b> is already loaded.
-                Click “Proceed to Tutor Allocation” to open existing data.
-                To re-upload and <b>overwrite</b> it,
-                <button id="btnReuploadClass" class="btn btn-link p-0 align-baseline">click here</button>.
-              </div>`;
-            document.getElementById("btnReuploadClass").addEventListener("click", () => {
-              if (!confirm("Re-uploading will overwrite the current Master Class List for this semester. Continue?")) return;
-              allocFile.value = "";
-              allocFileName.textContent = "";
-              btnProceed.onclick = null;
-              btnProceed.addEventListener("click", proceedUploadOrRun, { once: false });
-              alert("Please choose the new Master Class List to upload.");
-            });
-          }
-        } else {
-          // return none
-        }
-
-
+        // restore same-semester preview bits (non-authoritative)
         const savedAlias = sessionStorage.getItem("eoiPreviewAlias");
-
-        // Only restore if we're still on the same current semester DB
         if (savedAlias && savedAlias === alias) {
           const raw = sessionStorage.getItem("eoiUnits");
           if (raw) {
-            const rowsArr = JSON.parse(raw); // Array<[code,name]>
-
+            const rowsArr = JSON.parse(raw);
             unitsBody.innerHTML = rowsArr.map(([code, name]) => {
               const url = `unitdetails.html?code=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}`;
-              return `<tr>
-                <td class="fw-semibold"><a class="text-decoration-none" href="${url}">${code}</a></td>
-                <td><a class="text-decoration-none" href="${url}">${name}</a></td>
-              </tr>`;
+              return `<tr><td class="fw-semibold"><a class="text-decoration-none" href="${url}">${code}</a></td>
+                          <td><a class="text-decoration-none" href="${url}">${name}</a></td></tr>`;
             }).join("");
-
             unitsSection.classList.remove("hidden");
             recordCount.textContent = `${rowsArr.length} Records Found`;
           }
-
-          if (sessionStorage.getItem("eoiUploadDisabled") === "1") {
-            btnUpload.disabled = true;
-            btnUpload.classList.add("disabled");
-            btnUpload.textContent = "EOI uploaded";
+          if (sessionStorage.getItem("eoiUploadDisabled") === "1" && !st.has_eoi) {
+            btnUpload.disabled = true; btnUpload.classList.add("disabled"); btnUpload.textContent = "EOI uploaded";
             fileNameEl.textContent = sessionStorage.getItem("eoiFileName") || "";
           }
         } else {
-          // semester changed → clear stale preview/state
-          ["eoiUnits", "eoiPreviewAlias", "eoiUploadDisabled", "eoiFileName"].forEach(k =>
-            sessionStorage.removeItem(k)
-          );
+          ["eoiUnits", "eoiPreviewAlias", "eoiUploadDisabled", "eoiFileName"].forEach(k => sessionStorage.removeItem(k));
         }
-      } catch (e) {
-        console.warn("restore preview failed:", e);
-      }
-
-
+      } catch (e) { console.warn("init failed:", e); }
     });
 
     async function loadUnitsFromServerForAlias(alias) {
       try {
         const sessions = await apiGet(`/timetable/sessions/?alias=${encodeURIComponent(alias)}`);
         if (!Array.isArray(sessions) || !sessions.length) return;
-
-        // Deduplicate by unit_code (fall back to subject_code/activity_code)
         const byCode = new Map();
         sessions.forEach(s => {
-          const code =
-            (s.activity_code || s.unit_code || s.subject_code || "")
-              .toString()
-              .slice(0, 6)
-              .toUpperCase();
+          const code = (s.activity_code || s.unit_code || s.subject_code || "").toString().slice(0, 6).toUpperCase();
           if (!code) return;
           const name = (s.unit_name || s.subject_description || code).trim();
           if (!byCode.has(code)) byCode.set(code, name);
         });
-
         const rowsArr = Array.from(byCode.entries()).sort((a, b) => a[0].localeCompare(b[0]));
         unitsBody.innerHTML = rowsArr.map(([code, name]) => {
           const url = `unitdetails.html?code=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}`;
-          return `<tr>
-            <td class="fw-semibold"><a class="text-decoration-none" href="${url}">${code}</a></td>
-            <td><a class="text-decoration-none" href="${url}">${name}</a></td>
-          </tr>`;
+          return `<tr><td class="fw-semibold"><a class="text-decoration-none" href="${url}">${code}</a></td>
+                      <td><a class="text-decoration-none" href="${url}">${name}</a></td></tr>`;
         }).join("");
-
         unitsSection.classList.remove("hidden");
         recordCount.textContent = `${rowsArr.length} Records Found`;
-      } catch (e) {
-        console.warn("No server-side units found:", e);
-      }
+      } catch (e) { console.warn("No server-side units found:", e); }
     }
-
   </script>
-
 </body>
 
 </html>

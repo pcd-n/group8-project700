@@ -14,6 +14,8 @@ from .models import UploadJob
 from .services import IMPORT_DISPATCH
 from users.permissions import IsAdminRole
 from semesters.services import get_active_semester_alias, ensure_migrated
+from timetable.models import TimeTable
+from eoi.models import EoiApp
 
 import logging
 logger = logging.getLogger(__name__) 
@@ -92,3 +94,55 @@ class UploadImportView(APIView):
         except Exception as e:
             logger.exception("EOI upload unexpected error (db=%s, alias=%s): %s", db_name, alias, e)
             return Response({"detail": _pretty_err(e), "alias": alias, "db": db_name}, status=400)
+        
+class ImportStatusView(APIView):
+    """
+    Returns whether the active/viewed semester (alias) already has data.
+    Also returns last uploaded filenames (from UploadJob on default DB).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        # Use explicit ?alias=... if provided; otherwise the active/current semester
+        alias = request.query_params.get("alias") or get_active_semester_alias(request)
+        if not alias or alias == "default":
+            return Response({"detail": "No semester alias."}, status=400)
+
+        # authoritative checks against the semester DB
+        with force_write_alias(alias):
+            has_eoi = EoiApp.objects.using(alias).exists()
+            has_sessions = TimeTable.objects.using(alias).exists()
+
+        # last uploads are recorded on the default DB
+        last_eoi = (UploadJob.objects
+                    .filter(import_type__iexact="eoi")
+                    .order_by("-created_at")
+                    .first())
+        last_alloc = (UploadJob.objects
+                      .filter(import_type__in=["tutorial_allocations", "allocations"])
+                      .order_by("-created_at")
+                      .first())
+        last_master = (UploadJob.objects
+                       .filter(import_type__in=["master_classes", "master_class_list"])
+                       .order_by("-created_at")
+                       .first())
+
+        def _job_meta(j):
+            if not j:
+                return None
+            return {
+                "filename": getattr(j.file, "name", ""),
+                "finished_at": j.finished_at,
+                "ok": j.ok,
+                "rows_ok": j.rows_ok,
+                "rows_error": j.rows_error,
+            }
+
+        return Response({
+            "alias": alias,
+            "has_eoi": has_eoi,
+            "has_sessions": has_sessions,
+            "last_eoi": _job_meta(last_eoi),
+            "last_allocations": _job_meta(last_alloc),
+            "last_master_classes": _job_meta(last_master),
+        }, status=200)
