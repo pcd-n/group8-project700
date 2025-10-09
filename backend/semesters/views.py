@@ -64,17 +64,10 @@ class SemesterSetCurrentView(APIView):
     This avoids 1054 Unknown column errors when the UI switches to the new current DB.
     """
     permission_classes = [IsAuthenticated, IsAdminRole]
-
     def post(self, request, alias):
         if not Semester.objects.filter(alias=alias).exists():
             return Response({"detail": "Unknown alias"}, status=404)
-
-        try:
-            set_current_semester(alias)
-            # Make sure current semester DB is fully migrated before anyone uses it
-            ensure_migrated(alias)
-
-        except OperationalError as e:
-            return Response({"detail": str(e)}, status=400)
-
+        # migrate BEFORE exposing as current
+        ensure_migrated(alias)
+        set_current_semester(alias)
         return Response({"ok": True})

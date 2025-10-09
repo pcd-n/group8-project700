@@ -16,6 +16,7 @@ from eoi.models import EoiApp
 from users.models import User, Campus, DEFAULT_DB
 from units.models import Unit, UnitCourse, Course
 from timetable.models import MasterClassTime, TimeTable, TimetableImportLog
+from semesters.services import ensure_migrated
     
 try:
     from openpyxl import load_workbook
@@ -1323,6 +1324,9 @@ def _parse_casual_master_eoi(file_like) -> list[dict]:
     return out
 
 def import_eoi_excel(fileobj, job, using: str):
+    # NEW: make absolutely sure the target semester DB has the columns our ORM expects
+    ensure_migrated(using)
+
     rows = _parse_casual_master_eoi(fileobj)
 
     created = 0
@@ -1361,9 +1365,8 @@ def import_eoi_excel(fileobj, job, using: str):
                 first = parts[0]
                 last = " ".join(parts[1:]) if len(parts) > 1 else ""
 
-            # ---- Create/find user on DEFAULT_DB with guaranteed-unique username
+            # create/find inactive semester-only user with unique username
             username = _unique_username_from_email(email, using)
-
             alias = using
             try:
                 user, _ = User.objects.using(alias).get_or_create(
@@ -1376,7 +1379,6 @@ def import_eoi_excel(fileobj, job, using: str):
                     },
                 )
             except IntegrityError:
-                # very rare race: retry with another username
                 user = User.objects.using(alias).filter(email=email).first()
                 if not user:
                     user = User.objects.using(alias).create(
@@ -1387,12 +1389,11 @@ def import_eoi_excel(fileobj, job, using: str):
                         is_active=False,
                     )
 
-            # If a legacy user exists with empty username, backfill it now
             if not user.username:
                 user.username = _unique_username_from_email(email, using)
                 user.save(using=using, update_fields=["username"])
 
-            # ---- Upsert EOI row in semester DB
+            # Upsert EOI row in semester DB
             extras = r.get("_extra") or {}
             obj, created_flag = EoiApp.objects.using(alias).get_or_create(
                 applicant_user=user,
@@ -1420,7 +1421,6 @@ def import_eoi_excel(fileobj, job, using: str):
             )
 
             if not created_flag:
-                # update mutable fields
                 obj.preference = int(r.get("preference") or obj.preference or 0)
                 obj.qualifications = r.get("qualifications") or obj.qualifications or ""
                 obj.availability = r.get("availability") or obj.availability or ""

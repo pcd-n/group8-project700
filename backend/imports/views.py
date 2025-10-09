@@ -8,12 +8,12 @@ from django.db.utils import IntegrityError, OperationalError
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 
-from semesters.router import get_current_semester_alias
 from semesters.threadlocal import force_write_alias
 from .serializers import UploadRequestSerializer, UploadJobSerializer
 from .models import UploadJob
 from .services import IMPORT_DISPATCH
 from users.permissions import IsAdminRole
+from semesters.services import get_active_semester_alias, ensure_migrated
 
 def _pretty_err(e: Exception) -> str:
     if isinstance(e, ValidationError):
@@ -30,11 +30,13 @@ def _pretty_err(e: Exception) -> str:
 class FinalizeEOIView(APIView):
     permission_classes = [IsAuthenticated]
     def post(self, request):
-        alias = request.query_params.get("alias") or get_current_semester_alias()
+        # CHANGED: resolve + ensure the alias we’re going to touch
+        alias = get_active_semester_alias(request)  # NEW
         try:
-            if alias:
+            if alias and alias != "default":
+                ensure_migrated(alias)              # NEW: idempotent safety
                 with force_write_alias(alias):
-                    pass # nothing else to finalize currently
+                    pass  # nothing else to finalize currently
             return Response({"inserted": 0, "updated": 0}, status=200)
         except Exception as e:
             return Response({"detail": str(e)}, status=400)
@@ -52,9 +54,12 @@ class UploadImportView(APIView):
             created_by=request.user,
         )
 
-        alias = get_current_semester_alias()
-        if not alias:
+        # CHANGED: resolve the correct alias for THIS request (view-semester or current),
+        # register it if needed, and ensure it’s migrated before any ORM call.
+        alias = get_active_semester_alias(request)    # NEW
+        if not alias or alias == "default":
             return Response({"detail": "No current semester is set."}, status=400)
+        ensure_migrated(alias)                        # NEW (idempotent)
 
         kind = str(job.import_type).lower().strip()
         importer = IMPORT_DISPATCH.get(kind)
@@ -72,7 +77,7 @@ class UploadImportView(APIView):
                 {"ok": True, "result": result, "job": UploadJobSerializer(job).data},
                 status=201,
             )
-        
+
         except (ValidationError, IntegrityError, OperationalError) as e:
             return Response({"detail": _pretty_err(e)}, status=400)
 

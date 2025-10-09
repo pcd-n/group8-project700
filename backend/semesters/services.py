@@ -211,3 +211,42 @@ def set_current_semester(alias: str):
     Semester.objects.filter(is_current=True).update(is_current=False)
     Semester.objects.filter(alias=alias).update(is_current=True)
     settings.CURRENT_SEMESTER_ALIAS = alias
+
+# semesters/services.py  (add this helper near the bottom)
+from typing import Optional
+
+def get_active_semester_alias(request=None) -> str:
+    """
+    Returns the alias to use for semester data:
+      1) if the user chose a view-semester in session -> use it
+      2) else the DB 'current' semester
+      3) else 'default' as last resort
+    Ensures the alias is registered and migrated before returning.
+    """
+    alias: Optional[str] = None
+
+    # 1) per-user view selection
+    try:
+        if request is not None:
+            alias = request.session.get("view_semester_alias") or None
+    except Exception:
+        alias = None
+
+    # 2) global current semester
+    if not alias:
+        cur = Semester.objects.filter(is_current=True).only("alias", "db_name").first()
+        if cur:
+            alias = cur.alias
+
+    # 3) fallback
+    if not alias:
+        return "default"
+
+    # Make sure Django knows this DB and it is migrated
+    if alias not in settings.DATABASES:
+        sem = Semester.objects.filter(alias=alias).only("db_name").first()
+        if sem:
+            _register_alias(alias, sem.db_name)
+    ensure_migrated(alias)
+    return alias
+
