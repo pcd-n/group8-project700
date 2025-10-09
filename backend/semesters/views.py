@@ -7,7 +7,11 @@ from django.db.utils import OperationalError
 from users.permissions import IsAdminRole
 from .serializers import SemesterSerializer, CreateSemesterSerializer, SelectViewSerializer
 from .models import Semester
-from .services import create_semester_db, set_view_semester, set_current_semester, list_existing_semesters, ensure_migrated
+from django.db import connections
+from .services import (
+    create_semester_db, set_view_semester, set_current_semester,
+    list_existing_semesters, ensure_migrated, get_active_semester_alias
+)
 
 class SemesterListView(APIView):
     permission_classes = [IsAuthenticated]
@@ -71,3 +75,19 @@ class SemesterSetCurrentView(APIView):
         ensure_migrated(alias)
         set_current_semester(alias)
         return Response({"ok": True})
+
+class SemesterCurrentView(APIView):
+    """
+    Return the active alias the frontend should use.
+    Priority: session view_alias -> current semester.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        alias = get_active_semester_alias(request)  # resolves view_semester or current
+        if not alias:
+            return Response({"alias": None}, status=200)
+        # make sure alias exists and schema is ready (idempotent)
+        ensure_migrated(alias)
+        db_name = connections[alias].settings_dict.get("NAME", "")
+        return Response({"alias": alias, "db": db_name}, status=200)

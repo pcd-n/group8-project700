@@ -207,7 +207,8 @@ class TimeTable(models.Model):
         Campus,
         on_delete=models.CASCADE,
         related_name='timetables',
-        help_text="Campus where the class is held"
+        help_text="Campus where the class is held",
+        null=True, blank=True
     )
     tutor_user = models.ForeignKey(
         User,
@@ -303,6 +304,34 @@ class TimeTable(models.Model):
             return int((end_datetime - start_datetime).total_seconds() / 60)
         return 0
 
+    @property
+    def activity_code_ui(self) -> str:
+        try:
+            if self.master_class and getattr(self.master_class, "activity_code", None):
+                return self.master_class.activity_code or ""
+        except Exception:
+            pass
+        # fallback: unit code prefix (keeps UI usable even without master_class)
+        try:
+            return (self.unit_course.unit.unit_code or "")[:6].upper()
+        except Exception:
+            return ""
+
+    # unify “weeks” string (prefer MasterClassTime.weeks or teaching_weeks)
+    @property
+    def weeks_ui(self) -> str:
+        mc = getattr(self, "master_class", None)
+        if mc:
+            try:
+                if getattr(mc, "weeks", None):
+                    return mc.weeks or ""
+                tw = getattr(mc, "teaching_weeks", None)
+                if tw is not None:
+                    return str(tw)
+            except Exception:
+                pass
+        return ""
+    
     @property
     def is_tutor_assigned(self):
         """Check if a tutor is assigned."""

@@ -18,6 +18,7 @@ class AllocationSerializer(serializers.ModelSerializer):
         s = obj.session
         return {
             "id": s.id,
+            "session_id": getattr(s, "pk", None),
             # try common names; fall back to None if not present
             "unit": getattr(getattr(s, "unit_course", None), "unit_id", None) or getattr(s, "unit_id", None),
             "day": getattr(s, "day_of_week", None) or getattr(s, "day", None),

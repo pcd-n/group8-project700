@@ -1,4 +1,4 @@
-#allocation/views.py
+# allocation/views.py
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from django.db.models import Q, Min
@@ -7,6 +7,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 import re
+
 from .models import Allocation
 from eoi.models import EoiApp
 from .serializers import AllocationSerializer, ManualAssignSerializer, AssignRequestSerializer
@@ -16,7 +17,6 @@ from semesters.threadlocal import force_write_alias
 from semesters.router import get_current_semester_alias
 from users.models import User, Campus
 from units.models import Unit, UnitCourse
-from .serializers import AssignRequestSerializer
 from users.permissions import IsAdminOrCoordinator
 
 User = get_user_model()
@@ -24,10 +24,12 @@ User = get_user_model()
 def _get_alias(request):
     return request.query_params.get("alias") or get_current_semester_alias()
 
+
 class AssignSer(serializers.Serializer):
     session_id = serializers.IntegerField()
     tutor_id = serializers.IntegerField()
     preference = serializers.IntegerField(required=False, default=0)
+
 
 class AllocationListView(generics.ListAPIView):
     """
@@ -37,18 +39,26 @@ class AllocationListView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        qs = Allocation.objects.all()
-        year = self.request.query_params.get("year")
-        term = self.request.query_params.get("term")
-        if year and term:
-            qs = qs.filter(
-                session__unit_course__year=year,
-                session__unit_course__term=term
+        alias = _get_alias(self.request)
+        with force_write_alias(alias):  # <— ensure we query the semester DB
+            qs = Allocation.objects.all().select_related(
+                "session", "session__unit_course", "session__unit_course__unit", "tutor"
             )
-        return qs
+            year = self.request.query_params.get("year")
+            term = self.request.query_params.get("term")
+            if year and term:
+                qs = qs.filter(
+                    session__unit_course__year=year,
+                    session__unit_course__term=term
+                )
+            return qs
+
 
 class UnitsForAllocationView(APIView):
-    """Return [{unit_code, unit_name, campus, session_count, tutors}] for the given alias."""
+    """
+    Return rows: [{unit_code, unit_name, campus, session_count, tutors}]
+    for the given alias.
+    """
     permission_classes = [IsAuthenticated, IsAdminOrCoordinator]
 
     def get(self, request):
@@ -58,7 +68,6 @@ class UnitsForAllocationView(APIView):
                   .select_related("unit_course", "unit_course__unit", "unit_course__campus", "tutor_user")
                   .all())
 
-            # Aggregate by (unit_code, unit_name, campus)
             buckets = {}
             for tt in qs:
                 unit = tt.unit_course.unit
@@ -71,7 +80,7 @@ class UnitsForAllocationView(APIView):
                         "unit_name": unit.unit_name,
                         "campus": campus_name,
                         "session_count": 0,
-                        "tutors": {},  # dedupe by email or name
+                        "tutors": {},
                     }
 
                 rec = buckets[key]
@@ -86,17 +95,17 @@ class UnitsForAllocationView(APIView):
 
             data = []
             for rec in buckets.values():
-                row = {
+                data.append({
                     "unit_code": rec["unit_code"],
                     "unit_name": rec["unit_name"],
                     "campus": rec["campus"],
                     "session_count": rec["session_count"],
                     "tutors": list(rec["tutors"].values()),
-                }
-                data.append(row)
+                })
 
             data.sort(key=lambda x: (x["unit_code"], x["campus"]))
             return Response(data)
+
 
 class ManualAssignView(APIView):
     """
@@ -105,35 +114,36 @@ class ManualAssignView(APIView):
     permission_classes = [IsAuthenticated, IsAdminOrCoordinator]
 
     def post(self, request):
+        alias = _get_alias(request)                                # <— NEW
         serializer = ManualAssignSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        session = get_object_or_404(TimeTable, pk=serializer.validated_data["session_id"])
-        tutor = get_object_or_404(User, pk=serializer.validated_data["tutor_id"])
+        with force_write_alias(alias):                             # <— NEW context
+            session = get_object_or_404(TimeTable, pk=serializer.validated_data["session_id"])
+            tutor = get_object_or_404(User, pk=serializer.validated_data["tutor_id"])
 
-        # clash check (purely against TimeTable)
-        db = getattr(session._state, "db", None) or "default"
-        clashes = (
-            TimeTable.objects.using(db)
-            .filter(
-                tutor_user=tutor,
-                day_of_week=session.day_of_week,
-                start_time__lt=session.end_time,
-                end_time__gt=session.start_time,
+            # clash check strictly on the same alias / DB
+            clashes = (
+                TimeTable.objects
+                .filter(
+                    tutor_user=tutor,
+                    day_of_week=session.day_of_week,
+                    start_time__lt=session.end_time,
+                    end_time__gt=session.start_time,
+                )
+                .exclude(pk=session.pk)
             )
-            .exclude(pk=session.pk)
-        )
-        if clashes.exists():
-            return Response({"detail": "Clash detected"}, status=400)
+            if clashes.exists():
+                return Response({"detail": "Clash detected"}, status=400)
 
-        allocation = Allocation.objects.create(
-            session=session,
-            tutor=tutor,
-            preference=serializer.validated_data.get("preference", 0),
-            status="completed",
-            created_by=request.user,
-        )
-        return Response(AllocationSerializer(allocation).data, status=201)
+            allocation = Allocation.objects.create(
+                session=session,
+                tutor=tutor,
+                preference=serializer.validated_data.get("preference", 0),
+                status="completed",
+                created_by=request.user,
+            )
+            return Response(AllocationSerializer(allocation).data, status=201)
 
 
 class AutoAllocateView(APIView):
@@ -143,7 +153,6 @@ class AutoAllocateView(APIView):
     permission_classes = [IsAuthenticated, IsAdminOrCoordinator]
 
     def post(self, request):
-        # use the same alias pattern you use elsewhere
         alias = request.GET.get("alias") or request.data.get("alias") or _get_alias(request)
         ctx = force_write_alias(alias) if alias else None
         if ctx:
@@ -161,25 +170,23 @@ class AutoAllocateView(APIView):
 
             created = []
 
-            for s in qs:
-                db = getattr(s._state, "db", alias) or "default"
-
-                # skip if already allocated for this session (on same DB)
-                if Allocation.objects.using(db).filter(session=s).exists():
+            for s in qs.select_related("unit_course", "unit_course__unit"):
+                # skip if already allocated for this session (same DB)
+                if Allocation.objects.filter(session=s).exists():
                     continue
 
-                # EOIs for this unit ordered by preference (same DB)
+                # EOIs for this unit ordered by preference
                 eois = (
                     EoiApp.objects
-                    .filter(unit=s.unit_course.unit, preference__gte=1)  # only with real preference
+                    .filter(unit=s.unit_course.unit, preference__gte=1)
                     .order_by("preference", "id")
                 )
                 for e in eois:
                     if not e.preference or e.preference < 1:
-                        continue 
-                    
+                        continue
+
                     clash_exists = (
-                        TimeTable.objects.using(db)
+                        TimeTable.objects
                         .filter(
                             tutor_user=e.applicant_user,
                             day_of_week=s.day_of_week,
@@ -192,7 +199,7 @@ class AutoAllocateView(APIView):
                     if clash_exists:
                         continue
 
-                    alloc = Allocation.objects.using(db).create(
+                    alloc = Allocation.objects.create(
                         session=s,
                         tutor=e.applicant_user,
                         preference=e.preference,
@@ -200,13 +207,14 @@ class AutoAllocateView(APIView):
                         created_by=request.user,
                     )
                     created.append(alloc)
-                    break  # stop at first feasible EOI
+                    break
 
             return Response(AllocationSerializer(created, many=True).data)
 
         finally:
             if ctx:
                 ctx.__exit__(None, None, None)
+
 
 class ApproveAllocationsView(APIView):
     """
@@ -215,14 +223,16 @@ class ApproveAllocationsView(APIView):
     permission_classes = [IsAuthenticated, IsAdminOrCoordinator]
 
     def post(self, request):
+        alias = request.GET.get("alias") or request.data.get("alias") or _get_alias(request)  # <— NEW
         term = request.data.get("term")
         year = request.data.get("year")
 
-        qs = Allocation.objects.filter(
-            session__unit_course__term=term,
-            session__unit_course__year=year
-        )
-        qs.update(approved=True)
+        with force_write_alias(alias):  # <— ensure we’re updating the semester DB
+            qs = Allocation.objects.filter(
+                session__unit_course__term=term,
+                session__unit_course__year=year
+            )
+            qs.update(approved=True)
 
         return Response({"detail": "Allocations approved and published."})
 
@@ -234,9 +244,14 @@ class TutorTimetableView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, tutor_id=None):
-        tutor = request.user if tutor_id is None else get_object_or_404(User, pk=tutor_id)
-        qs = Allocation.objects.filter(tutor=tutor, approved=True)
-        return Response(AllocationSerializer(qs, many=True).data)
+        alias = _get_alias(request)  # <— NEW
+        with force_write_alias(alias):
+            tutor = request.user if tutor_id is None else get_object_or_404(User, pk=tutor_id)
+            qs = Allocation.objects.filter(tutor=tutor, approved=True).select_related(
+                "session", "session__unit_course", "session__unit_course__unit"
+            )
+            return Response(AllocationSerializer(qs, many=True).data)
+
 
 class SessionsByUnitCode(APIView):
     """Alias-aware sessions for one unit code; optional campus filter."""
@@ -260,7 +275,7 @@ class SessionsByUnitCode(APIView):
             for tt in qs.order_by("day_of_week", "start_time", "timetable_id"):
                 u = tt.unit_course.unit
                 rows.append({
-                    "session_id": tt.timetable_id,                     # front-end expects session_id
+                    "session_id": tt.timetable_id,
                     "unit_name": u.unit_name,
                     "activity_code": getattr(tt, "activity_code", None) or getattr(tt.master_class, "activity_code", None) or "",
                     "campus": tt.unit_course.campus.campus_name if tt.unit_course.campus else "",
@@ -275,25 +290,27 @@ class SessionsByUnitCode(APIView):
                     "notes": tt.notes or "",
                 })
             return Response(rows, status=200)
-    
+
+
 class UnitSessionsView(APIView):
     """Return all sessions for one unit code (optionally filtered by campus)."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request, unit_code):
         alias = _get_alias(request)
-        campus = request.query_params.get("campus")  # SB / IR / ONLINE optional
+        campus = request.query_params.get("campus")
         with force_write_alias(alias):
             qs = (TimeTable.objects
                   .select_related("unit_course", "unit_course__unit", "unit_course__campus", "tutor_user")
                   .filter(unit_course__unit__unit_code__iexact=unit_code))
             if campus:
                 qs = qs.filter(unit_course__campus__campus_name__iexact=campus)
+
             rows = []
-            for tt in qs.order_by("day_of_week", "start_time", "pk"):   # was "id"
+            for tt in qs.order_by("day_of_week", "start_time", "pk"):
                 u = tt.unit_course.unit
                 rows.append({
-                    "id": tt.pk,  # safe alias for timetable_id
+                    "id": tt.pk,
                     "unit_code": u.unit_code,
                     "unit_name": u.unit_name,
                     "campus": tt.unit_course.campus.campus_name if tt.unit_course.campus else "",
@@ -307,11 +324,11 @@ class UnitSessionsView(APIView):
                 })
             return Response(rows)
 
+
 class SuggestTutorsView(APIView):
     """
-    Suggest tutors for a unit (and campus) ordered by EOI preference asc (1 best), 
-    then by name if no preference.
-    Query params: unit_code=KIT101&campus=SB&q=pha
+    Suggest tutors for a unit (and campus) ordered by EOI preference asc.
+    Query: unit_code=KIT101&campus=SB&q=pha
     """
     permission_classes = [IsAuthenticated, IsAdminOrCoordinator]
 
@@ -330,13 +347,12 @@ class SuggestTutorsView(APIView):
             if campus:
                 eoi = eoi.filter(campus__campus_name__iexact=campus)
 
-            # build a map: user_id -> best preference (min)
             pref_map = (eoi.values("applicant_user_id")
                           .annotate(best_pref=Min("preference")))
             pref_by_user = {r["applicant_user_id"]: (r["best_pref"] or 9999)
                             for r in pref_map}
 
-            users = User.objects.using(alias).all()
+            users = User.objects.all()
             if q:
                 users = users.filter(
                     Q(first_name__icontains=q) |
@@ -344,7 +360,6 @@ class SuggestTutorsView(APIView):
                     Q(email__icontains=q)
                 )
 
-            # only include users who have EOI for this unit if any exist; otherwise show everyone
             only_eoi_ids = set(pref_by_user.keys())
             if only_eoi_ids:
                 users = users.filter(id__in=only_eoi_ids)
@@ -359,9 +374,9 @@ class SuggestTutorsView(APIView):
                     "preference": pref if pref < 9999 else None,
                 })
 
-            # order: have preference (ascending), then name
             results.sort(key=lambda r: (r["preference"] is None, r["preference"] or 9999, r["name"].lower()))
             return Response(results)
+
 
 class AssignTutorView(APIView):
     permission_classes = [IsAuthenticated, IsAdminOrCoordinator]
@@ -378,22 +393,21 @@ class AssignTutorView(APIView):
 
         with force_write_alias(alias):
             try:
-                tt = TimeTable.objects.using(alias).get(pk=session_id)
+                tt = TimeTable.objects.get(pk=session_id)
             except TimeTable.DoesNotExist:
                 return Response({"detail": "Session not found"}, status=404)
 
             tutor = None
             if tutor_id:
                 try:
-                    tutor = User.objects.using(alias).get(pk=tutor_id)
+                    tutor = User.objects.get(pk=tutor_id)
                 except User.DoesNotExist:
                     return Response({"detail": f"Tutor id {tutor_id} not found"}, status=404)
             elif tutor_email:
-                tutor = User.objects.using(alias).filter(email__iexact=tutor_email).first()
+                tutor = User.objects.filter(email__iexact=tutor_email).first()
                 if not tutor:
                     return Response({"detail": f"Tutor email {tutor_email} not found"}, status=404)
 
-            # Assign or unassign tutor
             if tutor:
                 ok, msg = tt.can_assign_tutor(tutor)
                 if not ok:
@@ -403,7 +417,7 @@ class AssignTutorView(APIView):
                 tt.tutor_user = None  # unassign
 
             tt.notes = notes
-            tt.save(using=alias)
+            tt.save()
 
             return Response({
                 "ok": True,
@@ -414,6 +428,7 @@ class AssignTutorView(APIView):
                 "notes": tt.notes,
             })
 
+
 class RunAllocationView(APIView):
     """
     Runs a simple automatic allocation for the current semester DB.
@@ -421,15 +436,15 @@ class RunAllocationView(APIView):
     permission_classes = [IsAuthenticated, IsAdminOrCoordinator]
 
     def post(self, request):
-        alias = request.GET.get("alias") or request.data.get("alias")
+        alias = request.GET.get("alias") or request.data.get("alias") or _get_alias(request)
         ctx = force_write_alias(alias) if alias else None
         if ctx:
             ctx.__enter__()
 
         try:
-            qs = TimeTable.objects.all()
+            qs = TimeTable.objects.select_related("unit_course", "unit_course__unit")
 
-            # Try to filter by year/term if we can extract them from alias like 'sem_2023_s4'
+            # Try to filter by year/term from alias like 'sem_2023_s4'
             year = term = None
             if alias:
                 m_year = re.search(r"(\d{4})", alias)
@@ -442,20 +457,13 @@ class RunAllocationView(APIView):
                 qs = qs.filter(unit_course__year=year, unit_course__term=term)
 
             created = []
-            # Naive allocator: for each timetable session without an allocation,
-            # try tutors (EOIs) in ascending preference; skip on clash.
-            for s in qs.select_related("unit_course", "unit_course__unit"):
+
+            for s in qs:
                 if Allocation.objects.filter(session=s).exists():
                     continue
 
-                eois = (
-                    EoiApp.objects
-                    .filter(unit=s.unit_course.unit)
-                    .order_by("preference", "id")
-                )
-
+                eois = EoiApp.objects.filter(unit=s.unit_course.unit).order_by("preference", "id")
                 for e in eois:
-                    # clash check: same day overlap
                     clash = Allocation.objects.filter(
                         tutor=e.applicant_user,
                         session__day_of_week=s.day_of_week,
@@ -476,13 +484,10 @@ class RunAllocationView(APIView):
                         },
                     )
                     created.append(alloc)
-                    break  # stop scanning EOIs for this session once allocated
+                    break
 
             return Response(
-                {
-                    "created": len(created),
-                    "allocations": AllocationSerializer(created, many=True).data,
-                },
+                {"created": len(created), "allocations": AllocationSerializer(created, many=True).data},
                 status=status.HTTP_200_OK,
             )
 
