@@ -55,58 +55,60 @@ class AllocationListView(generics.ListAPIView):
 
 
 class UnitsForAllocationView(APIView):
-    """
-    Return rows: [{unit_code, unit_name, campus, session_count, tutors}]
-    for the given alias.
-    """
     permission_classes = [IsAuthenticated, IsAdminOrCoordinator]
 
     def get(self, request):
-        alias = _get_alias(request)
-        with force_write_alias(alias):
-            qs = (TimeTable.objects
-                  .select_related("unit_course", "unit_course__unit", "unit_course__campus", "tutor_user")
-                  .all())
+        alias = request.query_params.get("alias") or get_current_semester_alias()
 
-            buckets = {}
-            for tt in qs:
-                unit = tt.unit_course.unit
-                campus_name = tt.unit_course.campus.campus_name if tt.unit_course.campus else ""
-                key = (unit.unit_code, unit.unit_name, campus_name)
+        # Explicitly read from the semester DB, not the default DB
+        qs = (TimeTable.objects.using(alias)
+              .select_related("unit_course", "unit_course__unit", "unit_course__campus", "tutor_user")
+              .all())
 
-                if key not in buckets:
-                    buckets[key] = {
-                        "unit_code": unit.unit_code,
-                        "unit_name": unit.unit_name,
-                        "campus": campus_name,
-                        "session_count": 0,
-                        "tutors": {},
-                    }
+        buckets = {}
+        for tt in qs:
+            unit = tt.unit_course.unit if tt.unit_course else None
+            if not unit:
+                # skip rows that somehow lack a unit_course->unit
+                continue
 
-                rec = buckets[key]
-                rec["session_count"] += 1
+            campus_name = ""
+            if tt.unit_course and tt.unit_course.campus:
+                campus_name = tt.unit_course.campus.campus_name
 
-                if tt.tutor_user_id:
-                    full = f"{tt.tutor_user.first_name} {tt.tutor_user.last_name}".strip() or (tt.tutor_user.email or "")
-                    email = tt.tutor_user.email or ""
-                    tkey = email or full
-                    if tkey:
-                        rec["tutors"][tkey] = {"name": full, "email": email}
+            key = (unit.unit_code, unit.unit_name, campus_name)
+            if key not in buckets:
+                buckets[key] = {
+                    "unit_code": unit.unit_code,
+                    "unit_name": unit.unit_name,
+                    "campus": campus_name,
+                    "session_count": 0,
+                    "tutors": {},
+                }
 
-            data = []
-            for rec in buckets.values():
-                data.append({
-                    "unit_code": rec["unit_code"],
-                    "unit_name": rec["unit_name"],
-                    "campus": rec["campus"],
-                    "session_count": rec["session_count"],
-                    "tutors": list(rec["tutors"].values()),
-                })
+            rec = buckets[key]
+            rec["session_count"] += 1
 
-            data.sort(key=lambda x: (x["unit_code"], x["campus"]))
-            return Response(data)
+            if tt.tutor_user_id:
+                full = f"{tt.tutor_user.first_name} {tt.tutor_user.last_name}".strip() or (tt.tutor_user.email or "")
+                email = tt.tutor_user.email or ""
+                tkey = email or full
+                if tkey:
+                    rec["tutors"][tkey] = {"name": full, "email": email}
 
+        data = []
+        for rec in buckets.values():
+            data.append({
+                "unit_code": rec["unit_code"],
+                "unit_name": rec["unit_name"],
+                "campus": rec["campus"],
+                "session_count": rec["session_count"],
+                "tutors": list(rec["tutors"].values()),
+            })
 
+        data.sort(key=lambda x: (x["unit_code"], x["campus"]))
+        return Response(data)
+    
 class ManualAssignView(APIView):
     """
     Manually assign a tutor to a class slot.
