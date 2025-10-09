@@ -59,6 +59,11 @@ ADMIN_SITE_HEADER = f"{PROJECT_TITLE} Administration"
 ADMIN_SITE_TITLE = f"{PROJECT_TITLE} Admin"
 ADMIN_INDEX_TITLE = f"Welcome to {PROJECT_TITLE} Administration"
 
+ACCOUNT_AUTHENTICATION_METHOD = "username"
+ACCOUNT_EMAIL_REQUIRED = True
+ACCOUNT_USERNAME_REQUIRED = True
+ACCOUNT_USER_MODEL_USERNAME_FIELD = "username"
+ACCOUNT_USER_MODEL_EMAIL_FIELD = "email"
 
 # Application definition
 
@@ -102,6 +107,11 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'allauth.account.middleware.AccountMiddleware',
     'semesters.middleware.SemesterViewAliasMiddleware',
+]
+
+# Authentication backend
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',
 ]
 
 # All semester DBs will be created with this prefix
