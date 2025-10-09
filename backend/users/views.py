@@ -4,6 +4,7 @@ from django.db.models import Q
 from rest_framework import status, generics, serializers
 from rest_framework.permissions import AllowAny, IsAuthenticated, BasePermission
 from rest_framework.response import Response
+from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.views import APIView
 from django.contrib.auth import authenticate
 from django.db import transaction
@@ -38,37 +39,33 @@ class LoginResponseSerializer(serializers.Serializer):
 
 
 class LoginView(generics.CreateAPIView):
-    """Login user with username and password."""
     permission_classes = [AllowAny]
     serializer_class = LoginSerializer
-    
+
     @extend_schema(
         request=LoginSerializer,
-        responses={200: LoginResponseSerializer},
-        description="Login with username and password",
-        examples=[OpenApiExample(
-            'Login Example',
-            value={'username': 'uc01', 'password': 'password123'},
-            request_only=True,
-        )]
+        responses={200: dict},
+        examples=[OpenApiExample('Login', value={'username': 'admin', 'password': 'abcabc'})],
     )
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        s = self.get_serializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        user = authenticate(
+            request,
+            username=s.validated_data["username"],
+            password=s.validated_data["password"],
+        )
+        if not user:
+            return Response({"error": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        username = serializer.validated_data['username']
-        password = serializer.validated_data['password']
-
-        try:
-            result = User.objects.login_user(username=username, password=password)
-            if result['success']:
-                return Response({
-                    'user': UserSerializer(result['user']).data,
-                    'tokens': result['tokens']
-                }, status=status.HTTP_200_OK)
-            return Response({'error': result['message']}, status=status.HTTP_401_UNAUTHORIZED)
-        except Exception:
-            return Response({'error': 'Login failed'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            "user": UserSerializer(user).data,
+            "tokens": {
+                "access": str(refresh.access_token),
+                "refresh": str(refresh),
+            },
+        }, status=status.HTTP_200_OK)
 
 class RegisterView(generics.CreateAPIView):
     permission_classes = [IsAdminRole]   # Admin only
