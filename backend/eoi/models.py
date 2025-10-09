@@ -32,7 +32,8 @@ class EoiApp(models.Model):
         'users.User',
         on_delete=models.CASCADE,
         related_name='eoi_applications',
-        help_text="User applying for the tutoring position"
+        help_text="User applying for the tutoring position",
+        db_constraint=False,
     )
     unit = models.ForeignKey(
         'units.Unit',
@@ -219,7 +220,8 @@ class MasterEoI(models.Model):
         'users.User',
         on_delete=models.CASCADE,
         related_name='owned_master_eois',
-        help_text="User who owns/manages this EOI campaign"
+        help_text="User who owns/manages this EOI campaign",
+        db_constraint=False,
     )
     course = models.ForeignKey(
         'units.Course',
@@ -324,7 +326,8 @@ class TutorsCourses(models.Model):
         'users.User',
         on_delete=models.CASCADE,
         related_name='tutor_courses',
-        help_text="Tutor user"
+        help_text="Tutor user",
+        db_constraint=False,
     )
     course = models.ForeignKey(
         'units.Course',
@@ -369,7 +372,8 @@ class TutorSkills(models.Model):
         'users.User',
         on_delete=models.CASCADE,
         related_name='tutor_skills',
-        help_text="Tutor user"
+        help_text="Tutor user",
+        db_constraint=False,
     )
     skill = models.ForeignKey(
         'units.Skill',
@@ -389,7 +393,8 @@ class TutorSkills(models.Model):
         null=True,
         blank=True,
         related_name='verified_tutor_skills',
-        help_text="User who verified this skill"
+        help_text="User who verified this skill",
+        db_constraint=False,
     )
     verified_at = models.DateTimeField(
         null=True,
@@ -425,7 +430,8 @@ class TutorSupervisors(models.Model):
         'users.User',
         on_delete=models.CASCADE,
         related_name='tutor_supervisors',
-        help_text="Tutor user"
+        help_text="Tutor user",
+        db_constraint=False,
     )
     supervisor = models.ForeignKey(
         'users.Supervisor',
