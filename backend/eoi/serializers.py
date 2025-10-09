@@ -13,10 +13,16 @@ class EoiAppSerializer(serializers.ModelSerializer):
     user_name = serializers.SerializerMethodField()
     user_email = serializers.EmailField(source="applicant_user.email", read_only=True)
 
-    def get_applicant_name(self, obj):
-        fn = (obj.applicant_user.first_name or "").strip()
-        ln = (obj.applicant_user.last_name or "").strip()
-        return (fn + " " + ln).strip() or obj.applicant_user.username
+    # method name must match field name (get_user_name)
+    def get_user_name(self, obj):
+        u = getattr(obj, "applicant_user", None)
+        if not u:
+            # fallbacks from EOI extras if user is missing
+            return (obj.tutor_name or "").strip() or (obj.tutor_email or "")
+        fn = (u.first_name or "").strip()
+        ln = (u.last_name or "").strip()
+        full = (fn + " " + ln).strip()
+        return full or (u.username or u.email or "")
 
     class Meta:
         model = EoiApp
