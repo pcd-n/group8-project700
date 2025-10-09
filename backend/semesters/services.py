@@ -33,6 +33,30 @@ def _base_from_default():
             base[k] = copy.deepcopy(default[k])
     return base
 
+def _has_django_migrations_table(using: str) -> bool:
+    return "django_migrations" in connections[using].introspection.table_names()
+
+def ensure_migrated(using: str) -> None:
+    """
+    Safe to call whenever you create/select a semester alias.
+    - Registers the DB alias on the fly if missing.
+    - If brand-new DB: create tables (run_syncdb) and apply all migrations.
+    - If partially/fully migrated: only unapplied migrations will run.
+    """
+    # Ensure alias exists in settings and connection is warmed
+    if using not in settings.DATABASES:
+        # look up the Semester row to get db_name
+        sem = Semester.objects.filter(alias=using).only("db_name").first()
+        if not sem:
+            raise OperationalError(f"Unknown semester alias '{using}'")
+        _register_alias(using, sem.db_name)
+
+    # Now we can safely introspect and run migrations
+    if not _has_django_migrations_table(using):
+        call_command("migrate", database=using, interactive=False, run_syncdb=True, verbosity=0)
+    else:
+        call_command("migrate", database=using, interactive=False, verbosity=0)
+
 def _build_db_settings(db_name: str):
     base = _base_from_default()
     base["NAME"] = db_name
@@ -125,7 +149,7 @@ def create_semester_db(*, year: int, term: str, make_current: bool, actor=None):
     2) CREATE DATABASE
     3) Create/lookup Semester row
     4) Register alias (with full settings) and pre-warm connection
-    5) Run migrations on that alias (semester apps only via router)
+    5) Run migrations on that alias (router will send semester apps there)
     6) Optionally mark as current
     """
     if actor is not None and not _actor_is_admin(actor):
@@ -158,11 +182,9 @@ def create_semester_db(*, year: int, term: str, make_current: bool, actor=None):
     # 4) Register alias and pre-warm the connection so defaults exist
     _register_alias(alias, db_name)
 
-    # 5) Migrate this alias (router will send only semester apps here)
-    call_command("migrate", "contenttypes", database=alias, verbosity=1)
-    call_command("migrate", "auth",         database=alias, verbosity=1)
-    call_command("migrate", "users",        database=alias, verbosity=1)
-    call_command("migrate", database=alias, verbosity=1)
+    # 5) Ensure this DB is fully migrated (adds columns like eoi_app.tutor_email)
+    ensure_migrated(alias)
+
     # 6) Optionally mark as current
     if make_current:
         Semester.objects.filter(is_current=True).update(is_current=False)
@@ -176,6 +198,16 @@ def set_view_semester(request, alias: str | None):
     request.session["view_semester_alias"] = alias
 
 def set_current_semester(alias: str):
+    sem = Semester.objects.filter(alias=alias).first()
+    if not sem:
+        raise OperationalError(f"Unknown semester alias '{alias}'")
+
+    # Make sure Django knows this connection, then migrate it
+    if alias not in settings.DATABASES:
+        _register_alias(alias, sem.db_name)
+
+    ensure_migrated(alias)
+
     Semester.objects.filter(is_current=True).update(is_current=False)
     Semester.objects.filter(alias=alias).update(is_current=True)
     settings.CURRENT_SEMESTER_ALIAS = alias

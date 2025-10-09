@@ -1404,7 +1404,7 @@ def import_eoi_excel(fileobj, job, using: str):
                     "preference": int(r.get("preference") or 0),
                     "qualifications": r.get("qualifications") or "",
                     "availability": r.get("availability") or "",
-                    "tutor_email": email,
+                    "tutor_email": r["tutor_email"],
                     "tutor_name": tutor_name,
                     "tutor_current": extras.get("eoi_status_text") or "",
                     "location_text": extras.get("location_text") or campus_txt or "",

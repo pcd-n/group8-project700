@@ -8,6 +8,8 @@ from rest_framework import status, serializers
 from rest_framework import serializers as drf_serializers
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Q
+from django.db import connections
+from django.db.utils import OperationalError
 import pandas as pd
 from .models import EoiApp
 from units.models import Unit
@@ -83,7 +85,12 @@ class ApplicantsByUnit(APIView):
         )
         data = EoiAppSerializer(qs, many=True).data
         return Response(data, status=status.HTTP_200_OK)
-    
+
+def _column_exists(using: str, table: str, column: str) -> bool:
+    with connections[using].cursor() as c:
+        c.execute(f"SHOW COLUMNS FROM `{table}` LIKE %s", [column])
+        return c.fetchone() is not None  
+      
 class PreferenceItemSer(serializers.Serializer):
     email = serializers.EmailField()
     preference = serializers.IntegerField(min_value=1, max_value=10)
@@ -128,11 +135,16 @@ class SavePreferences(APIView):
                 continue
 
             # Update by tutor_email OR applicant_user.email (whichever exists)
-            qs = (
-                EoiApp.objects.using(alias)
-                .filter(unit_id=unit_id, is_current=True)
-                .filter(Q(tutor_email__iexact=email) | Q(applicant_user__email__iexact=email))
-            )
+            qs = EoiApp.objects.using(alias).filter(unit_id=unit_id, is_current=True)
+
+            if _column_exists(alias, "eoi_app", "tutor_email"):
+                qs = qs.filter(
+                    Q(tutor_email__iexact=email) | Q(applicant_user__email__iexact=email)
+                )
+            else:
+                # legacy DB without the new column
+                qs = qs.filter(applicant_user__email__iexact=email)
+
             updated += qs.update(preference=pref)
 
         return Response({"updated": updated}, status=status.HTTP_200_OK)
