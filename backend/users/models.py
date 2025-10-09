@@ -145,7 +145,7 @@ class User(AbstractBaseUser):
     """
     Custom User model with username as the unique identifier.
     """
-    username = models.CharField(max_length=150, unique=True, null=False, blank=False, default='user')
+    username = models.CharField(max_length=150, unique=True, null=False, blank=False)
     email       = models.EmailField(unique=False, null=True, blank=True)  # optional
     first_name  = models.CharField(max_length=150, blank=True)
     last_name   = models.CharField(max_length=150, blank=True)
