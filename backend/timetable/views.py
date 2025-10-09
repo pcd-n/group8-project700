@@ -14,9 +14,7 @@ DAY_MAP = {
 def sessions_list(request):
     """
     Return timetable sessions for alias, optionally filtered by unit_code & campus.
-    Output fields are tailored for:
-      - allocationdetails.html
-      - tutortimetable.html
+    Safe across old semester DBs that don't have 'notes' yet.
     """
     alias = request.GET.get("alias") or get_current_semester_alias()
     unit_code = request.GET.get("unit_code")
@@ -34,49 +32,55 @@ def sessions_list(request):
 
         rows = []
         for t in qs:
-            # duration (minutes)
-            dur = None
-            try:
-                dur = int(getattr(t, "duration_minutes", None) or 0)
-            except Exception:
-                dur = 0
+            # duration
+            dur = 0
+            if t.start_time and t.end_time:
+                s = t.start_time.hour * 60 + t.start_time.minute
+                e = t.end_time.hour * 60 + t.end_time.minute
+                dur = max(0, e - s)
+
+            # weeks string (master_class may store weeks/teaching_weeks)
+            weeks_str = ""
+            mc = getattr(t, "master_class", None)
+            if mc:
+                weeks_str = getattr(mc, "weeks", "") or ""
+                if not weeks_str:
+                    tw = getattr(mc, "teaching_weeks", None)
+                    weeks_str = str(tw) if tw is not None else ""
 
             unit = t.unit_course.unit if t.unit_course else None
             campus_name = t.campus.campus_name if t.campus else ""
 
-            # Safe 'notes' (older DBs might lack column)
+            # Be defensive: older DBs may not have 'notes' column yet
             try:
                 notes_val = t.notes or ""
             except Exception:
                 notes_val = ""
 
+            # tutor may be missing / NULL
             tutor_name = ""
             tutor_email = ""
             try:
-                if t.tutor_user:
+                if getattr(t, "tutor_user", None):
                     tutor_name = t.tutor_user.get_full_name() or ""
                     tutor_email = t.tutor_user.email or ""
             except Exception:
                 pass
 
-            # Day label
-            day_label = DAY_MAP.get(t.day_of_week, t.day_of_week)
-
             rows.append({
                 "session_id":   getattr(t, "timetable_id", t.pk),
-                "activity_code": getattr(t, "activity_code_ui", "") or "",
+                "activity_code": (unit.unit_code if unit else "")[:6].upper(),
                 "unit_name":     unit.unit_name if unit else "",
                 "campus":        campus_name,
-                "day_of_week":   day_label,
+                "day_of_week":   DAY_MAP.get(t.day_of_week, t.day_of_week),
                 "start_time":    t.start_time.strftime("%H:%M") if t.start_time else "",
                 "end_time":      t.end_time.strftime("%H:%M") if t.end_time else "",
-                "duration":      dur if dur is not None else 0,
+                "duration":      dur,
                 "location":      t.room or "",
-                "weeks":         getattr(t, "weeks_ui", "") or "",
-                "notes":         notes_val,
+                "weeks":         weeks_str,
+                "notes":         notes_val,        # <- safe for old DBs
                 "tutor":         tutor_name,
                 "tutor_email":   tutor_email,
-                "tutor_user_id": getattr(t, "tutor_user_id", None),
             })
 
     return JsonResponse(rows, safe=False)

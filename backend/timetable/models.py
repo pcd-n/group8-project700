@@ -316,7 +316,7 @@ class TimeTable(models.Model):
             return (self.unit_course.unit.unit_code or "")[:6].upper()
         except Exception:
             return ""
-
+        
     # unify “weeks” string (prefer MasterClassTime.weeks or teaching_weeks)
     @property
     def weeks_ui(self) -> str:
