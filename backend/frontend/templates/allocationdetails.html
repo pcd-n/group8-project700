@@ -7,86 +7,28 @@
   <title>Allocation Details</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
   <style>
-    .campus-title {
-      background: #fde047;
-      padding: 0.35rem 0.6rem;
-      font-weight: 600;
-      display: inline-block;
-      border-radius: 0.25rem;
-      margin: 0.25rem 0 0.5rem;
-    }
-
-    .cell-input {
-      min-width: 160px;
-    }
-
-    .notes-input {
-      min-width: 220px;
-    }
-
     .small-hint {
-      font-size: 0.8rem;
-      color: #6b7280;
+      font-size: .8rem;
+      color: #6b7280
     }
 
     .actions {
-      border-top: 1px solid #e5e7eb;
+      border-top: 1px solid #e5e7eb
     }
 
     .staff-chip {
       display: inline-block;
-      margin: 0.1rem 0.25rem 0.1rem 0;
-      padding: 0.15rem 0.45rem;
+      margin: .1rem .25rem .1rem 0;
+      padding: .15rem .45rem;
       border-radius: 999px;
       background: #e9f2ff;
       color: #0b5ed7;
       cursor: pointer;
-      font-size: 0.85rem;
+      font-size: .85rem
     }
 
-    /* Timetable */
-    .tt-grid {
-      width: 100%;
-      border-collapse: separate;
-      border-spacing: 0;
-      table-layout: fixed;
-    }
-
-    .tt-grid th,
-    .tt-grid td {
-      border: 1px solid #e5e7eb;
-    }
-
-    .tt-grid thead th {
-      background: #f8fafc;
-      text-align: center;
-    }
-
-    .tt-time {
-      width: 90px;
-      background: #f3f4f6;
-      font-weight: 600;
-    }
-
-    .tt-slot {
-      height: 56px;
-      position: relative;
-    }
-
-    /* 56px per hour */
-    .tt-event {
-      position: absolute;
-      left: 6px;
-      right: 6px;
-      border-radius: 0.25rem;
-      padding: 0.25rem 0.35rem;
-      background: #facc15;
-      color: #111827;
-      font-size: 0.8rem;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+    .notes-input {
+      min-width: 220px
     }
   </style>
 </head>
@@ -97,10 +39,9 @@
       <div>
         <h1 id="title" class="h5 m-0">Unit</h1>
         <div class="small-hint">
-          Click <strong>EDIT</strong> to update Tutors / Notes, then
-          <strong>SUBMIT</strong> to save. Click a
-          <span class="staff-chip" style="cursor: default; background: #eef6ff; color: #0b5ed7">staff name</span>
-          to view timetable.
+          Click <strong>EDIT</strong> to update Tutors / Notes, then <strong>SUBMIT</strong> to save.
+          Click a <span class="staff-chip" style="cursor:default;background:#eef6ff;color:#0b5ed7">staff name</span> to
+          view timetable.
         </div>
       </div>
       <a id="backBtn" href="#" class="btn btn-outline-secondary">← Back to Units</a>
@@ -109,62 +50,40 @@
     <div id="content"></div>
 
     <div id="noData" class="alert alert-warning d-none mt-3">
-      No allocation data found. Please upload “Tutorial Allocations.xlsx” on
-      the home page first and click a unit again.
+      No allocation data found. Please upload “Tutorial Allocations.xlsx” on the home page first and click a unit again.
     </div>
 
-    <!-- Actions -->
     <div class="actions pt-3 mt-2 d-flex justify-content-center gap-2">
       <button id="btnEdit" class="btn btn-danger px-5">EDIT</button>
-      <button id="btnSubmit" class="btn btn-primary px-5 d-none">
-        SUBMIT
-      </button>
-    </div>
-  </div>
-
-  <!-- Timetable Modal -->
-  <div class="modal fade" id="ttModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-xl modal-dialog-centered">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h5 class="modal-title" id="ttTitle">Timetable</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-        </div>
-        <div class="modal-body">
-          <div id="ttContainer"></div>
-        </div>
-      </div>
+      <button id="btnSubmit" class="btn btn-primary px-5 d-none">SUBMIT</button>
     </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
-    /* ---------------- Auth / API helpers ---------------- */
+    /* ---------- Auth / API ---------- */
     const API_BASE = "/api";
     const token = () => localStorage.getItem("access");
-    const authHeaders = (extra = {}) => token() ? { ...extra, Authorization: `Bearer ${token()}` } : extra;
+    const authHeaders = (extra = {}) => token() ? ({ ...extra, Authorization: `Bearer ${token()}` }) : extra;
 
     async function apiGet(path) {
       const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders(), credentials: "include" });
       let data = null; try { data = await res.json(); } catch { }
-      if (res.status === 401) { window.location = "/"; throw new Error("Unauthorized"); }
+      if (res.status === 401) { location.href = "/"; throw new Error("Unauthorized"); }
       if (!res.ok) throw new Error(data?.detail || `GET ${path} -> ${res.status}`);
       return data;
     }
-
     async function apiPost(path, body) {
       const res = await fetch(`${API_BASE}${path}`, {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(body)
+        method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(body)
       });
       let data = null; try { data = await res.json(); } catch { }
-      if (res.status === 401) { window.location = "/"; throw new Error("Unauthorized"); }
+      if (res.status === 401) { location.href = "/"; throw new Error("Unauthorized"); }
       if (!res.ok) throw new Error(data?.detail || `POST ${path} -> ${res.status}`);
       return data;
     }
 
-    /* ---------------- Query params ---------------- */
+    /* ---------- Query params ---------- */
     const qs = new URLSearchParams(location.search);
     const alias = qs.get("alias") || "";
     const code = (qs.get("code") || "").toUpperCase();
@@ -173,221 +92,189 @@
 
     document.addEventListener("DOMContentLoaded", () => {
       const backBtn = document.getElementById("backBtn");
-      if (backBtn) {
-        backBtn.href = `allocationunits.html?alias=${encodeURIComponent(alias)}`;
-      }
-
-      const titleEl = document.getElementById("title");
-      if (titleEl) {
-        if (code && unitName) {
-          titleEl.textContent = `${code} – ${unitName}`;
-        } else {
-          titleEl.textContent = code || unitName || "Unit";
-        }
-      }
+      backBtn.href = `allocationunits.html?alias=${encodeURIComponent(alias)}`;
+      document.getElementById("title").textContent = (code && unitName) ? `${code} – ${unitName}` : (code || unitName || "Unit");
     });
-    /* ---------------- Page init ---------------- */
+
+    /* ---------- Page init ---------- */
     document.addEventListener("DOMContentLoaded", init);
 
     async function init() {
       try {
-        const sessions = await apiGet(
-          `/allocation/sessions/?unit_code=${encodeURIComponent(code)}&campus=${encodeURIComponent(campus)}&alias=${encodeURIComponent(alias)}`
-        );
+        const sessions = await apiGet(`/allocation/sessions/?unit_code=${encodeURIComponent(code)}&campus=${encodeURIComponent(campus)}&alias=${encodeURIComponent(alias)}`);
         if (!sessions.length) {
           document.getElementById("noData").classList.remove("d-none");
           return;
         }
         renderSessions(sessions);
-        wireEditing(sessions);
+        wireEditing();
       } catch (e) {
         console.error(e);
         alert("Failed to load sessions: " + e.message);
       }
     }
 
-    /* ---------------- Render sessions ---------------- */
+    /* ---------- Render ---------- */
     function renderSessions(sessions) {
       const wrap = document.createElement("div");
       wrap.className = "table-responsive";
       const table = document.createElement("table");
       table.className = "table table-bordered align-middle";
+      table.innerHTML = `
+        <thead>
+          <tr>
+            <th>Activity</th><th>Day</th><th>Start</th><th>Weeks</th><th>Duration</th><th>Location</th>
+            <th>Tutors</th><th>Notes</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      `;
+      const tbody = table.querySelector("tbody");
 
-      const thead = document.createElement("thead");
-      thead.innerHTML = `<tr>
-      <th>Activity</th><th>Day</th><th>Start</th><th>Weeks</th><th>Duration</th><th>Location</th>
-      <th>Tutors</th><th>Notes</th>
-    </tr>`;
-      table.appendChild(thead);
-
-      const tbody = document.createElement("tbody");
       sessions.forEach(s => {
         const tr = document.createElement("tr");
         tr.dataset.sessionId = s.session_id ?? s.id;
-
         tr.innerHTML = `
-        <td>${s.activity_code || ""}</td>
-        <td>${s.day_of_week || ""}</td>
-        <td>${s.start_time || ""}</td>
-        <td>${s.weeks || ""}</td>
-        <td>${s.duration || ""}</td>
-        <td>${s.location || ""}</td>
-        <td>
-          <!-- SELECT shown only in EDIT mode -->
-          <select 
-            class="form-select form-select-sm staff-select d-none" 
-            data-user-id="${s.tutor_user_id || ""}" 
-            data-email="${s.tutor_email || ""}" 
-            disabled>
-            <!-- options injected at EDIT time -->
-          </select>
-
-          <!-- Static display for VIEW mode -->
-          <div class="staff-display">${s.tutor || ""}</div>
-        </td>
-        <td>
-          <input type="text" class="form-control form-control-sm notes-input" value="${s.notes || ""}" disabled>
-        </td>
-      `;
+          <td>${s.activity_code || ""}</td>
+          <td>${s.day_of_week || ""}</td>
+          <td>${s.start_time || ""}</td>
+          <td>${s.weeks || ""}</td>
+          <td>${s.duration || ""}</td>
+          <td>${s.location || ""}</td>
+          <td>
+            <select class="form-select form-select-sm staff-select d-none"
+                    data-user-id="${s.tutor_user_id || ""}"
+                    data-email="${s.tutor_email || ""}" disabled></select>
+            <div class="staff-display">${s.tutor || ""}</div>
+          </td>
+          <td><input type="text" class="form-control form-control-sm notes-input" value="${s.notes || ""}" disabled></td>
+        `;
         tbody.appendChild(tr);
       });
-      table.appendChild(tbody);
+
       wrap.appendChild(table);
       document.getElementById("content").appendChild(wrap);
     }
 
-    /* ---------------- EOI Tutors (all for this unit/campus) ---------------- */
-    let TUTORS_CACHE = null;
+    /* ---------- Tutor suggestions (sorted by preference asc; null last) ---------- */
+    const tutorCache = new Map(); // key: `${alias}:${code}:${campus}`
 
-    async function loadAllTutors() {
-      if (TUTORS_CACHE) return TUTORS_CACHE;
-      // No "q" -> backend returns ONLY users who have EOI for this unit (and campus)
-      const list = await apiGet(`/allocation/suggest_tutors/?alias=${encodeURIComponent(alias)}&unit_code=${encodeURIComponent(code)}&campus=${encodeURIComponent(campus)}`);
-      // Sort by preference (nulls last), then name (backend already does this, but keep it deterministic)
-      list.sort((a, b) => {
-        const ap = a.preference ?? 9999, bp = b.preference ?? 9999;
-        if (ap !== bp) return ap - bp;
-        return (a.name || "").localeCompare(b.name || "");
+    function sortByPrefThenName(list) {
+      return list.slice().sort((a, b) => {
+        const ap = (a.preference == null) ? Number.POSITIVE_INFINITY : a.preference;
+        const bp = (b.preference == null) ? Number.POSITIVE_INFINITY : b.preference;
+        return ap !== bp ? ap - bp : (a.name || "").localeCompare(b.name || "");
       });
-      TUTORS_CACHE = list;
-      return list;
     }
 
-    function buildTutorOptions(selectEl, tutors) {
-      // Add "unassign" option at the top
-      const opts = [`<option value="">— Unassigned —</option>`];
+    async function fetchTutors() {
+      const key = `${alias}:${code}:${campus}`;
+      if (tutorCache.has(key)) return tutorCache.get(key);
+      const data = await apiGet(`/allocation/suggest_tutors/?alias=${encodeURIComponent(alias)}&unit_code=${encodeURIComponent(code)}&campus=${encodeURIComponent(campus)}`);
+      const sorted = sortByPrefThenName(data);
+      tutorCache.set(key, sorted);
+      return sorted;
+    }
 
+    function populateTutorSelect(selectEl, tutors) {
+      const opts = [`<option value="">— Unassigned —</option>`];
       for (const t of tutors) {
-        const prefTxt = (t.preference && Number.isFinite(+t.preference)) ? ` — pref ${t.preference}` : "";
-        const label = `${t.name} (${t.email})${prefTxt}`;
-        opts.push(`<option value="${t.id}" data-email="${t.email}">${label}</option>`);
+        const pref = (t.preference == null) ? "" : ` — pref ${t.preference}`;
+        opts.push(`<option value="${t.id}" data-email="${t.email}" data-pref="${t.preference ?? ''}">${t.name} (${t.email})${pref}</option>`);
       }
       selectEl.innerHTML = opts.join("");
 
-      // Pre-select current if we have it
-      const currentId = selectEl.dataset.userId ? String(selectEl.dataset.userId) : "";
+      // Preselect current
+      const currentId = (selectEl.dataset.userId || "").toString();
       const currentEmail = (selectEl.dataset.email || "").toLowerCase();
-
       if (currentId) {
         selectEl.value = currentId;
       } else if (currentEmail) {
-        // If we only know email, try to pick the matching option
         const match = Array.from(selectEl.options).find(o => (o.dataset.email || "").toLowerCase() === currentEmail);
         if (match) selectEl.value = match.value;
       }
     }
 
-    /* ---------------- Editing logic ---------------- */
-    let isEditing = false;
+    /* ---------- Editing ---------- */
     const btnEdit = document.getElementById("btnEdit");
     const btnSubmit = document.getElementById("btnSubmit");
 
-    function wireEditing(sessions) {
+    function wireEditing() {
       btnEdit.addEventListener("click", async () => {
-        isEditing = true;
-
-        // Enable fields
+        // enable notes
         document.querySelectorAll(".notes-input").forEach(i => i.disabled = false);
-
-        // Swap VIEW -> EDIT for staff: show <select>, hide static label
+        // show selects
         const selects = document.querySelectorAll(".staff-select");
         document.querySelectorAll(".staff-display").forEach(d => d.classList.add("d-none"));
         selects.forEach(s => { s.classList.remove("d-none"); s.disabled = false; });
 
-        // Load tutors ONCE and populate every dropdown
+        // load tutors once, fill all selects
         try {
-          const tutors = await loadAllTutors();
-          selects.forEach(sel => buildTutorOptions(sel, tutors));
+          const tutors = await fetchTutors();
+          selects.forEach(sel => populateTutorSelect(sel, tutors));
         } catch (e) {
           console.error(e);
-          alert("Failed to load EOI tutors: " + e.message);
+          alert("Failed to load tutor suggestions: " + e.message);
         }
 
         btnSubmit.classList.remove("d-none");
       });
 
       btnSubmit.addEventListener("click", async () => {
-        const rows = document.querySelectorAll("tr[data-session-id]");
-        let saved = 0;
-
-        // capture FIRST clash only
-        let firstClash = null; // {activity, day, start, msg}
-
         btnSubmit.disabled = true;
 
+        const rows = [...document.querySelectorAll("tr[data-session-id]")];
+        let saved = 0, failed = 0;
+        let firstClash = null;
+
+        // Only submit changed rows
         for (const tr of rows) {
-          const sessionId = tr.dataset.sessionId;
-          const select = tr.querySelector(".staff-select");
-          const notesInput = tr.querySelector(".notes-input");
+          const id = Number(tr.dataset.sessionId);
+          const sel = tr.querySelector(".staff-select");
+          const notes = tr.querySelector(".notes-input");
 
-          const pickedIdStr = (select && select.value) ? select.value : "";
-          const pickedId = pickedIdStr ? Number(pickedIdStr) : null;
+          const originalId = (sel.dataset.userId || "").toString();
+          const pickedId = (sel.value || "").toString();
+          const originalNote = notes.getAttribute("value") || "";
+          const newNote = notes.value || "";
 
-          const body = {
-            session_id: Number(sessionId),
-            notes: notesInput.value || ""
-          };
-          // If empty => unassign
-          body.tutor_id = pickedId ?? null;
+          const changed = (pickedId !== originalId) || (newNote !== originalNote);
+          if (!changed) continue;
 
-          // row labels for nicer messages
-          const tds = tr.querySelectorAll("td");
-          const activity = (tds[0]?.textContent || "").trim();
-          const day = (tds[1]?.textContent || "").trim();
-          const start = (tds[2]?.textContent || "").trim();
+          const body = { session_id: id, notes: newNote, tutor_id: pickedId ? Number(pickedId) : null };
 
           try {
             await apiPost(`/allocation/assign/?alias=${encodeURIComponent(alias)}`, body);
-            saved += 1;
+            saved++;
           } catch (e) {
-            const msg = String(e?.message || "");
-
-            if (/clash|conflict/i.test(msg)) {
-              if (!firstClash) firstClash = { activity, day, start, msg };
-              continue;
+            failed++;
+            const msg = String(e.message || "");
+            // capture first clash
+            if (/clash|conflict/i.test(msg) && !firstClash) {
+              const tds = tr.querySelectorAll("td");
+              firstClash = {
+                activity: (tds[0]?.textContent || "").trim(),
+                day: (tds[1]?.textContent || "").trim(),
+                start: (tds[2]?.textContent || "").trim(),
+                msg
+              };
+            } else {
+              console.warn(`Row ${id} failed: ${msg}`);
             }
-            console.warn(`Session ${sessionId} failed: ${msg}`);
           }
         }
 
         if (firstClash) {
-          alert(
-            `Clash detected for:\n${firstClash.activity} — ${firstClash.day} ${firstClash.start}\n\n` +
-            `${firstClash.msg}\n\n` +
-            `Non-clash allocations have been saved.`
-          );
+          alert(`Clash detected for:\n${firstClash.activity} — ${firstClash.day} ${firstClash.start}\n\n${firstClash.msg}\n\nOther valid rows were saved.`);
         } else {
-          alert(saved ? `Allocation saved. ${saved} row(s) updated.` : `No changes to save.`);
+          alert(saved ? `Saved ${saved} row(s).` : `No changes to save.`);
         }
 
-        // Reload THIS page (stay on Allocation Details)
-        const url = `/allocationdetails.html?alias=${encodeURIComponent(alias)}&code=${encodeURIComponent(code)}&campus=${encodeURIComponent(campus)}&name=${encodeURIComponent(unitName)}`;
-        location.href = url;
+        // reload page to reflect current state
+        location.href = `/allocationdetails.html?alias=${encodeURIComponent(alias)}&code=${encodeURIComponent(code)}&campus=${encodeURIComponent(campus)}&name=${encodeURIComponent(unitName)}`;
       });
     }
-
   </script>
-
 </body>
 
 </html>
