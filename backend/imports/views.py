@@ -15,6 +15,8 @@ from .services import IMPORT_DISPATCH
 from users.permissions import IsAdminRole
 from semesters.services import get_active_semester_alias, ensure_migrated
 
+import logging
+logger = logging.getLogger(__name__) 
 def _pretty_err(e: Exception) -> str:
     if isinstance(e, ValidationError):
         if getattr(e, "messages", None):
@@ -31,7 +33,8 @@ class FinalizeEOIView(APIView):
     permission_classes = [IsAuthenticated]
     def post(self, request):
         # CHANGED: resolve + ensure the alias we’re going to touch
-        alias = get_active_semester_alias(request)  # NEW
+        alias = get_active_semester_alias(request)
+        logger.info("EOI upload using alias=%s", alias)
         try:
             if alias and alias != "default":
                 ensure_migrated(alias)              # NEW: idempotent safety
@@ -54,12 +57,11 @@ class UploadImportView(APIView):
             created_by=request.user,
         )
 
-        # CHANGED: resolve the correct alias for THIS request (view-semester or current),
-        # register it if needed, and ensure it’s migrated before any ORM call.
-        alias = get_active_semester_alias(request)    # NEW
+        alias = get_active_semester_alias(request)
+        logger.info("EOI upload using alias=%s", alias) 
         if not alias or alias == "default":
             return Response({"detail": "No current semester is set."}, status=400)
-        ensure_migrated(alias)                        # NEW (idempotent)
+        ensure_migrated(alias)
 
         kind = str(job.import_type).lower().strip()
         importer = IMPORT_DISPATCH.get(kind)

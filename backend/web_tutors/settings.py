@@ -275,46 +275,30 @@ AUTH_USER_MODEL = 'users.User'
 
 # Simplified logging configuration (no Rich for now to avoid conflicts)
 LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'verbose': {
-            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
-            'style': '{',
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "[%(asctime)s] %(levelname)s %(name)s:%(lineno)d — %(message)s"
         },
-        'simple': {
-            'format': '{levelname} {message}',
-            'style': '{',
+        "simple": {"format": "%(levelname)s %(name)s — %(message)s"},
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "verbose",
         },
     },
-    'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
-            'level': 'INFO',
-            'formatter': 'simple',
+    "loggers": {
+        # our module
+        "imports.views": {              # logger name equals __name__ in that file
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
         },
-        # 'file': {
-        #     'class': 'logging.FileHandler',
-        #     'filename': 'web_tutors.log',
-        #     'level': 'INFO',
-        #     'formatter': 'verbose',
-        # },
-    },
-    'root': {
-        'level': 'INFO',
-        'handlers': ['console'],
-    },
-    'loggers': {
-        'django': {
-            'handlers': ['console'],
-            'level': 'INFO',
-            'propagate': False,
-        },
-        'accounts': {
-            'handlers': ['console'],
-            'level': 'INFO',
-            'propagate': False,
-        },
+        # optional: broader capture for your project
+        "django.request": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+        "": {"handlers": ["console"], "level": "INFO"},  # root fallback
     },
 }
 
