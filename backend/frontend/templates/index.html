@@ -91,9 +91,9 @@
     <div class="mx-auto auth-card">
       <form id="signinForm" novalidate>
         <div class="mb-3">
-          <label for="email" class="form-label fw-semibold">Email address</label>
-          <input type="email" class="form-control" id="email" placeholder="Enter your email" required />
-          <div class="invalid-feedback">Please enter a valid email.</div>
+          <label for="username" class="form-label fw-semibold">Username</label>
+          <input type="text" class="form-control" id="username" placeholder="Enter your username" required />
+          <div class="invalid-feedback">Please enter a valid username.</div>
         </div>
 
         <div class="mb-2">
@@ -134,15 +134,15 @@
         return;
       }
 
-      const email = document.getElementById("email").value.trim();
+      const username = document.getElementById("username").value.trim();
       const password = document.getElementById("password").value;
 
       try {
         // Call the working token endpoint
-        const res = await fetch(`${API_BASE}/users/token/`, {
+        const res = await fetch(`${API_BASE}/accounts/login/`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Accept": "application/json" },
-          body: JSON.stringify({ email, password }),
+          body: JSON.stringify({ username, password }),
         });
 
         if (!res.ok) {
@@ -152,13 +152,15 @@
 
         // Backend returns { access, refresh }
         const data = await res.json();
-        localStorage.setItem("access", data.access || "");
-        if (data.refresh) localStorage.setItem("refresh", data.refresh);
+        const access = data.tokens?.access || data.access;
+        const refresh = data.tokens?.refresh || data.refresh;
 
-        // (Optional) clear any stale user cache
-        localStorage.removeItem("user");
+        if (!access) throw new Error("No access token returned");
 
-        // Go to the protected app
+        localStorage.setItem("access", access);
+        if (refresh) localStorage.setItem("refresh", refresh);
+        localStorage.setItem("user", JSON.stringify(data.user || {}));
+
         window.location.href = "/home.html";
       } catch (err) {
         alert(err.message || "Login failed");
