@@ -3,37 +3,35 @@ from rest_framework import serializers
 from .models import EoiApp, MasterEoI, TutorsCourses, TutorSkills, TutorSupervisors
 
 class EoiAppSerializer(serializers.ModelSerializer):
-    applicant_email = serializers.CharField(source="applicant_user.email", read_only=True)
-    applicant_name  = serializers.SerializerMethodField()
-    unit_code  = serializers.CharField(source="unit.unit_code", read_only=True)
-    unit_name  = serializers.CharField(source="unit.unit_name", read_only=True)
+    unit_code = serializers.CharField(source="unit.unit_code", read_only=True)
+    unit_name = serializers.CharField(source="unit.unit_name", read_only=True)
     campus_name = serializers.CharField(source="campus.campus_name", read_only=True)
+
+    # flat user bits the template uses
+    user_id = serializers.IntegerField(source="applicant_user.id", read_only=True)
+    user_username = serializers.CharField(source="applicant_user.username", read_only=True)
+    user_name = serializers.SerializerMethodField()
+    user_email = serializers.EmailField(source="applicant_user.email", read_only=True)
+
+    def get_applicant_name(self, obj):
+        fn = (obj.applicant_user.first_name or "").strip()
+        ln = (obj.applicant_user.last_name or "").strip()
+        return (fn + " " + ln).strip() or obj.applicant_user.username
 
     class Meta:
         model = EoiApp
         fields = [
-            # identifiers
-            "scd_id", "eoi_app_id",
-            # relations (ids + denorms)
-            "applicant_user", "applicant_email", "applicant_name",
-            "unit", "unit_code", "unit_name",
-            "campus", "campus_name",
-            # status/core
-            "status", "remarks", "preference", "qualifications", "availability",
-            # expose EOI extra fields used by UI
-            "tutor_email", "tutor_name", "tutor_current", "location_text",
-            "gpa", "supervisor", "applied_units", "tutoring_experience",
-            "hours_available", "scholarship_received", "transcript_link", "cv_link",
-            # SCD/audit
-            "valid_from", "valid_to", "is_current", "version", "created_at", "updated_at",
+            # identity
+            "scd_id", "eoi_app_id", "is_current", "status", "remarks",
+            # linkage
+            "unit_code", "unit_name", "campus_name",
+            "user_id", "user_username", "user_name", "user_email",
+            # what the page displays
+            "preference", "availability", "tutor_current", "tutor_email", "tutor_name",
+            "qualifications", "location_text", "gpa", "supervisor",
+            "tutoring_experience", "hours_available", "scholarship_received",
+            "transcript_link", "cv_link",
         ]
-        read_only_fields = [
-            "scd_id","eoi_app_id","valid_from","valid_to","is_current",
-            "version","created_at","updated_at"
-        ]
-
-    def get_applicant_name(self, obj):
-        return obj.applicant_user.get_full_name()
 
 class MasterEoISerializer(serializers.ModelSerializer):
     """Serializer for MasterEoI model."""

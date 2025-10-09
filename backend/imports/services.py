@@ -175,12 +175,12 @@ def _resolve_campus(using: str, raw: str) -> Optional[Campus]:
         return None
     return Campus.objects.using(using).filter(campus_name__iexact=key).first()
 
-def _unique_username_from_email(email: str) -> str:
+def _unique_username_from_email(email: str, db_alias: str) -> str:
     base = (email.split("@", 1)[0] or "user").strip().lower()
-    base = re.sub(r"[^a-z0-9._-]+", "", base)[:120]  # keep it safe and short
-    cand = base or "user"
+    base = re.sub(r"[^a-z0-9._-]+", "", base)[:120] or "user"
+    cand = base
     n = 1
-    while User.objects.using(DEFAULT_DB).filter(username=cand).exists():
+    while User.objects.using(db_alias).filter(username=cand).exists():
         n += 1
         cand = f"{base}_{n}"
     return cand
@@ -919,7 +919,7 @@ def import_tutorial_allocations_xlsx(file_like, job, using: str):
             if not uc:
                 raise ValueError(f"No UnitCourse found for unit '{unit_code}' in current semester")
 
-            tutor = User.objects.filter(email__iexact=email).first() if email else None
+            tutor = User.objects.using(using).filter(email__iexact=email).first() if email else None
 
             # Try to find a matching MCT; if not found we still create a Timetable entry
             mct = MasterClassTime.objects.using(using).filter(
@@ -1362,9 +1362,11 @@ def import_eoi_excel(fileobj, job, using: str):
                 last = " ".join(parts[1:]) if len(parts) > 1 else ""
 
             # ---- Create/find user on DEFAULT_DB with guaranteed-unique username
-            username = _unique_username_from_email(email)
+            username = _unique_username_from_email(email, using)
+
+            alias = using
             try:
-                user, _ = User.objects.using(DEFAULT_DB).get_or_create(
+                user, _ = User.objects.using(alias).get_or_create(
                     email=email,
                     defaults={
                         "username": username,
@@ -1375,11 +1377,11 @@ def import_eoi_excel(fileobj, job, using: str):
                 )
             except IntegrityError:
                 # very rare race: retry with another username
-                user = User.objects.using(DEFAULT_DB).filter(email=email).first()
+                user = User.objects.using(alias).filter(email=email).first()
                 if not user:
-                    user = User.objects.using(DEFAULT_DB).create(
+                    user = User.objects.using(alias).create(
                         email=email,
-                        username=_unique_username_from_email(email + ".x"),
+                        username=_unique_username_from_email(email + ".x", using),
                         first_name=first,
                         last_name=last,
                         is_active=False,
@@ -1387,12 +1389,12 @@ def import_eoi_excel(fileobj, job, using: str):
 
             # If a legacy user exists with empty username, backfill it now
             if not user.username:
-                user.username = _unique_username_from_email(email)
-                user.save(using=DEFAULT_DB, update_fields=["username"])
+                user.username = _unique_username_from_email(email, using)
+                user.save(using=using, update_fields=["username"])
 
             # ---- Upsert EOI row in semester DB
             extras = r.get("_extra") or {}
-            obj, created_flag = EoiApp.objects.using(using).get_or_create(
+            obj, created_flag = EoiApp.objects.using(alias).get_or_create(
                 applicant_user=user,
                 unit=unit,
                 campus=campus,

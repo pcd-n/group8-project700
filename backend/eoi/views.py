@@ -65,29 +65,24 @@ class EOIUploadView(APIView):
 class ApplicantsByUnit(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get(self, request, *args, **kwargs):
-        unit_code = request.query_params.get("unit_code")
-        unit_id   = request.query_params.get("unit_id")
+    def get(self, request):
+        code = (request.query_params.get("unit_code") or "").strip().upper()
+        if not code:
+            return Response({"error": "unit_code is required"}, status=400)
 
-        alias = get_current_semester_alias() or "default"
+        # allow overriding alias via ?alias=… but default to current
+        alias = (request.query_params.get("alias") or
+                 get_current_semester_alias() or
+                 "default")
 
         qs = (
             EoiApp.objects.using(alias)
             .select_related("applicant_user", "unit", "campus")
-            .filter(is_current=True)
+            .filter(is_current=True, unit__unit_code=code)
+            .order_by("preference", "applicant_user__username")
         )
-
-        if unit_id:
-            qs = qs.filter(unit_id=unit_id)
-        elif unit_code:
-            qs = qs.filter(unit__unit_code__iexact=unit_code)
-        else:
-            return Response({"detail": "unit_code or unit_id is required"}, status=400)
-
-        qs = qs.order_by("tutor_name", "applicant_user__first_name", "applicant_user__last_name")
-
         data = EoiAppSerializer(qs, many=True).data
-        return Response(data, status=200)
+        return Response(data, status=status.HTTP_200_OK)
     
 class PreferenceItemSer(serializers.Serializer):
     email = serializers.EmailField()
