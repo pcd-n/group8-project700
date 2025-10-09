@@ -9,11 +9,11 @@ import uuid
 
 import pandas as pd
 from django.apps import apps as django_apps
-from django.db import connections, transaction, models
+from django.db import connections, transaction, models, IntegrityError
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from eoi.models import EoiApp
-from users.models import User, Campus
+from users.models import User, Campus, DEFAULT_DB
 from units.models import Unit, UnitCourse, Course
 from timetable.models import MasterClassTime, TimeTable, TimetableImportLog
     
@@ -174,6 +174,16 @@ def _resolve_campus(using: str, raw: str) -> Optional[Campus]:
     if not key:
         return None
     return Campus.objects.using(using).filter(campus_name__iexact=key).first()
+
+def _unique_username_from_email(email: str) -> str:
+    base = (email.split("@", 1)[0] or "user").strip().lower()
+    base = re.sub(r"[^a-z0-9._-]+", "", base)[:120]  # keep it safe and short
+    cand = base or "user"
+    n = 1
+    while User.objects.using(DEFAULT_DB).filter(username=cand).exists():
+        n += 1
+        cand = f"{base}_{n}"
+    return cand
 
 # Flexible header matching (lowercased, spaces collapsed)
 def _norm(s: Any) -> str:
@@ -1313,25 +1323,23 @@ def _parse_casual_master_eoi(file_like) -> list[dict]:
     return out
 
 def import_eoi_excel(fileobj, job, using: str):
-    """
-    Parse the Casual Master EOI Spreadsheet and write rows directly into eoi.EoiApp,
-    creating Units/Campuses/Users as needed in the current semester DB.
-    """
     rows = _parse_casual_master_eoi(fileobj)
 
     created = 0
     updated = 0
+
+    # All semester data changes must be atomic on the semester DB
     with transaction.atomic(using=using):
         for r in rows:
             unit_code = (r.get("unit_code") or "").strip().upper()
             if not unit_code:
                 continue
-            # ensure unit
+
             unit, _ = Unit.objects.using(using).get_or_create(
                 unit_code=unit_code,
                 defaults={"unit_name": unit_code}
             )
-            # campus
+
             campus_txt = (r.get("campus") or "").strip()
             campus_key = CAMPUS_MAP.get(campus_txt.lower(), None)
             campus = None
@@ -1340,25 +1348,50 @@ def import_eoi_excel(fileobj, job, using: str):
                     campus_name=campus_key,
                     defaults={"campus_location": campus_txt or campus_key}
                 )
-            # user
+
             email = (r.get("tutor_email") or "").strip().lower()
             if not email or "@" not in email:
                 continue
-            # Try to split name from extras
-            tutor_name = ""
-            extras = r.get("_extra") or {}
-            if extras:
-                tutor_name = (extras.get("tutor_name") or "").strip()
+
+            # name parsing (best-effort)
+            tutor_name = (r.get("_extra", {}) or {}).get("tutor_name", "").strip()
             first, last = "", ""
             if tutor_name:
                 parts = tutor_name.split()
                 first = parts[0]
                 last = " ".join(parts[1:]) if len(parts) > 1 else ""
-            user, _ = User.objects.using(using).get_or_create(
-                email=email,
-                defaults={"first_name": first, "last_name": last, "is_active": False}
-            )
-            # upsert EoiApp (SCD handled by model .save())
+
+            # ---- Create/find user on DEFAULT_DB with guaranteed-unique username
+            username = _unique_username_from_email(email)
+            try:
+                user, _ = User.objects.using(DEFAULT_DB).get_or_create(
+                    email=email,
+                    defaults={
+                        "username": username,
+                        "first_name": first,
+                        "last_name": last,
+                        "is_active": False,
+                    },
+                )
+            except IntegrityError:
+                # very rare race: retry with another username
+                user = User.objects.using(DEFAULT_DB).filter(email=email).first()
+                if not user:
+                    user = User.objects.using(DEFAULT_DB).create(
+                        email=email,
+                        username=_unique_username_from_email(email + ".x"),
+                        first_name=first,
+                        last_name=last,
+                        is_active=False,
+                    )
+
+            # If a legacy user exists with empty username, backfill it now
+            if not user.username:
+                user.username = _unique_username_from_email(email)
+                user.save(using=DEFAULT_DB, update_fields=["username"])
+
+            # ---- Upsert EOI row in semester DB
+            extras = r.get("_extra") or {}
             obj, created_flag = EoiApp.objects.using(using).get_or_create(
                 applicant_user=user,
                 unit=unit,
@@ -1383,46 +1416,50 @@ def import_eoi_excel(fileobj, job, using: str):
                     "cv_link": extras.get("cv_link") or "",
                 }
             )
+
             if not created_flag:
-                # update mutable fields and save to trigger SCD if changed
+                # update mutable fields
                 obj.preference = int(r.get("preference") or obj.preference or 0)
                 obj.qualifications = r.get("qualifications") or obj.qualifications or ""
                 obj.availability = r.get("availability") or obj.availability or ""
-                # extras
                 if tutor_name:
                     obj.tutor_name = tutor_name
+
                 ex = extras
                 if ex:
                     if ex.get("eoi_status_text"): obj.tutor_current = ex["eoi_status_text"]
                     if ex.get("location_text"): obj.location_text = ex["location_text"]
-                    try:
-                        g = ex.get("gpa"); obj.gpa = float(g) if str(g or "").strip() not in {"", "nan"} else obj.gpa
-                    except Exception: pass
+                    g = ex.get("gpa")
+                    if str(g or "").strip() not in {"", "nan"}:
+                        try:
+                            obj.gpa = float(g)
+                        except Exception:
+                            pass
                     sup = ex.get("supervisor")
                     if sup is not None:
                         s = str(sup).strip()
                         obj.supervisor = "" if s.lower() in {"", "nan"} else s
                     if ex.get("applied_units"): obj.applied_units = ex["applied_units"]
                     if ex.get("tutoring_experience"): obj.tutoring_experience = ex["tutoring_experience"]
-                    try:
-                        h = ex.get("hours_available"); obj.hours_available = int(h) if str(h or "").strip().isdigit() else obj.hours_available
-                    except Exception: pass
+                    h = ex.get("hours_available")
+                    if str(h or "").strip().isdigit():
+                        obj.hours_available = int(h)
                     if ex.get("scholarship_received") is not None:
                         v = str(ex["scholarship_received"]).strip().lower()
-                        obj.scholarship_received = True if v in {"y","yes","true","1"} else False if v in {"n","no","false","0"} else obj.scholarship_received
+                        obj.scholarship_received = (
+                            True if v in {"y","yes","true","1"}
+                            else False if v in {"n","no","false","0"}
+                            else obj.scholarship_received
+                        )
                     if ex.get("transcript_link"): obj.transcript_link = ex["transcript_link"]
                     if ex.get("cv_link"): obj.cv_link = ex["cv_link"]
+
                 obj.save()
                 updated += 1
             else:
                 created += 1
 
-    return {
-        "result": "ok",
-        "target": "eoi_app",
-        "inserted": created,
-        "updated": updated,
-    }
+    return {"result": "ok", "target": "eoi_app", "inserted": created, "updated": updated}
 
 # =================
 # Import dispatcher
