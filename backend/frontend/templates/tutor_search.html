@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tutor Search - Web Based Tutor Allocation</title>
+
+    <!-- Google Font (optional) -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+
+    <!-- Bootstrap 5 -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+
+    <style>
+        :root {
+            --heading-color: #101828;
+            --muted: #475467;
+            --brand: #3c5825;
+            --brand-hover: #324a1f;
+            --field-radius: 12px;
+            --btn-radius: 12px;
+        }
+
+        body {
+            font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto,
+                "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji",
+                "Segoe UI Emoji", "Segoe UI Symbol";
+            background: #f8f9fa;
+        }
+
+        .container {
+            max-width: 900px;
+        }
+
+        .search-card {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            border: 1px solid #e5e7eb;
+        }
+
+        .result-card {
+            background: white;
+            border-radius: 12px;
+            border: 1px solid #e5e7eb;
+            transition: box-shadow 0.2s ease;
+        }
+
+        .result-card:hover {
+            box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.1);
+        }
+
+        .form-control {
+            border-radius: var(--field-radius);
+            border: 2px solid #d1d5db;
+            padding: 12px 16px;
+            font-size: 16px;
+        }
+
+        .form-control:focus {
+            border-color: var(--brand);
+            box-shadow: 0 0 0 3px rgba(60, 88, 37, 0.1);
+        }
+
+        .btn-primary {
+            background-color: var(--brand);
+            border-color: var(--brand);
+            border-radius: var(--btn-radius);
+            padding: 12px 24px;
+            font-weight: 600;
+        }
+
+        .btn-primary:hover {
+            background-color: var(--brand-hover);
+            border-color: var(--brand-hover);
+        }
+
+        .badge {
+            border-radius: 6px;
+        }
+
+        .loading-spinner {
+            display: none;
+        }
+
+        .error-alert {
+            display: none;
+        }
+
+        .results-section {
+            display: none;
+        }
+
+        .unit-badge {
+            background-color: #e0f2fe;
+            color: #01579b;
+            border: 1px solid #b3e5fc;
+        }
+
+        .campus-badge {
+            background-color: #f3e5f5;
+            color: #4a148c;
+            border: 1px solid #e1bee7;
+        }
+
+        .session-info {
+            font-size: 0.875rem;
+            color: var(--muted);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container py-5">
+        <!-- Header -->
+        <div class="text-center mb-5">
+            <h1 class="h2 mb-3" style="color: var(--heading-color); font-weight: 700;">Tutor Search</h1>
+            <p class="text-muted">Search for tutors by their email address to view their details and allocations</p>
+            
+            <!-- Quick Navigation -->
+            <div class="mt-3">
+                <div class="d-flex gap-2 justify-content-center flex-wrap">
+                    <a href="/tutor-search/" class="btn btn-outline-primary btn-sm">
+                        Search Tutors
+                    </a>
+                    <a href="/home/" class="btn btn-outline-secondary btn-sm">
+                        Home
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Search Form -->
+        <div class="search-card p-4 mb-4">
+            <form id="searchForm">
+                <div class="row g-3 align-items-end">
+                    <div class="col-md-8">
+                        <label for="emailInput" class="form-label fw-semibold">Tutor Email</label>
+                        <input type="email" class="form-control" id="emailInput" 
+                               placeholder="Enter tutor email address..." required>
+                    </div>
+                    <div class="col-md-4">
+                        <button type="submit" class="btn btn-primary w-100">
+                            <span class="btn-text">Search Tutor</span>
+                            <div class="loading-spinner spinner-border spinner-border-sm ms-2" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+
+        <!-- Error Alert -->
+        <div class="alert alert-danger error-alert" role="alert">
+            <strong>Error:</strong> <span id="errorMessage"></span>
+        </div>
+
+        <!-- Results Section -->
+        <div class="results-section">
+            <!-- Tutor Info -->
+            <div class="result-card p-4 mb-4">
+                <div class="d-flex align-items-center mb-3">
+                    <div class="bg-primary rounded-circle d-flex align-items-center justify-content-center me-3" 
+                         style="width: 50px; height: 50px;">
+                        <i class="text-white">👤</i>
+                    </div>
+                    <div>
+                        <h3 class="h5 mb-1" id="tutorName">-</h3>
+                        <p class="text-muted mb-0" id="tutorEmail">-</p>
+                    </div>
+                </div>
+                
+                <!-- Campus Information -->
+                <div class="mb-3">
+                    <h6 class="fw-semibold mb-2">Campus Affiliations</h6>
+                    <div id="campusList"></div>
+                </div>
+            </div>
+
+            <!-- Allocation Units -->
+            <div class="result-card p-4">
+                <h5 class="mb-3">Unit Allocations</h5>
+                <div id="allocationsList"></div>
+            </div>
+        </div>
+
+        <!-- No Results Message -->
+        <div class="text-center py-5 d-none" id="noResultsMessage">
+            <div class="text-muted">
+                <h5>No tutor found</h5>
+                <p>Try searching with a different email address.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+        // Simple token management (in a real app, this would be more sophisticated)
+        let authToken = localStorage.getItem('authToken');
+        
+        // If no token in localStorage, you might want to redirect to login or show login form
+        if (!authToken) {
+            // For demo purposes, we'll show an alert
+            console.warn('No authentication token found. Please log in first.');
+            // You could redirect to login page here
+            // window.location.href = '/';
+        }
+
+        document.getElementById('searchForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const email = document.getElementById('emailInput').value.trim();
+            if (!email) return;
+
+            // Show loading state
+            showLoading(true);
+            hideError();
+            hideResults();
+
+            try {
+                const response = await fetch(`/api/allocation/tutor/search/?email=${encodeURIComponent(email)}`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`,
+                        'Content-Type': 'application/json',
+                    }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    displayResults(data);
+                } else {
+                    const errorData = await response.json();
+                    showError(errorData.detail || 'An error occurred while searching');
+                }
+            } catch (error) {
+                console.error('Search error:', error);
+                showError('Network error. Please check your connection and try again.');
+            } finally {
+                showLoading(false);
+            }
+        });
+
+        function showLoading(show) {
+            const spinner = document.querySelector('.loading-spinner');
+            const btnText = document.querySelector('.btn-text');
+            const submitBtn = document.querySelector('button[type="submit"]');
+            
+            if (show) {
+                spinner.style.display = 'inline-block';
+                btnText.textContent = 'Searching...';
+                submitBtn.disabled = true;
+            } else {
+                spinner.style.display = 'none';
+                btnText.textContent = 'Search Tutor';
+                submitBtn.disabled = false;
+            }
+        }
+
+        function showError(message) {
+            const errorAlert = document.querySelector('.error-alert');
+            const errorMessage = document.getElementById('errorMessage');
+            errorMessage.textContent = message;
+            errorAlert.style.display = 'block';
+        }
+
+        function hideError() {
+            const errorAlert = document.querySelector('.error-alert');
+            errorAlert.style.display = 'none';
+        }
+
+        function hideResults() {
+            const resultsSection = document.querySelector('.results-section');
+            const noResultsMessage = document.getElementById('noResultsMessage');
+            resultsSection.style.display = 'none';
+            noResultsMessage.classList.add('d-none');
+        }
+
+        function displayResults(data) {
+            // Display tutor info
+            document.getElementById('tutorName').textContent = data.tutor.full_name;
+            document.getElementById('tutorEmail').textContent = data.tutor.email;
+
+            // Display campus information
+            const campusList = document.getElementById('campusList');
+            campusList.innerHTML = '';
+            
+            if (data.campus && data.campus.length > 0) {
+                data.campus.forEach(campus => {
+                    const badge = document.createElement('span');
+                    badge.className = 'badge campus-badge me-2 mb-2';
+                    badge.textContent = `${campus.campus_name} (${campus.campus_location})`;
+                    campusList.appendChild(badge);
+                });
+            } else {
+                campusList.innerHTML = '<span class="text-muted">No campus affiliations found</span>';
+            }
+
+            // Display allocation units
+            const allocationsList = document.getElementById('allocationsList');
+            allocationsList.innerHTML = '';
+
+            if (data.allocation_units && data.allocation_units.length > 0) {
+                data.allocation_units.forEach(unit => {
+                    const unitCard = document.createElement('div');
+                    unitCard.className = 'border rounded p-3 mb-3';
+                    
+                    const approvedRatio = unit.total_sessions > 0 
+                        ? Math.round((unit.approved_sessions / unit.total_sessions) * 100) 
+                        : 0;
+                    
+                    unitCard.innerHTML = `
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <div>
+                                <h6 class="mb-1">${unit.unit_code}</h6>
+                                <p class="text-muted mb-0">${unit.unit_name}</p>
+                            </div>
+                            <span class="badge unit-badge">${unit.campus}</span>
+                        </div>
+                        <div class="session-info">
+                            <div class="row">
+                                <div class="col-sm-6">
+                                    <strong>Total Sessions:</strong> ${unit.total_sessions}
+                                </div>
+                                <div class="col-sm-6">
+                                    <strong>Approved:</strong> ${unit.approved_sessions} (${approvedRatio}%)
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    
+                    allocationsList.appendChild(unitCard);
+                });
+            } else {
+                allocationsList.innerHTML = '<div class="text-muted text-center py-3">No unit allocations found</div>';
+            }
+
+            // Show results
+            document.querySelector('.results-section').style.display = 'block';
+        }
+
+        // Simple login function for demo (you would integrate with your actual auth system)
+        function showLoginPrompt() {
+            const token = prompt('Please enter your JWT token (for demo purposes):');
+            if (token) {
+                localStorage.setItem('authToken', token);
+                authToken = token;
+                location.reload();
+            }
+        }
+
+        // If no token, show login prompt when page loads
+        if (!authToken) {
+            setTimeout(() => {
+                if (confirm('No authentication token found. Would you like to enter one for testing?')) {
+                    showLoginPrompt();
+                }
+            }, 1000);
+        }
+    </script>
+</body>
+</html>
