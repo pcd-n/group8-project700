@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.core.exceptions import PermissionDenied
 from django.db.utils import OperationalError
-from users.permission import IsAdminUser
+from users.permissions import IsAdminRole
 from .serializers import SemesterSerializer, CreateSemesterSerializer, SelectViewSerializer
 from .models import Semester
 from .services import create_semester_db, set_view_semester, set_current_semester, list_existing_semesters
@@ -16,7 +16,7 @@ class SemesterListView(APIView):
         return Response(SemesterSerializer(qs, many=True).data)
     
 class SemesterCreateView(APIView):
-    permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated, IsAdminRole]
     def post(self, request):
         s = CreateSemesterSerializer(data=request.data)
         s.is_valid(raise_exception=True)
@@ -43,7 +43,7 @@ class SemesterSelectView(APIView):
         return Response({"ok": True})
 
 class SemesterSetCurrentView(APIView):
-    permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated, IsAdminRole]
     def post(self, request, alias):
         if not Semester.objects.filter(alias=alias).exists():
             return Response({"detail": "Unknown alias"}, status=404)

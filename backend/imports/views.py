@@ -1,7 +1,7 @@
 # imports/views.py
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework.permissions import IsAuthenticated
 
 from django.db import transaction
 from django.db.utils import IntegrityError, OperationalError
@@ -12,7 +12,8 @@ from semesters.router import get_current_semester_alias
 from semesters.threadlocal import force_write_alias
 from .serializers import UploadRequestSerializer, UploadJobSerializer
 from .models import UploadJob
-from .services import IMPORT_DISPATCH 
+from .services import IMPORT_DISPATCH
+from users.permissions import IsAdminRole
 
 def _pretty_err(e: Exception) -> str:
     if isinstance(e, ValidationError):
@@ -39,7 +40,7 @@ class FinalizeEOIView(APIView):
             return Response({"detail": str(e)}, status=400)
 
 class UploadImportView(APIView):
-    permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated, IsAdminRole]
 
     def post(self, request):
         s = UploadRequestSerializer(data=request.data)
