@@ -3,6 +3,7 @@ from django.db import models
 from django.utils import timezone
 from django.core.validators import MinValueValidator
 import uuid
+from django.db import router
 
 class EoiApp(models.Model):
     """
@@ -170,27 +171,32 @@ class EoiApp(models.Model):
     def __str__(self):
         unit_str = f" for {self.unit.unit_code}" if self.unit else ""
         return f"EOI Application by {self.applicant_user.email}{unit_str} (v{self.version})"
-    
+
+    def _db_for_self(self, kwargs):
+        return (kwargs.get("using")
+                or self._state.db
+                or router.db_for_write(self.__class__, instance=self))
+
     def save(self, *args, **kwargs):
         """Override save to handle SCD Type II logic."""
+        using = self._db_for_self(kwargs)
+
         if self.pk is None:  # New record
-            # Check if there's an existing current record with same business key
-            existing = EoiApp.objects.filter(
+            # Use the SAME DB for internal lookups
+            existing = EoiApp.objects.using(using).filter(
                 eoi_app_id=self.eoi_app_id,
                 is_current=True
             ).first()
-            
+
             if existing:
-                # Close the existing record
                 existing.is_current = False
                 existing.valid_to = timezone.now()
-                existing.save()
-                
-                # Set new version number
+                existing.save(using=using)  # << ensure same alias
                 self.version = existing.version + 1
-        
-        super().save(*args, **kwargs)
 
+        # FORCE the save to use the same alias (critical for new objects)
+        kwargs["using"] = using
+        return super().save(*args, **kwargs)
 
 class MasterEoI(models.Model):
     """
@@ -297,27 +303,28 @@ class MasterEoI(models.Model):
         term_str = f" ({self.intake_term})" if self.intake_term else ""
         return f"Master EOI{course_str}{term_str} (v{self.version})"
     
+    def _db_for_self(self, kwargs):
+        return (kwargs.get("using")
+                or self._state.db
+                or router.db_for_write(self.__class__, instance=self))
+
     def save(self, *args, **kwargs):
-        """Override save to handle SCD Type II logic."""
-        if self.pk is None:  # New record
-            # Check if there's an existing current record with same business key
-            existing = MasterEoI.objects.filter(
+        using = self._db_for_self(kwargs)
+
+        if self.pk is None:
+            existing = MasterEoI.objects.using(using).filter(
                 master_eoi_id=self.master_eoi_id,
                 is_current=True
             ).first()
-            
             if existing:
-                # Close the existing record
                 existing.is_current = False
                 existing.valid_to = timezone.now()
-                existing.save()
-                
-                # Set new version number
+                existing.save(using=using)
                 self.version = existing.version + 1
-        
-        super().save(*args, **kwargs)
 
-
+        kwargs["using"] = using
+        return super().save(*args, **kwargs)
+    
 class TutorsCourses(models.Model):
     """
     Many-to-many relationship between tutors and courses they're assigned to.
