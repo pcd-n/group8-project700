@@ -15,6 +15,7 @@ urlpatterns = [
     path("", TemplateView.as_view(template_name="index.html")),
     path("home/", TemplateView.as_view(template_name="home.html")),
     path("unitdetails/", TemplateView.as_view(template_name="unitdetails.html"), name="unit_details"),
+    path("tutor-search/", TemplateView.as_view(template_name="tutor_search.html"), name="tutor_search",  ),
     path("allocations/<int:id>/", TemplateView.as_view(template_name="allocationdetails.html"), name="alloc_details"),
     path("allocationdetails.html", TemplateView.as_view(template_name="allocationdetails.html")),
     

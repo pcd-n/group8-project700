@@ -492,3 +492,196 @@ class RunAllocationView(APIView):
         finally:
             if ctx:
                 ctx.__exit__(None, None, None)
+
+class TutorSearchView(APIView):
+    """
+    Search for tutor by email and return name, campus, and allocation units.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="email",
+                description="Email address of the tutor to search for",
+                required=True,
+                type=str,
+                location=OpenApiParameter.QUERY,
+            )
+        ],
+        responses={
+            200: TutorSearchResponseSerializer,
+            400: {"description": "Email parameter is required"},
+            404: {"description": "Tutor not found"},
+        },
+        description="Search for tutor by email and return name, campus affiliations, and allocated units",
+        # examples=[
+        #     OpenApiExample(
+        #         "Successful tutor search",
+        #         description="Example of a successful tutor search response",
+        #         value={
+        #             "tutor": {
+        #                 "id": 1,
+        #                 "email": "tutor@example.com",
+        #                 "first_name": "John",
+        #                 "last_name": "Doe",
+        #                 "full_name": "John Doe",
+        #             },
+        #             "campus": [
+        #                 {
+        #                     "campus_name": "SB",
+        #                     "campus_location": "Hobart, Tasmania, Australia",
+        #                 }
+        #             ],
+        #             "allocation_units": [
+        #                 {
+        #                     "unit_code": "KIT101",
+        #                     "unit_name": "Programming Fundamentals",
+        #                     "campus": "SB",
+        #                     "total_sessions": 5,
+        #                     "approved_sessions": 3,
+        #                 }
+        #             ],
+        #         },
+        #         response_only=True,
+        #     )
+        # ],
+    )
+    def get(self, request):
+        email = request.query_params.get("email", "").strip()
+
+        if not email:
+            return Response(
+                {"detail": "Email parameter is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            # Find the tutor by email (case-insensitive)
+            tutor = User.objects.get(email__iexact=email)
+        except User.DoesNotExist:
+            return Response(
+                {"detail": "Tutor not found"}, status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Get tutor basic information
+        tutor_data = {
+            "id": tutor.id,
+            "email": tutor.email,
+            "first_name": tutor.first_name,
+            "last_name": tutor.last_name,
+            "full_name": tutor.get_full_name(),
+        }
+
+        # Get campus affiliations
+        campus_list = []
+
+        # 1. From Supervisor model if the tutor is a supervisor
+        from users.models import Supervisor
+
+        try:
+            supervisor = Supervisor.objects.get(user=tutor)
+            if supervisor.campus:
+                campus_list.append(
+                    {
+                        "campus_name": supervisor.campus.campus_name,
+                        "campus_location": supervisor.campus.campus_location,
+                    }
+                )
+        except Supervisor.DoesNotExist:
+            pass
+
+        # 2. From timetable allocations (where tutor is assigned)
+        allocated_campuses = (
+            TimeTable.objects.filter(tutor_user=tutor)
+            .select_related("campus")
+            .values("campus__campus_name", "campus__campus_location")
+            .distinct()
+        )
+
+        for campus in allocated_campuses:
+            campus_info = {
+                "campus_name": campus["campus__campus_name"],
+                "campus_location": campus["campus__campus_location"],
+            }
+            # Avoid duplicates
+            if campus_info not in campus_list:
+                campus_list.append(campus_info)
+
+        # Get allocated units
+        # From Allocation model
+        allocations = (
+            Allocation.objects.filter(tutor=tutor)
+            .select_related(
+                "session__unit_course__unit", "session__unit_course__campus"
+            )
+            .values(
+                "session__unit_course__unit__unit_code",
+                "session__unit_course__unit__unit_name",
+                "session__unit_course__campus__campus_name",
+                "approved",
+            )
+        )
+
+        # From TimeTable model (direct assignments)
+        timetable_units = (
+            TimeTable.objects.filter(tutor_user=tutor)
+            .select_related("unit_course__unit", "campus")
+            .values(
+                "unit_course__unit__unit_code",
+                "unit_course__unit__unit_name",
+                "campus__campus_name",
+            )
+        )
+
+        # Process allocations
+        unit_stats = {}
+        for allocation in allocations:
+            unit_code = allocation["session__unit_course__unit__unit_code"]
+            unit_name = allocation["session__unit_course__unit__unit_name"]
+            campus_name = allocation["session__unit_course__campus__campus_name"]
+            is_approved = allocation["approved"]
+
+            key = f"{unit_code}_{campus_name}"
+            if key not in unit_stats:
+                unit_stats[key] = {
+                    "unit_code": unit_code,
+                    "unit_name": unit_name,
+                    "campus": campus_name,
+                    "total_sessions": 0,
+                    "approved_sessions": 0,
+                }
+
+            unit_stats[key]["total_sessions"] += 1
+            if is_approved:
+                unit_stats[key]["approved_sessions"] += 1
+
+        # Process timetable direct assignments
+        for tt_unit in timetable_units:
+            unit_code = tt_unit["unit_course__unit__unit_code"]
+            unit_name = tt_unit["unit_course__unit__unit_name"]
+            campus_name = tt_unit["campus__campus_name"]
+
+            key = f"{unit_code}_{campus_name}"
+            if key not in unit_stats:
+                unit_stats[key] = {
+                    "unit_code": unit_code,
+                    "unit_name": unit_name,
+                    "campus": campus_name,
+                    "total_sessions": 1,
+                    "approved_sessions": 1,  # Direct timetable assignments are considered approved
+                }
+
+        allocation_units = list(unit_stats.values())
+
+        # Sort units by unit_code and campus
+        allocation_units.sort(key=lambda x: (x["unit_code"], x["campus"]))
+
+        response_data = {
+            "tutor": tutor_data,
+            "campus": campus_list,
+            "allocation_units": allocation_units,
+        }
+
+        return Response(response_data, status=status.HTTP_200_OK)
