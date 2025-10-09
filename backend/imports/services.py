@@ -17,11 +17,14 @@ from users.models import User, Campus, DEFAULT_DB
 from units.models import Unit, UnitCourse, Course
 from timetable.models import MasterClassTime, TimeTable, TimetableImportLog
 from semesters.services import ensure_migrated
-    
+
 try:
     from openpyxl import load_workbook
 except Exception as e:
     load_workbook = None
+
+import logging
+logger = logging.getLogger(__name__)
 
 # =========================
 # Header validation helpers
@@ -1327,140 +1330,149 @@ def import_eoi_excel(fileobj, job, using: str):
     # NEW: make absolutely sure the target semester DB has the columns our ORM expects
     ensure_migrated(using)
 
-    rows = _parse_casual_master_eoi(fileobj)
+    try:
+        rows = _parse_casual_master_eoi(fileobj)
+    except Exception as ex:
+        logger.exception("EOI parse failed (using=%s): %s", using, ex)
+        raise
 
+    logger.info("EOI parsed %d rows (using=%s)", len(rows), using)
     created = 0
     updated = 0
 
     # All semester data changes must be atomic on the semester DB
-    with transaction.atomic(using=using):
-        for r in rows:
-            unit_code = (r.get("unit_code") or "").strip().upper()
-            if not unit_code:
-                continue
+    try:
+        with transaction.atomic(using=using):
+            for r in rows:
+                unit_code = (r.get("unit_code") or "").strip().upper()
+                if not unit_code:
+                    continue
 
-            unit, _ = Unit.objects.using(using).get_or_create(
-                unit_code=unit_code,
-                defaults={"unit_name": unit_code}
-            )
-
-            campus_txt = (r.get("campus") or "").strip()
-            campus_key = CAMPUS_MAP.get(campus_txt.lower(), None)
-            campus = None
-            if campus_key:
-                campus, _ = Campus.objects.using(using).get_or_create(
-                    campus_name=campus_key,
-                    defaults={"campus_location": campus_txt or campus_key}
+                unit, _ = Unit.objects.using(using).get_or_create(
+                    unit_code=unit_code,
+                    defaults={"unit_name": unit_code}
                 )
 
-            email = (r.get("tutor_email") or "").strip().lower()
-            if not email or "@" not in email:
-                continue
-
-            # name parsing (best-effort)
-            tutor_name = (r.get("_extra", {}) or {}).get("tutor_name", "").strip()
-            first, last = "", ""
-            if tutor_name:
-                parts = tutor_name.split()
-                first = parts[0]
-                last = " ".join(parts[1:]) if len(parts) > 1 else ""
-
-            # create/find inactive semester-only user with unique username
-            username = _unique_username_from_email(email, using)
-            alias = using
-            try:
-                user, _ = User.objects.using(alias).get_or_create(
-                    email=email,
-                    defaults={
-                        "username": username,
-                        "first_name": first,
-                        "last_name": last,
-                        "is_active": False,
-                    },
-                )
-            except IntegrityError:
-                user = User.objects.using(alias).filter(email=email).first()
-                if not user:
-                    user = User.objects.using(alias).create(
-                        email=email,
-                        username=_unique_username_from_email(email + ".x", using),
-                        first_name=first,
-                        last_name=last,
-                        is_active=False,
+                campus_txt = (r.get("campus") or "").strip()
+                campus_key = CAMPUS_MAP.get(campus_txt.lower(), None)
+                campus = None
+                if campus_key:
+                    campus, _ = Campus.objects.using(using).get_or_create(
+                        campus_name=campus_key,
+                        defaults={"campus_location": campus_txt or campus_key}
                     )
 
-            if not user.username:
-                user.username = _unique_username_from_email(email, using)
-                user.save(using=using, update_fields=["username"])
+                email = (r.get("tutor_email") or "").strip().lower()
+                if not email or "@" not in email:
+                    continue
 
-            # Upsert EOI row in semester DB
-            extras = r.get("_extra") or {}
-            obj, created_flag = EoiApp.objects.using(alias).get_or_create(
-                applicant_user=user,
-                unit=unit,
-                campus=campus,
-                defaults={
-                    "status": "Submitted",
-                    "remarks": "",
-                    "preference": int(r.get("preference") or 0),
-                    "qualifications": r.get("qualifications") or "",
-                    "availability": r.get("availability") or "",
-                    "tutor_email": r["tutor_email"],
-                    "tutor_name": tutor_name,
-                    "tutor_current": extras.get("eoi_status_text") or "",
-                    "location_text": extras.get("location_text") or campus_txt or "",
-                    "gpa": (float(extras.get("gpa")) if str(extras.get("gpa") or "").strip() not in {"", "nan"} else None),
-                    "supervisor": extras.get("supervisor") or "",
-                    "applied_units": extras.get("applied_units") or None,
-                    "tutoring_experience": extras.get("tutoring_experience") or "",
-                    "hours_available": (int(extras.get("hours_available")) if str(extras.get("hours_available") or "").strip().isdigit() else None),
-                    "scholarship_received": None if (extras.get("scholarship_received") is None) else str(extras.get("scholarship_received")).strip().lower() in {"y", "yes", "true", "1"},
-                    "transcript_link": extras.get("transcript_link") or "",
-                    "cv_link": extras.get("cv_link") or "",
-                }
-            )
-
-            if not created_flag:
-                obj.preference = int(r.get("preference") or obj.preference or 0)
-                obj.qualifications = r.get("qualifications") or obj.qualifications or ""
-                obj.availability = r.get("availability") or obj.availability or ""
+                # name parsing (best-effort)
+                tutor_name = (r.get("_extra", {}) or {}).get("tutor_name", "").strip()
+                first, last = "", ""
                 if tutor_name:
-                    obj.tutor_name = tutor_name
+                    parts = tutor_name.split()
+                    first = parts[0]
+                    last = " ".join(parts[1:]) if len(parts) > 1 else ""
 
-                ex = extras
-                if ex:
-                    if ex.get("eoi_status_text"): obj.tutor_current = ex["eoi_status_text"]
-                    if ex.get("location_text"): obj.location_text = ex["location_text"]
-                    g = ex.get("gpa")
-                    if str(g or "").strip() not in {"", "nan"}:
-                        try:
-                            obj.gpa = float(g)
-                        except Exception:
-                            pass
-                    sup = ex.get("supervisor")
-                    if sup is not None:
-                        s = str(sup).strip()
-                        obj.supervisor = "" if s.lower() in {"", "nan"} else s
-                    if ex.get("applied_units"): obj.applied_units = ex["applied_units"]
-                    if ex.get("tutoring_experience"): obj.tutoring_experience = ex["tutoring_experience"]
-                    h = ex.get("hours_available")
-                    if str(h or "").strip().isdigit():
-                        obj.hours_available = int(h)
-                    if ex.get("scholarship_received") is not None:
-                        v = str(ex["scholarship_received"]).strip().lower()
-                        obj.scholarship_received = (
-                            True if v in {"y","yes","true","1"}
-                            else False if v in {"n","no","false","0"}
-                            else obj.scholarship_received
+                # create/find inactive semester-only user with unique username
+                username = _unique_username_from_email(email, using)
+                alias = using
+                try:
+                    user, _ = User.objects.using(alias).get_or_create(
+                        email=email,
+                        defaults={
+                            "username": username,
+                            "first_name": first,
+                            "last_name": last,
+                            "is_active": False,
+                        },
+                    )
+                except IntegrityError:
+                    user = User.objects.using(alias).filter(email=email).first()
+                    if not user:
+                        user = User.objects.using(alias).create(
+                            email=email,
+                            username=_unique_username_from_email(email + ".x", using),
+                            first_name=first,
+                            last_name=last,
+                            is_active=False,
                         )
-                    if ex.get("transcript_link"): obj.transcript_link = ex["transcript_link"]
-                    if ex.get("cv_link"): obj.cv_link = ex["cv_link"]
 
-                obj.save()
-                updated += 1
-            else:
-                created += 1
+                if not user.username:
+                    user.username = _unique_username_from_email(email, using)
+                    user.save(using=using, update_fields=["username"])
 
+                # Upsert EOI row in semester DB
+                extras = r.get("_extra") or {}
+                obj, created_flag = EoiApp.objects.using(alias).get_or_create(
+                    applicant_user=user,
+                    unit=unit,
+                    campus=campus,
+                    defaults={
+                        "status": "Submitted",
+                        "remarks": "",
+                        "preference": int(r.get("preference") or 0),
+                        "qualifications": r.get("qualifications") or "",
+                        "availability": r.get("availability") or "",
+                        "tutor_email": r["tutor_email"],
+                        "tutor_name": tutor_name,
+                        "tutor_current": extras.get("eoi_status_text") or "",
+                        "location_text": extras.get("location_text") or campus_txt or "",
+                        "gpa": (float(extras.get("gpa")) if str(extras.get("gpa") or "").strip() not in {"", "nan"} else None),
+                        "supervisor": extras.get("supervisor") or "",
+                        "applied_units": extras.get("applied_units") or None,
+                        "tutoring_experience": extras.get("tutoring_experience") or "",
+                        "hours_available": (int(extras.get("hours_available")) if str(extras.get("hours_available") or "").strip().isdigit() else None),
+                        "scholarship_received": None if (extras.get("scholarship_received") is None) else str(extras.get("scholarship_received")).strip().lower() in {"y", "yes", "true", "1"},
+                        "transcript_link": extras.get("transcript_link") or "",
+                        "cv_link": extras.get("cv_link") or "",
+                    }
+                )
+
+                if not created_flag:
+                    obj.preference = int(r.get("preference") or obj.preference or 0)
+                    obj.qualifications = r.get("qualifications") or obj.qualifications or ""
+                    obj.availability = r.get("availability") or obj.availability or ""
+                    if tutor_name:
+                        obj.tutor_name = tutor_name
+
+                    ex = extras
+                    if ex:
+                        if ex.get("eoi_status_text"): obj.tutor_current = ex["eoi_status_text"]
+                        if ex.get("location_text"): obj.location_text = ex["location_text"]
+                        g = ex.get("gpa")
+                        if str(g or "").strip() not in {"", "nan"}:
+                            try:
+                                obj.gpa = float(g)
+                            except Exception:
+                                pass
+                        sup = ex.get("supervisor")
+                        if sup is not None:
+                            s = str(sup).strip()
+                            obj.supervisor = "" if s.lower() in {"", "nan"} else s
+                        if ex.get("applied_units"): obj.applied_units = ex["applied_units"]
+                        if ex.get("tutoring_experience"): obj.tutoring_experience = ex["tutoring_experience"]
+                        h = ex.get("hours_available")
+                        if str(h or "").strip().isdigit():
+                            obj.hours_available = int(h)
+                        if ex.get("scholarship_received") is not None:
+                            v = str(ex["scholarship_received"]).strip().lower()
+                            obj.scholarship_received = (
+                                True if v in {"y","yes","true","1"}
+                                else False if v in {"n","no","false","0"}
+                                else obj.scholarship_received
+                            )
+                        if ex.get("transcript_link"): obj.transcript_link = ex["transcript_link"]
+                        if ex.get("cv_link"): obj.cv_link = ex["cv_link"]
+
+                    obj.save()
+                    updated += 1
+                else:
+                    created += 1
+    except Exception as ex:
+        logger.exception("EOI DB write failed (using=%s): %s", using, ex)
+        raise
+    logger.info("EOI upsert finished: created=%d, updated=%d (using=%s)", created, updated, using)
     return {"result": "ok", "target": "eoi_app", "inserted": created, "updated": updated}
 
 # =================

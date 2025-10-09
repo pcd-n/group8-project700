@@ -52,21 +52,22 @@ class UploadImportView(APIView):
         s.is_valid(raise_exception=True)
 
         job = UploadJob.objects.create(
-            file=s.validated_data["file"],   # job is always on default DB
+            file=s.validated_data["file"],
             import_type=s.validated_data["import_type"],
             created_by=request.user,
         )
 
         alias = get_active_semester_alias(request)
-        db_name = connections[alias].settings_dict.get("NAME")
-        kind = str(s.validated_data["import_type"]).lower().strip()   # or from job later
-        logger.info("EOI upload import_type=%s using alias=%s, DB=%s", kind, alias, db_name)        
-        logger.info("EOI upload using alias=%s", alias) 
         if not alias or alias == "default":
+            logger.warning("EOI upload aborted: no active semester alias.")
             return Response({"detail": "No current semester is set."}, status=400)
-        ensure_migrated(alias)
 
-        kind = str(job.import_type).lower().strip()
+        db_name = connections[alias].settings_dict.get("NAME")
+        kind = str(s.validated_data["import_type"]).lower().strip()
+        logger.info("EOI upload import_type=%s using alias=%s, DB=%s", kind, alias, db_name)
+
+        ensure_migrated(alias)  # idempotent
+
         importer = IMPORT_DISPATCH.get(kind)
         if importer is None:
             return Response({"detail": f"Unsupported import type '{kind}'."}, status=400)
@@ -79,12 +80,15 @@ class UploadImportView(APIView):
             job.save(update_fields=["finished_at"])
 
             return Response(
-                {"ok": True, "result": result, "job": UploadJobSerializer(job).data},
+                {"ok": True, "alias": alias, "db": db_name, "result": result, "job": UploadJobSerializer(job).data},
                 status=201,
             )
 
         except (ValidationError, IntegrityError, OperationalError) as e:
-            return Response({"detail": _pretty_err(e)}, status=400)
+            # 🔎 LOG FULL STACK and return detail + context
+            logger.exception("EOI upload failed (db=%s, alias=%s): %s", db_name, alias, e)
+            return Response({"detail": _pretty_err(e), "alias": alias, "db": db_name}, status=400)
 
         except Exception as e:
-            return Response({"detail": _pretty_err(e)}, status=400)
+            logger.exception("EOI upload unexpected error (db=%s, alias=%s): %s", db_name, alias, e)
+            return Response({"detail": _pretty_err(e), "alias": alias, "db": db_name}, status=400)
