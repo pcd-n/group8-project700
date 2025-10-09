@@ -3,7 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
-from django.db import transaction
+from django.db import transaction, connections
 from django.db.utils import IntegrityError, OperationalError
 from django.core.exceptions import ValidationError
 from django.utils import timezone
@@ -58,6 +58,9 @@ class UploadImportView(APIView):
         )
 
         alias = get_active_semester_alias(request)
+        db_name = connections[alias].settings_dict.get("NAME")
+        kind = str(s.validated_data["import_type"]).lower().strip()   # or from job later
+        logger.info("EOI upload import_type=%s using alias=%s, DB=%s", kind, alias, db_name)        
         logger.info("EOI upload using alias=%s", alias) 
         if not alias or alias == "default":
             return Response({"detail": "No current semester is set."}, status=400)
