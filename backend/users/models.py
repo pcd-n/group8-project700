@@ -145,8 +145,8 @@ class User(AbstractBaseUser):
     """
     Custom User model with username as the unique identifier.
     """
-    username = models.CharField(max_length=150, unique=True, null=False, blank=False)
-    email       = models.EmailField(unique=False, null=True, blank=True)  # optional
+    username    = models.CharField(max_length=150, unique=True, null=False, blank=False)
+    email       = models.EmailField(unique=True, null=False, blank=False)
     first_name  = models.CharField(max_length=150, blank=True)
     last_name   = models.CharField(max_length=150, blank=True)
     is_active   = models.BooleanField(default=True)
@@ -158,7 +158,7 @@ class User(AbstractBaseUser):
     objects = UserManager()
 
     USERNAME_FIELD  = 'username'
-    REQUIRED_FIELDS = []
+    REQUIRED_FIELDS = ['email']
 
     class Meta:
         verbose_name = 'User'
