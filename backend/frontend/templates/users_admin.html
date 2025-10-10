@@ -142,9 +142,15 @@
             }
         }
 
+        function allowedRoles(list) {
+            const allow = new Set(["Admin", "Coordinator", "Tutor"]);
+            return (Array.isArray(list) ? list : []).filter(r => allow.has(r.role_name || r.name));
+        }
+
         function renderCreateRoleOptions() {
             const select = document.getElementById('cuRole');
-            const list = asArrayMaybePaginated(roles);       // <-- guard here too
+            //const list = asArrayMaybePaginated(roles);       // <-- guard here too
+            const list = allowedRoles(roles);
             select.innerHTML = list.map(r => `<option value="${r.role_name}">${r.role_name}</option>`).join('');
             const tutor = list.find(r => r.role_name === 'Tutor');
             if (tutor) select.value = 'Tutor';
