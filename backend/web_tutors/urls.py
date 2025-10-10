@@ -23,22 +23,23 @@ urlpatterns = [
 
     # (Optional legacy) keep these only while migrating old links
     path("unitdetails/", TemplateView.as_view(template_name="unitdetails.html")),          # legacy querystring version
-    path("allocationdetails.html", TemplateView.as_view(template_name="allocationdetails.html")),  # legacy
+    path("allocations/", TemplateView.as_view(template_name="allocationunits.html"), name="allocation_units"),
+    path("allocationdetails/", TemplateView.as_view(template_name="allocationdetails.html"), name="allocation_details"),  # querystring style
 
     # HEALTH
     path("health/", health_view, name="health"),
 
     # DJANGO ADMIN
-    #path("admin/", admin.site.urls),
+    path("admin/", admin.site.urls),
 
     # Accounts / Users (API + pretty Users page)
     path("api/accounts/", include(('users.urls', 'accounts'), namespace='accounts')),
     path("api/accounts/roles/", roles_list, name="roles_list"),
     
     # Pretty management page for Users (now served by Django instead of Apache 404)
-    path("admin/users", TemplateView.as_view(template_name="users_admin.html"), name="users_admin"),
-    path("admin/users/", TemplateView.as_view(template_name="users_admin.html")),  # accept trailing slash too
-
+    path("manage/users",  TemplateView.as_view(template_name="users_admin.html"), name="users_admin"),
+    path("manage/users/", TemplateView.as_view(template_name="users_admin.html")),
+    
     # API DOCS
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),

@@ -44,7 +44,7 @@
           view timetable.
         </div>
       </div>
-      <a id="backBtn" href="#" class="btn btn-outline-secondary">← Back to Units</a>
+      <a id="backBtn" href="/allocations/" class="btn btn-outline-secondary">← Back to Units</a>
     </div>
 
     <div id="content"></div>
@@ -59,7 +59,6 @@
     </div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
     /* ---------- Auth / API ---------- */
     const API_BASE = "/api";
@@ -68,19 +67,23 @@
 
     async function apiGet(path) {
       const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders(), credentials: "include" });
-      let data = null; try { data = await res.json(); } catch { }
+      const raw = await res.text();
+      let data = null; try { data = JSON.parse(raw); } catch { }
       if (res.status === 401) { location.href = "/"; throw new Error("Unauthorized"); }
-      if (!res.ok) throw new Error(data?.detail || `GET ${path} -> ${res.status}`);
-      return data;
+      if (!res.ok) throw new Error((data && (data.detail || data.message)) || raw || `GET ${path} -> ${res.status}`);
+      return data ?? raw;
     }
     async function apiPost(path, body) {
       const res = await fetch(`${API_BASE}${path}`, {
-        method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(body)
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(body)
       });
-      let data = null; try { data = await res.json(); } catch { }
+      const raw = await res.text();
+      let data = null; try { data = JSON.parse(raw); } catch { }
       if (res.status === 401) { location.href = "/"; throw new Error("Unauthorized"); }
-      if (!res.ok) throw new Error(data?.detail || `POST ${path} -> ${res.status}`);
-      return data;
+      if (!res.ok) throw new Error((data && (data.detail || data.message)) || raw || `POST ${path} -> ${res.status}`);
+      return data ?? raw;
     }
 
     /* ---------- Query params ---------- */
@@ -88,12 +91,13 @@
     const alias = qs.get("alias") || "";
     const code = (qs.get("code") || "").toUpperCase();
     const campus = qs.get("campus") || "";
-    const unitName = decodeURIComponent(qs.get("name") || "");
+    const unitName = qs.get("name") || ""; // URLSearchParams already decodes
 
     document.addEventListener("DOMContentLoaded", () => {
-      const backBtn = document.getElementById("backBtn");
-      backBtn.href = `allocationunits.html?alias=${encodeURIComponent(alias)}`;
-      document.getElementById("title").textContent = (code && unitName) ? `${code} – ${unitName}` : (code || unitName || "Unit");
+      if (!token()) { location.href = "/"; return; }
+      document.getElementById("backBtn").href = `/allocations/?alias=${encodeURIComponent(alias)}`;
+      document.getElementById("title").textContent =
+        (code && unitName) ? `${code} – ${unitName}` : (code || unitName || "Unit");
     });
 
     /* ---------- Page init ---------- */
@@ -101,8 +105,9 @@
 
     async function init() {
       try {
+        if (!token()) return;
         const sessions = await apiGet(`/allocation/sessions/?unit_code=${encodeURIComponent(code)}&campus=${encodeURIComponent(campus)}&alias=${encodeURIComponent(alias)}`);
-        if (!sessions.length) {
+        if (!Array.isArray(sessions) || !sessions.length) {
           document.getElementById("noData").classList.remove("d-none");
           return;
         }
@@ -110,7 +115,7 @@
         wireEditing();
       } catch (e) {
         console.error(e);
-        alert("Failed to load sessions: " + e.message);
+        alert("Failed to load sessions: " + (e.message || e));
       }
     }
 
@@ -134,6 +139,17 @@
       sessions.forEach(s => {
         const tr = document.createElement("tr");
         tr.dataset.sessionId = s.session_id ?? s.id;
+
+        // clickable display name if we have an email
+        const tutorDisplay = (() => {
+          const name = (s.tutor || "").trim();
+          const email = (s.tutor_email || "").trim();
+          if (!name) return "";
+          if (!email) return name;
+          const ttUrl = `/tutors/timetable/?alias=${encodeURIComponent(alias)}&name=${encodeURIComponent(name)}&email=${encodeURIComponent(email)}`;
+          return `<a class="staff-chip" href="${ttUrl}" title="View timetable">${name}</a>`;
+        })();
+
         tr.innerHTML = `
           <td>${s.activity_code || ""}</td>
           <td>${s.day_of_week || ""}</td>
@@ -145,7 +161,7 @@
             <select class="form-select form-select-sm staff-select d-none"
                     data-user-id="${s.tutor_user_id || ""}"
                     data-email="${s.tutor_email || ""}" disabled></select>
-            <div class="staff-display">${s.tutor || ""}</div>
+            <div class="staff-display">${tutorDisplay}</div>
           </td>
           <td><input type="text" class="form-control form-control-sm notes-input" value="${s.notes || ""}" disabled></td>
         `;
@@ -171,7 +187,7 @@
       const key = `${alias}:${code}:${campus}`;
       if (tutorCache.has(key)) return tutorCache.get(key);
       const data = await apiGet(`/allocation/suggest_tutors/?alias=${encodeURIComponent(alias)}&unit_code=${encodeURIComponent(code)}&campus=${encodeURIComponent(campus)}`);
-      const sorted = sortByPrefThenName(data);
+      const sorted = sortByPrefThenName(data || []);
       tutorCache.set(key, sorted);
       return sorted;
     }
@@ -201,20 +217,17 @@
 
     function wireEditing() {
       btnEdit.addEventListener("click", async () => {
-        // enable notes
         document.querySelectorAll(".notes-input").forEach(i => i.disabled = false);
-        // show selects
         const selects = document.querySelectorAll(".staff-select");
         document.querySelectorAll(".staff-display").forEach(d => d.classList.add("d-none"));
         selects.forEach(s => { s.classList.remove("d-none"); s.disabled = false; });
 
-        // load tutors once, fill all selects
         try {
           const tutors = await fetchTutors();
           selects.forEach(sel => populateTutorSelect(sel, tutors));
         } catch (e) {
           console.error(e);
-          alert("Failed to load tutor suggestions: " + e.message);
+          alert("Failed to load tutor suggestions: " + (e.message || e));
         }
 
         btnSubmit.classList.remove("d-none");
@@ -224,10 +237,8 @@
         btnSubmit.disabled = true;
 
         const rows = [...document.querySelectorAll("tr[data-session-id]")];
-        let saved = 0, failed = 0;
-        let firstClash = null;
+        let saved = 0, failed = 0, firstClash = null;
 
-        // Only submit changed rows
         for (const tr of rows) {
           const id = Number(tr.dataset.sessionId);
           const sel = tr.querySelector(".staff-select");
@@ -249,17 +260,9 @@
           } catch (e) {
             failed++;
             const msg = String(e.message || "");
-            // capture first clash
             if (/clash|conflict/i.test(msg) && !firstClash) {
               const tds = tr.querySelectorAll("td");
-              firstClash = {
-                activity: (tds[0]?.textContent || "").trim(),
-                day: (tds[1]?.textContent || "").trim(),
-                start: (tds[2]?.textContent || "").trim(),
-                msg
-              };
-            } else {
-              console.warn(`Row ${id} failed: ${msg}`);
+              firstClash = { activity: (tds[0]?.textContent || "").trim(), day: (tds[1]?.textContent || "").trim(), start: (tds[2]?.textContent || "").trim(), msg };
             }
           }
         }
@@ -270,8 +273,8 @@
           alert(saved ? `Saved ${saved} row(s).` : `No changes to save.`);
         }
 
-        // reload page to reflect current state
-        location.href = `/allocationdetails.html?alias=${encodeURIComponent(alias)}&code=${encodeURIComponent(code)}&campus=${encodeURIComponent(campus)}&name=${encodeURIComponent(unitName)}`;
+        // Reload to reflect current state
+        location.href = `/allocationdetails/?alias=${encodeURIComponent(alias)}&code=${encodeURIComponent(code)}&campus=${encodeURIComponent(campus)}&name=${encodeURIComponent(unitName)}`;
       });
     }
   </script>

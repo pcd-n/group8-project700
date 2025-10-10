@@ -9,15 +9,15 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
   <style>
     .section-title {
-      font-weight: 600;
+      font-weight: 600
     }
 
     .pref-select {
-      width: 90px;
+      width: 90px
     }
 
     .actions {
-      border-top: 1px solid #e5e7eb;
+      border-top: 1px solid #e5e7eb
     }
   </style>
 </head>
@@ -26,7 +26,7 @@
   <div class="container py-4">
     <div class="d-flex justify-content-between align-items-center mb-3">
       <h1 id="unitTitle" class="h5 m-0">Unit</h1>
-      <a href="home.html" class="btn btn-outline-secondary">← Back to Units</a>
+      <a href="/home/" class="btn btn-outline-secondary">← Back to Units</a>
     </div>
 
     <div id="hobartBlock" class="mb-4 d-none">
@@ -61,66 +61,57 @@
 
     <div id="noData" class="alert alert-warning d-none">
       No spreadsheet found. Please upload on
-      <a href="home.html" class="alert-link">home page</a> first.
+      <a href="/home/" class="alert-link">home page</a> first.
     </div>
 
-    <!-- Actions -->
     <div class="actions pt-3 d-flex justify-content-center gap-2">
       <button id="btnEdit" class="btn btn-danger px-5">EDIT</button>
-      <button id="btnSubmit" class="btn btn-primary px-5 d-none">
-        SUBMIT
-      </button>
+      <button id="btnSubmit" class="btn btn-primary px-5 d-none">SUBMIT</button>
     </div>
   </div>
 
   <script>
     /* ---------------- Auth / API helpers ---------------- */
     const API = {
-      eoiApplicants: "/api/eoi/applicants/",
+      eoiApplicants: "/api/eoi/applicants/",   // DRF needs trailing slash
       savePrefs: "/api/eoi/preferences/",
     };
 
-    function getAccessToken() { return localStorage.getItem("access"); }
-    function authHeaders(extra = {}) {
-      const h = { ...extra };
-      const t = getAccessToken();
-      if (t) h.Authorization = `Bearer ${t}`;
-      return h;
+    const getAccessToken = () => localStorage.getItem("access");
+    const authHeaders = (extra = {}) => {
+      const t = getAccessToken(); return t ? { ...extra, Authorization: `Bearer ${t}` } : extra;
+    };
+
+    async function apiGet(url) {
+      const r = await fetch(url, { headers: authHeaders(), credentials: "include" });
+      const text = await r.text(); let data; try { data = JSON.parse(text); } catch { }
+      if (r.status === 401) { location.href = "/"; throw new Error("Unauthorized"); }
+      if (!r.ok) throw (data?.detail || data?.error || text || `GET ${url} -> ${r.status}`);
+      return data ?? {};
     }
-    async function apiGet(path) {
-      const res = await fetch(path, { headers: authHeaders() });
-      if (res.status === 401) { location.href = "/"; throw new Error("Unauthorized"); }
-      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-      return res.json();
-    }
-    async function apiPostJSON(path, body) {
-      const res = await fetch(path, {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(body),
-      });
-      if (res.status === 401) { location.href = "/"; throw new Error("Unauthorized"); }
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || err.error || `Error ${res.status}`);
-      }
-      return res.json().catch(() => ({}));
+    async function apiPostJSON(url, body) {
+      const r = await fetch(url, { method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(body) });
+      const text = await r.text(); let data; try { data = JSON.parse(text); } catch { }
+      if (r.status === 401) { location.href = "/"; throw new Error("Unauthorized"); }
+      if (!r.ok) throw (data?.detail || data?.error || text || `POST ${url} -> ${r.status}`);
+      return data ?? {};
     }
 
-    // --- Query params (single source of truth used by page & details tab) ---
-    const QP = new URLSearchParams(location.search);
-    const UNIT_CODE = decodeURIComponent(QP.get("code") || "");
-    const UNIT_NAME_DISPLAY = decodeURIComponent(QP.get("name") || "");
-    const UNIT_TITLE = UNIT_NAME_DISPLAY
-      ? `${UNIT_CODE} – ${UNIT_NAME_DISPLAY}`
-      : (UNIT_CODE || "Unit");
+    /* ----------- Derive unit code from pretty path or query string ---------- */
+    const qs = new URLSearchParams(location.search);
+    const codeFromQS = qs.get("code") || "";
+    const codeFromPath = (() => {
+      const m = location.pathname.match(/^\/units\/([^\/]+)\/?$/);
+      return m ? decodeURIComponent(m[1]) : "";
+    })();
+    const UNIT_CODE = (codeFromQS || codeFromPath || "").toUpperCase();
+    const UNIT_NAME_DISPLAY = qs.get("name") || ""; // URLSearchParams already decodes
 
-    document.getElementById("unitTitle").textContent = UNIT_TITLE;
+    document.getElementById("unitTitle").textContent =
+      UNIT_NAME_DISPLAY ? `${UNIT_CODE} – ${UNIT_NAME_DISPLAY}` : (UNIT_CODE || "Unit");
 
-    // --- Storage keys ---
+    /* --------------------- State & elements --------------------- */
     const PREF_KEY = "eoi_prefs"; // { "<unitCode>|<email>": "3", ... }
-
-    // Page elements
     const hobartBlock = document.getElementById("hobartBlock");
     const launcBlock = document.getElementById("launcBlock");
     const otherBlock = document.getElementById("otherBlock");
@@ -137,28 +128,16 @@
     const EOI_BY_EMAIL = new Map();
 
     document.addEventListener("DOMContentLoaded", async () => {
-      const params = new URLSearchParams(location.search);
-      const unitCode = params.get("code") || "";
-      const unitName = decodeURIComponent(params.get("name") || unitCode);
-      const titleEl = document.getElementById("unitTitle");
-      if (titleEl) {
-        if (unitCode && unitName) {
-          titleEl.textContent = `${unitCode} – ${unitName}`;
-        } else {
-          titleEl.textContent = unitCode || unitName || "Unit";
-        }
-      }
-      const alertBox = document.getElementById("noData");
+      if (!getAccessToken()) { location.href = "/"; return; }
 
-      if (!unitCode) { alertBox.classList.remove("d-none"); return; }
+      const alertBox = document.getElementById("noData");
+      if (!UNIT_CODE) { alertBox.classList.remove("d-none"); return; }
 
       try {
-        // Fetch applicants directly (no /semesters/current/ call)
-        const data = await apiGet(`${API.eoiApplicants}?unit_code=${encodeURIComponent(unitCode)}`);
+        // fetch applicants (no alias needed if backend resolves current semester)
+        const data = await apiGet(`${API.eoiApplicants}?unit_code=${encodeURIComponent(UNIT_CODE)}`);
         const list = Array.isArray(data?.results) ? data.results : (Array.isArray(data) ? data : []);
-
-        const apiUnitId =
-          (list[0] && (list[0].unit || list[0].unit_id)) ? (list[0].unit || list[0].unit_id) : null;
+        const apiUnitId = (list[0] && (list[0].unit || list[0].unit_id)) ? (list[0].unit || list[0].unit_id) : null;
 
         const applicants = list.map(a => {
           const name =
@@ -169,7 +148,6 @@
           const you_are = a.tutor_current || a.status || "";
           const location = a.location_text || a.campus_name || (a.campus?.campus_name || a.campus || "");
           if (email) EOI_BY_EMAIL.set(email.toLowerCase(), a);
-
           return { name, email, you_are, location, preference: a.preference ?? "", _raw: a };
         });
 
@@ -179,9 +157,8 @@
           return;
         }
 
-        renderFromAPI(applicants, unitCode);
-        hookEditSubmit({ unitId: apiUnitId, codeForKey: unitCode });
-
+        renderFromAPI(applicants, UNIT_CODE);
+        hookEditSubmit({ unitId: apiUnitId, codeForKey: UNIT_CODE });
         alertBox.classList.add("d-none");
       } catch (e) {
         console.error(e);
@@ -189,7 +166,6 @@
         alertBox.classList.remove("d-none");
       }
     });
-
 
     function renderFromAPI(applicants, codeForKey) {
       const headerRow = ["Name", "Email", "Current Status", "Tutoring Location"];
@@ -214,8 +190,7 @@
 
       function buildSection(headEl, bodyEl, rows) {
         if (!rows.length) return;
-        headEl.textContent = "";
-        bodyEl.textContent = "";
+        headEl.textContent = ""; bodyEl.textContent = "";
 
         const trh = document.createElement("tr");
         const thPref = document.createElement("th"); thPref.textContent = "Preference";
@@ -272,6 +247,9 @@
     }
 
     function hookEditSubmit({ unitId = null, codeForKey = "" }) {
+      const btnEdit = document.getElementById("btnEdit");
+      const btnSubmit = document.getElementById("btnSubmit");
+
       btnEdit.addEventListener("click", () => {
         isEditing = true;
         btnEdit.classList.add("btn-secondary");
@@ -322,7 +300,6 @@
     function openDetailsWindow(o) {
       if (!o) { alert("No details available."); return; }
 
-      // Build "Applied unit" from the page header (code – name), fallback to API fields.
       const appliedUnit = UNIT_CODE
         ? `${UNIT_CODE}${UNIT_NAME_DISPLAY ? " — " + UNIT_NAME_DISPLAY : ""}`
         : (o.unit_code || "");
@@ -331,13 +308,13 @@
       const fmtBool = (v) => (v === true ? "Yes" : v === false ? "No" : "");
       const asList = (v) => Array.isArray(v) ? v.join(", ") : (v ?? "");
 
-      const coreLines = [
+      const core = [
         `<strong>Name:</strong> ${esc(o.applicant_name || o.tutor_name || "")}`,
         `<strong>Email:</strong> ${esc(o.applicant_email || o.tutor_email || o.email || "")}`,
         `<strong>Applied unit:</strong> ${esc(appliedUnit)}`,
         `<strong>Status:</strong> ${esc(o.status || "")}`,
         (o.preference ? `<strong>Preference:</strong> ${esc(o.preference)}` : "")
-      ].filter(Boolean);
+      ].filter(Boolean).map(x => `<div>${x}</div>`).join("");
 
       const extra = [
         ["Campus", o.campus_name || o.location_text],
@@ -355,53 +332,29 @@
         ["Remarks", o.remarks],
         ["Created at", o.created_at],
         ["Updated at", o.updated_at],
-      ];
-
-      const rows = extra
-        .filter(([_, v]) => v !== null && v !== undefined && String(v).trim() !== "")
+      ].filter(([, v]) => v != null && String(v).trim() !== "")
         .map(([k, v]) => {
           const val = (k.toLowerCase().includes("link") && v)
-            ? `<a href="${esc(v)}" target="_blank" rel="noopener">${esc(v)}</a>`
-            : esc(v);
+            ? `<a href="${esc(v)}" target="_blank" rel="noopener">${esc(v)}</a>` : esc(v);
           return `<tr><th style="white-space:nowrap;width:220px">${esc(k)}</th><td>${val}</td></tr>`;
-        })
-        .join("");
+        }).join("");
 
       const html = `
-        <!doctype html>
-        <html>
-          <head>
-            <meta charset="utf-8" />
-            <title>EOI Details</title>
-            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
-          </head>
-          <body class="p-3">
-            <div class="container">
-              <h2 class="h5 mb-3">EOI Details</h2>
-              <div class="mb-3">
-                ${coreLines.map(line => `<div>${line}</div>`).join("")}
-              </div>
-              <div class="table-responsive">
-                <table class="table table-sm table-bordered align-middle">
-                  <tbody>
-                    ${rows || `<tr><td colspan="2" class="text-muted">No additional information.</td></tr>`}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </body>
-        </html>
-      `;
-
-      // Open in a real new tab using a Blob URL
+        <!doctype html><html><head><meta charset="utf-8" />
+        <title>EOI Details</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+        </head><body class="p-3"><div class="container">
+          <h2 class="h5 mb-3">EOI Details</h2>
+          <div class="mb-3">${core}</div>
+          <div class="table-responsive"><table class="table table-sm table-bordered align-middle"><tbody>
+            ${extra || `<tr><td colspan="2" class="text-muted">No additional information.</td></tr>`}
+          </tbody></table></div>
+        </div></body></html>`;
       const blob = new Blob([html], { type: "text/html" });
       const url = URL.createObjectURL(blob);
       window.open(url, "_blank");
     }
-
   </script>
-
-
 </body>
 
 </html>
