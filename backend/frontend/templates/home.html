@@ -251,6 +251,27 @@
       }
     }
 
+    async function showTutorTimetable(me) {
+      // keep the welcome+logout bar visible
+      document.getElementById('adminSemesterTools')?.classList.add('d-none');
+      document.getElementById('unitsSection')?.classList.add('hidden');
+      document.getElementById('allocSection')?.classList.add('hidden');
+
+      const alias = await getCurrentAlias().catch(() => null) || '';
+      const name = (me.first_name || me.last_name)
+        ? `${me.first_name || ''} ${me.last_name || ''}`.trim()
+        : (me.username || me.email || 'Tutor');
+
+      // Just navigate to the pretty timetable page
+      const qs = new URLSearchParams({
+        alias,
+        name,
+        email: me.email || ''
+      }).toString();
+
+      // Either redirect, or embed. Redirect is simplest:
+      window.location.href = `/tutors/timetable/?${qs}`;
+    }
     // =========================
     // Admin tools visibility
     // =========================
@@ -280,30 +301,68 @@
     }
 
     // =================================
-    async function loadWelcome() {
-      if (!token()) return; // not logged in
+    async function loadWelcomeAndMe() {
+      // if not logged in, bounce
+      if (!token()) { window.location.href = "/"; return null; }
+
       try {
-        const res = await fetch('/api/accounts/profile/', {
+        const me = await fetch('/api/accounts/profile/', {
           headers: authHeaders(),
           credentials: 'include'
-        });
-        if (!res.ok) return;
-        const me = await res.json();
+        }).then(r => r.ok ? r.json() : Promise.reject());
 
-        // Name
-        const name =
-          (me.first_name || me.last_name) ? `${me.first_name || ''} ${me.last_name || ''}`.trim()
-            : (me.username || me.email || 'User');
+        // Welcome text
+        const name = (me.first_name || me.last_name)
+          ? `${me.first_name || ''} ${me.last_name || ''}`.trim()
+          : (me.username || me.email || 'User');
 
-        // Role(s) – your profile returns roles: [{ id, name }]
         const roles = Array.isArray(me?.roles) ? me.roles.map(r => r.name) : [];
-        const mainRole = roles[0] || (me.is_staff ? 'Admin' : 'User');
+        const mainRole = me.is_staff ? 'Admin'
+          : (roles[0] || 'User');
 
         document.getElementById('welcomeBox').textContent =
           `Welcome back, ${name} (${mainRole}),`;
-      } catch (_) { /* ignore */ }
+
+        return me;
+      } catch {
+        window.location.href = '/';
+        return null;
+      }
     }
 
+    // Show/hide the admin card based on role
+    function toggleAdminToolsFor(me) {
+      const card = document.getElementById('adminSemesterTools');
+      if (!card || !me) return;
+
+      const roles = Array.isArray(me?.roles) ? me.roles.map(r => r.name) : [];
+      const isAdminOrCoord = !!me.is_staff || roles.includes('Admin') || roles.includes('Coordinator');
+
+      // Only Admin/Coordinator may see semester + upload UI
+      card.classList.toggle('d-none', !isAdminOrCoord);
+    }
+
+    // Show/hide the admin card based on role
+    function toggleAdminToolsFor(me) {
+      const card = document.getElementById('adminSemesterTools');
+      if (!card || !me) return;
+
+      const roles = Array.isArray(me?.roles) ? me.roles.map(r => r.name) : [];
+      const isAdminOrCoord = !!me.is_staff || roles.includes('Admin') || roles.includes('Coordinator');
+
+      // Only Admin/Coordinator may see semester + upload UI
+      card.classList.toggle('d-none', !isAdminOrCoord);
+    }
+
+    // Users Management button (no extra fetch)
+    function showUsersMgmtIfAdmin(me) {
+      const btn = document.getElementById('btnUsersMgmt');
+      if (!btn || !me) return;
+
+      const roles = Array.isArray(me?.roles) ? me.roles.map(r => r.name) : [];
+      const isAdmin = !!me.is_staff || roles.includes('Admin');
+      if (isAdmin) btn.classList.remove('d-none'); else btn.classList.add('d-none');
+    }
     async function doLogout() {
       try {
         // Call backend (will 204)
@@ -622,34 +681,27 @@
       }
     }
 
-    // --- Show the Users Management button only for Admins ---
-    async function maybeShowUsersMgmt() {
-      try {
-        const res = await fetch('/api/accounts/profile/', {
-          headers: authHeaders(),
-          credentials: 'include'
-        });
-        if (!res.ok) return; // not logged in / unauthorized
-        const data = await res.json();
-        // roles structure from your UserProfileView: roles: [{ id, name }]
-        const roles = Array.isArray(data?.roles) ? data.roles.map(r => r.name) : [];
-        const isAdmin = !!data?.is_staff || roles.includes('Admin');
-        if (isAdmin) {
-          document.getElementById('btnUsersMgmt')?.classList.remove('d-none');
-        }
-      } catch (e) {
-        // ignore - server will still enforce perms
-      }
-    }
-
     // =========================
     // Init
     // =========================
     document.addEventListener("DOMContentLoaded", async () => {
-      if (!token()) return (window.location.href = "/"); // require login
-      await loadWelcome();
-      await maybeShowAdminTools();     // your existing function
-      await maybeShowUsersMgmt();      // function for Users Management button
+      const me = await loadWelcomeAndMe();
+      if (!me) return;
+
+      const roles = Array.isArray(me?.roles) ? me.roles.map(r => r.name) : [];
+      const isAdmin = !!me.is_staff || roles.includes('Admin');
+      const isCoord = roles.includes('Coordinator');
+      const isTutor = roles.includes('Tutor') && !isAdmin && !isCoord;
+
+      if (isTutor) {
+        // Tutors see ONLY their timetable
+        await showTutorTimetable(me);
+        return; // stop bootstrapping the admin UI
+      }
+
+      // Admin/Coordinator flow (the rest of your current page logic)
+      toggleAdminToolsFor(me);
+      showUsersMgmtIfAdmin(me);
       await loadSemesters();
       try {
         const alias = await getCurrentAlias();
