@@ -415,24 +415,6 @@
       } catch { return false; }
     }
 
-    async function proceedToAllocation() {
-      try {
-        // 1) Upload EOI workbook (already current by design)
-        await apiPostFile(API.upload(), fileInput.files[0]);
-
-        // 2) Finalize workbook (still in current alias)
-        const current = await apiGet(API.current()); // { alias: "sem_2023_s4", ... }
-        await apiPostJSON(API.finalize(current.alias), {});
-
-        // 3) Run allocation (again in current alias)
-        await apiPostJSON(API.runAllocation(current.alias), {});
-
-        // 4) Redirect to allocation details for the **current** alias
-        location.href = `/allocations/?alias=${encodeURIComponent(alias)}`;
-      } catch (err) {
-        alert(err.message || err);
-      }
-    }
     // =========================
     // EOI upload (unchanged UX) + local preview
     // =========================

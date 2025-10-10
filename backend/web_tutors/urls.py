@@ -51,6 +51,7 @@ urlpatterns = [
         path("units/", include("units.urls")),
         path("eoi/", include("eoi.urls")),
         path("timetable/", include("timetable.urls")),
+        path("allocation/", include("allocation.urls")),
         path("imports/", include("imports.urls")),
         path("dashboard/", include("dashboard.urls")),
     ])),
