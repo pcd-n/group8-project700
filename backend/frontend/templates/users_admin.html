@@ -110,27 +110,38 @@
             return fallback;
         }
 
-        async function getJSON(url) {
-            const res = await fetch(url, { headers: authHeaders(), credentials: 'include' });
-            if (!res.ok) {
-                let j = null; try { j = await res.json(); } catch { }
-                throw new Error(pickApiError(j, `${url} → ${res.status}`));
+        function pickApiError(payload, fallback = 'Request failed') {
+            if (!payload) return fallback;
+            if (typeof payload === 'string') return payload;
+            if (payload.detail) return String(payload.detail);
+            if (payload.error) return String(payload.error);
+            if (Array.isArray(payload)) return payload.join(' | ') || fallback;
+            if (typeof payload === 'object') {
+                const parts = [];
+                for (const [k, v] of Object.entries(payload)) {
+                    const msg = Array.isArray(v) ? v.join(', ') : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+                    parts.push(`${k}: ${msg}`);
+                }
+                return parts.join(' | ') || fallback;
             }
-            return res.json();
-        }
-        async function postJSON(url, body) {
-            const res = await fetch(url, { method: 'POST', headers: authHeaders(), credentials: 'include', body: JSON.stringify(body || {}) });
-            let j = null; try { j = await res.json(); } catch { }
-            if (!res.ok) throw new Error(pickApiError(j, `${url} → ${res.status}`));
-            return j ?? {};
-        }
-        async function putJSON(url, body) {
-            const res = await fetch(url, { method: 'PUT', headers: authHeaders(), credentials: 'include', body: JSON.stringify(body || {}) });
-            let j = null; try { j = await res.json(); } catch { }
-            if (!res.ok) throw new Error(pickApiError(j, `${url} → ${res.status}`));
-            return j ?? {};
+            return fallback;
         }
 
+        async function requestJSON(method, url, body) {
+            const res = await fetch(url, {
+                method,
+                headers: authHeaders(),
+                credentials: 'include',
+                body: body === undefined ? undefined : JSON.stringify(body)
+            });
+            let data = null; try { data = await res.json(); } catch { }
+            if (!res.ok) throw new Error(pickApiError(data, `${url} → ${res.status}`));
+            return data ?? {};
+        }
+
+        const getJSON = (url) => requestJSON('GET', url);
+        const postJSON = (url, body) => requestJSON('POST', url, body);
+        const putJSON = (url, body) => requestJSON('PUT', url, body);
         // ---- roles + rows ----
         let roles = [];
         let rows = [];
