@@ -36,7 +36,7 @@ class AllocationListView(generics.ListAPIView):
     List all allocations in a semester (optionally filter by ?year=&term=).
     """
     serializer_class = AllocationSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminOrCoordinator]
 
     def get_queryset(self):
         alias = _get_alias(self.request)
@@ -60,7 +60,7 @@ class AllocationListView(generics.ListAPIView):
         return qs
 
 class UnitsForAllocationView(APIView):
-    permission_classes = [IsAuthenticated, IsAdminOrCoordinator]
+    permission_classes = [IsAdminOrCoordinator]
 
     def get(self, request):
         alias = request.query_params.get("alias") or get_current_semester_alias()
@@ -118,7 +118,7 @@ class ManualAssignView(APIView):
     """
     Manually assign a tutor to a class slot.
     """
-    permission_classes = [IsAuthenticated, IsAdminOrCoordinator]
+    permission_classes = [IsAdminOrCoordinator]
 
     def post(self, request):
         alias = _get_alias(request)                                # <— NEW
@@ -149,7 +149,7 @@ class AutoAllocateView(APIView):
     Allocate tutors automatically based on EOI preference values
     within the selected semester DB (alias).
     """
-    permission_classes = [IsAuthenticated, IsAdminOrCoordinator]
+    permission_classes = [IsAdminOrCoordinator]
 
     def post(self, request):
         alias = request.GET.get("alias") or request.data.get("alias") or _get_alias(request)
@@ -221,7 +221,7 @@ class ApproveAllocationsView(APIView):
     """
     Mark all allocations in a semester as approved and publish.
     """
-    permission_classes = [IsAuthenticated, IsAdminOrCoordinator]
+    permission_classes = [IsAdminOrCoordinator]
 
     def post(self, request):
         alias = request.GET.get("alias") or request.data.get("alias") or _get_alias(request)
@@ -264,7 +264,7 @@ class TutorTimetableView(APIView):
         
 class SessionsByUnitCode(APIView):
     """Alias-aware sessions for one unit code; optional campus filter."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminOrCoordinator]
 
     def get(self, request):
         alias = _get_alias(request)
@@ -312,7 +312,7 @@ class SessionsByUnitCode(APIView):
 
 class UnitSessionsView(APIView):
     """Return all sessions for one unit code (optionally filtered by campus)."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminOrCoordinator]
 
     def get(self, request, unit_code):
         alias = _get_alias(request)
@@ -351,7 +351,7 @@ class SuggestTutorsView(APIView):
     Suggest tutors for a unit (and campus) ordered by EOI preference asc.
     Query: unit_code=KIT101&campus=SB&q=pha
     """
-    permission_classes = [IsAuthenticated, IsAdminOrCoordinator]
+    permission_classes = [IsAdminOrCoordinator]
 
     def get(self, request):
         alias = _get_alias(request)
@@ -397,7 +397,7 @@ class SuggestTutorsView(APIView):
 
 
 class AssignTutorView(APIView):
-    permission_classes = [IsAuthenticated, IsAdminOrCoordinator]
+    permission_classes = [IsAdminOrCoordinator]
 
     def post(self, request):
         alias = _get_alias(request)
@@ -451,7 +451,7 @@ class RunAllocationView(APIView):
     """
     Runs a simple automatic allocation for the current semester DB.
     """
-    permission_classes = [IsAuthenticated, IsAdminOrCoordinator]
+    permission_classes = [IsAdminOrCoordinator]
 
     def post(self, request):
         alias = request.GET.get("alias") or request.data.get("alias") or _get_alias(request)

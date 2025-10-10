@@ -18,13 +18,13 @@ from .serializers import EoiAppSerializer
 from semesters.router import get_current_semester_alias
 from semesters.services import ensure_migrated
 import logging
-
+from users.permissions import IsAdminOrCoordinator
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
 class EOIUploadView(APIView):
     parser_classes = [MultiPartParser, FormParser]
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminOrCoordinator]
 
     def post(self, request, *args, **kwargs):
         f = request.FILES.get("file")

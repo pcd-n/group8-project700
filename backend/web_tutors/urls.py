@@ -1,48 +1,45 @@
-# backend/web_tutors/urls.py
 from django.contrib import admin
-from django.urls import include, path, re_path
+from django.urls import include, path
 from django.http import JsonResponse
 from django.views.generic import TemplateView
 from django.conf import settings
 from django.conf.urls.static import static
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
 from users.views import roles_list
+from .views_pages import (
+    unit_details_page,
+    allocation_details_page,
+    allocation_units_page,
+    users_admin_page,
+)
 
 def health_view(request):
     return JsonResponse({"status": "ok"})
 
 urlpatterns = [
-    # FRONTEND PAGES
+    # FRONTEND
     path("", TemplateView.as_view(template_name="index.html"), name="index"),
     path("home/", TemplateView.as_view(template_name="home.html"), name="home"),
 
-    # Pretty Unit + Allocation pages
-    # e.g. /units/KIT101/ or /units/KIT101/?name=Programming%20Fundamentals
-    path("api/accounts/roles/", roles_list, name="roles_list"),
-    path("units/<slug:code>/", TemplateView.as_view(template_name="unitdetails.html"), name="unit_details"),
-    path("allocations/<int:id>/", TemplateView.as_view(template_name="allocationdetails.html"), name="alloc_details"),
+    # Pretty pages with role guard
+    path("units/<slug:code>/", unit_details_page, name="unit_details"),
+    path("allocations/<int:id>/", allocation_details_page, name="alloc_details"),
+    path("allocations/", allocation_units_page, name="allocation_units"),
 
-    # (Optional legacy) keep these only while migrating old links
-    path("unitdetails/", TemplateView.as_view(template_name="unitdetails.html")),          # legacy querystring version
-    path("allocations/", TemplateView.as_view(template_name="allocationunits.html"), name="allocation_units"),
-    path("allocationdetails/", TemplateView.as_view(template_name="allocationdetails.html"), name="allocation_details"),  # querystring style
+    # (legacy keepers)
+    path("unitdetails/", unit_details_page),            # legacy querystring version
+    path("allocationdetails/", allocation_details_page),
+    # Tutors' timetable page can remain public to authenticated users:
+    path("tutors/timetable/", TemplateView.as_view(template_name="tutortimetable.html"),
+         name="tutor_timetable"),
 
-    path("tutors/timetable/", TemplateView.as_view(template_name="tutortimetable.html"), name="tutor_timetable"),
-
-    # HEALTH
-    path("health/", health_view, name="health"),
-
-    # DJANGO ADMIN
+    # ADMIN & ACCOUNTS
     path("admin/", admin.site.urls),
-    
-    # Accounts / Users (API + pretty Users page)
     path("api/accounts/", include(('users.urls', 'accounts'), namespace='accounts')),
     path("api/accounts/roles/", roles_list, name="roles_list"),
-    
-    # Pretty management page for Users (now served by Django instead of Apache 404)
-    path("manage/users",  TemplateView.as_view(template_name="users_admin.html"), name="users_admin"),
-    path("manage/users/", TemplateView.as_view(template_name="users_admin.html")),
-    
+    path("manage/users", users_admin_page, name="users_admin"),
+    path("manage/users/", users_admin_page),
+
     # API DOCS
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
@@ -59,7 +56,6 @@ urlpatterns = [
         path("dashboard/", include("dashboard.urls")),
     ])),
 
-    # Allauth (if you use it)
     path("accounts/", include("allauth.urls")),
 ]
 
