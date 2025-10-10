@@ -1,6 +1,5 @@
 #allocation/urls.py
 from django.urls import path
-from . import views
 from .views import (
     AllocationListView,
     ManualAssignView,
@@ -27,5 +26,4 @@ urlpatterns = [
     path("unit/<str:unit_code>/sessions/", UnitSessionsView.as_view()),   # GET ?alias=&campus=
     path("suggest_tutors/", SuggestTutorsView.as_view()),                 # GET ?alias=&unit_code=&campus=&q=
     path("assign/", AssignTutorView.as_view(), name="allocation-assign"),
-    path("finalize/", views.finalize_allocation),
 ]
