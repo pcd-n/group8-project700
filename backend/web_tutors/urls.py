@@ -26,6 +26,8 @@ urlpatterns = [
     path("allocations/", TemplateView.as_view(template_name="allocationunits.html"), name="allocation_units"),
     path("allocationdetails/", TemplateView.as_view(template_name="allocationdetails.html"), name="allocation_details"),  # querystring style
 
+    path("tutors/timetable/", TemplateView.as_view(template_name="tutortimetable.html"), name="tutor_timetable"),
+
     # HEALTH
     path("health/", health_view, name="health"),
 
