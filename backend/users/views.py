@@ -5,6 +5,8 @@ from rest_framework import status, generics, serializers
 from rest_framework.permissions import AllowAny, IsAuthenticated, BasePermission
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
+from django.db import IntegrityError
+from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
 from rest_framework.decorators import api_view, permission_classes
 from django.contrib.auth import authenticate
@@ -84,15 +86,31 @@ class LoginView(generics.CreateAPIView):
         }, status=status.HTTP_200_OK)
 
 class RegisterView(generics.CreateAPIView):
-    permission_classes = [IsAdminRole]   # Admin only
+    permission_classes = [IsAdminRole]
     serializer_class = UserCreateSerializer
-    
+
     def create(self, request, *args, **kwargs):
-        ser = self.get_serializer(data=request.data)
-        ser.is_valid(raise_exception=True)
-        user = ser.save()
-        tokens = User.objects.get_tokens_for_user(user)
-        return Response({'user': UserSerializer(user).data, 'tokens': tokens}, status=status.HTTP_201_CREATED)
+        s = self.get_serializer(data=request.data)
+        s.is_valid(raise_exception=True)
+
+        try:
+            user = s.save()  # your serializer already saves to DEFAULT_DB
+        except IntegrityError as e:
+            # Map integrity errors (e.g. duplicate email/username) to 400
+            # If you want clearer messages, you can check the message text here.
+            raise ValidationError({"non_field_errors": ["Integrity error: " + str(e)]})
+
+        # (optional) return JWTs like LoginView; fine if frontend ignores these
+        try:
+            refresh = RefreshToken.for_user(user)
+            tokens = {"access": str(refresh.access_token), "refresh": str(refresh)}
+        except Exception:
+            tokens = None
+
+        return Response(
+            {"user": UserSerializer(user).data, "tokens": tokens},
+            status=status.HTTP_201_CREATED
+        )
     
 class UserUpdatePermission(BasePermission):
     """Custom permission for user updates - Admin/Coordinator can update any user, users can update themselves."""
