@@ -6,32 +6,45 @@ from django.views.generic import TemplateView
 from django.conf import settings
 from django.conf.urls.static import static
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
+from users.views import roles_list
 
 def health_view(request):
     return JsonResponse({"status": "ok"})
 
 urlpatterns = [
     # FRONTEND PAGES
-    path("", TemplateView.as_view(template_name="index.html")),
-    path("home/", TemplateView.as_view(template_name="home.html")),
-    path("unitdetails/", TemplateView.as_view(template_name="unitdetails.html"), name="unit_details"),
+    path("", TemplateView.as_view(template_name="index.html"), name="index"),
+    path("home/", TemplateView.as_view(template_name="home.html"), name="home"),
+
+    # Pretty Unit + Allocation pages
+    # e.g. /units/KIT101/ or /units/KIT101/?name=Programming%20Fundamentals
+    path("units/<slug:code>/", TemplateView.as_view(template_name="unitdetails.html"), name="unit_details"),
     path("allocations/<int:id>/", TemplateView.as_view(template_name="allocationdetails.html"), name="alloc_details"),
-    path("allocationdetails.html", TemplateView.as_view(template_name="allocationdetails.html")),
-    
-    # HEALTH / STATUS (moved off '/')
+
+    # (Optional legacy) keep these only while migrating old links
+    path("unitdetails/", TemplateView.as_view(template_name="unitdetails.html")),          # legacy querystring version
+    path("allocationdetails.html", TemplateView.as_view(template_name="allocationdetails.html")),  # legacy
+
+    # HEALTH
     path("health/", health_view, name="health"),
 
-    # ADMIN
+    # DJANGO ADMIN
     path("admin/", admin.site.urls),
-    path('api/accounts/', include(('users.urls', 'accounts'), namespace='accounts')),
-    path("admin/users", TemplateView.as_view(template_name="users_admin.html"), name="users_admin"),
+
+    # Accounts / Users (API + pretty Users page)
+    path("api/accounts/", include(('users.urls', 'accounts'), namespace='accounts')),
+    path("api/accounts/roles/", roles_list, name="roles_list"),
     
+    # Pretty management page for Users (now served by Django instead of Apache 404)
+    path("admin/users", TemplateView.as_view(template_name="users_admin.html"), name="users_admin"),
+    path("admin/users/", TemplateView.as_view(template_name="users_admin.html")),  # accept trailing slash too
+
     # API DOCS
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
     path("api/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
 
-    # API
+    # APP APIs
     path("api/semesters/", include("semesters.urls")),
     path("api/", include([
         path("units/", include("units.urls")),
@@ -42,6 +55,7 @@ urlpatterns = [
         path("dashboard/", include("dashboard.urls")),
     ])),
 
+    # Allauth (if you use it)
     path("accounts/", include("allauth.urls")),
 ]
 

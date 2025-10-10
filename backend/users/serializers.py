@@ -107,9 +107,10 @@ class UserUpdateSerializer(serializers.ModelSerializer):
 # --- RBAC + objects on DEFAULT_DB --------------------------------------------
 
 class RoleSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(source='role_name', read_only=True)
     class Meta:
         model = Role
-        fields = ['id', 'role_name', 'description', 'created_at', 'updated_at']
+        fields = ['id', 'role_name', 'name', 'description', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
 
     def validate_role_name(self, value):

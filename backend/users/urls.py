@@ -13,6 +13,7 @@ urlpatterns = [
     # =====================================================
     path('login/', views.LoginView.as_view(), name='login'),
     path('register/', views.RegisterView.as_view(), name='register'),
+    path('logout/', views.logout_view, name='accounts_logout'),
     
     # JWT token endpoints (alternative to custom login)
     path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),

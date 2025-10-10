@@ -61,6 +61,13 @@
 </head>
 
 <body>
+  <!-- Top bar: welcome + logout -->
+  <div class="container py-2">
+    <div class="d-flex align-items-center justify-content-between">
+      <div id="welcomeBox" class="small text-muted"></div>
+      <button id="btnLogout" class="btn btn-outline-danger btn-sm">Logout</button>
+    </div>
+  </div>
   <div class="container hero">
     <div>
       <h1 class="h5 fw-semibold mb-4">Web Based Tutor Allocation System</h1>
@@ -269,6 +276,48 @@
       }
       adminCard.classList.remove("d-none");
     }
+
+    // =================================
+    async function loadWelcome() {
+      if (!token()) return; // not logged in
+      try {
+        const res = await fetch('/api/accounts/profile/', {
+          headers: authHeaders(),
+          credentials: 'include'
+        });
+        if (!res.ok) return;
+        const me = await res.json();
+
+        // Name
+        const name =
+          (me.first_name || me.last_name) ? `${me.first_name || ''} ${me.last_name || ''}`.trim()
+            : (me.username || me.email || 'User');
+
+        // Role(s) – your profile returns roles: [{ id, name }]
+        const roles = Array.isArray(me?.roles) ? me.roles.map(r => r.name) : [];
+        const mainRole = roles[0] || (me.is_staff ? 'Admin' : 'User');
+
+        document.getElementById('welcomeBox').textContent =
+          `Welcome, ${name} (${mainRole})`;
+      } catch (_) { /* ignore */ }
+    }
+
+    async function doLogout() {
+      try {
+        // Call backend (will 204)
+        await fetch('/api/accounts/logout/', {
+          method: 'POST',
+          headers: authHeaders(),
+          credentials: 'include'
+        });
+      } catch (_) { /* ignore errors */ }
+      // Clear local client auth and bounce to login
+      localStorage.removeItem('access');
+      localStorage.removeItem('refresh');
+      window.location.href = '/';
+    }
+
+    document.getElementById('btnLogout').addEventListener('click', doLogout);
 
     // =========================
     // Semester UI
@@ -614,6 +663,7 @@
     // =========================
     document.addEventListener("DOMContentLoaded", async () => {
       if (!token()) return (window.location.href = "/"); // require login
+      await loadWelcome();
       await maybeShowAdminTools();     // your existing function
       await maybeShowUsersMgmt();      // function for Users Management button
       await loadSemesters();

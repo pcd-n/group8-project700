@@ -6,6 +6,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated, BasePermission
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.views import APIView
+from rest_framework.decorators import api_view, permission_classes
 from django.contrib.auth import authenticate
 from django.db import transaction
 from drf_spectacular.utils import extend_schema, OpenApiExample
@@ -27,6 +28,21 @@ DEFAULT_DB = "default"
 console = Console()
 logger = logging.getLogger(__name__)
 
+@api_view(["GET"])
+@permission_classes([IsAdminRole])
+def roles_list(request):
+    roles = Role.objects.using(DEFAULT_DB).all().order_by("role_name")
+    data = RoleSerializer(roles, many=True).data
+    return Response(data) 
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def logout_view(request):
+    from django.contrib.auth import logout as django_logout
+    django_logout(request)
+    resp = Response(status=204)
+    resp.delete_cookie('access'); resp.delete_cookie('refresh')
+    return resp
 
 class LoginSerializer(serializers.Serializer):
     username = serializers.CharField(help_text="User's username")
@@ -113,7 +129,7 @@ class UserUpdateView(APIView):
         request=UserUpdateSerializer,
         responses={200: UserUpdateSerializer},
         description="Update user information",
-        operation_id="user_update_self" if not "user_id" else "user_update_by_id",
+        operation_id="user_update", 
         examples=[
             OpenApiExample(
                 'User Update Example',
@@ -126,25 +142,19 @@ class UserUpdateView(APIView):
         ]
     )
     def put(self, request, user_id=None):
-        """Handle single user update."""
-        # Allow users to update their own profile or staff to update any user
-        if user_id:
-            if not request.user.is_staff and request.user.id != user_id:
-                return Response(
-                    {'error': 'Permission denied'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
+        """Update a user (self; or Admin/Coordinator can update others)."""
+        if user_id is not None:
             try:
                 user = User.objects.using(DEFAULT_DB).get(id=user_id)
-                data = request.data or {}
-                if 'note' in data and not (request.user.is_staff or request.user.has_role('Admin')):
-                    return Response({'error': 'Only Admin can set notes'}, status=status.HTTP_403_FORBIDDEN)
-
             except User.DoesNotExist:
-                return Response(
-                    {'error': 'User not found'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
+                return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+            # Enforce object-level permission policy
+            self.check_object_permissions(request, user)
+            # Only Admin/staff can set 'note'
+            if 'note' in (request.data or {}) and not (
+                request.user.is_staff or request.user.has_role('Admin')
+            ):
+                return Response({'error': 'Only Admin can set notes'}, status=status.HTTP_403_FORBIDDEN)
         else:
             user = request.user
         
@@ -540,7 +550,8 @@ class UserRolesView(APIView):
                     disabled_roles.append(assignment.role.role_name)
                 
                 console.print(f"[yellow] Disabled roles for {user.email}: {', '.join(disabled_roles)}[/yellow]")
-                
+                return Response(status=status.HTTP_204_NO_CONTENT)                
+
         except User.DoesNotExist:
             return Response(
                 {'error': 'User not found'},
