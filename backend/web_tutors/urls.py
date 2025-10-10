@@ -37,9 +37,9 @@ urlpatterns = [
     path("api/accounts/roles/", roles_list, name="roles_list"),
     
     # Pretty management page for Users (now served by Django instead of Apache 404)
-    path("admin/users",  TemplateView.as_view(template_name="users_admin.html"), name="users_admin"),
-    path("admin/users/", TemplateView.as_view(template_name="users_admin.html")),  # accept trailing slash
-
+    path("manage/users",  TemplateView.as_view(template_name="users_admin.html"), name="users_admin"),
+    path("manage/users/", TemplateView.as_view(template_name="users_admin.html")),
+    
     # API DOCS
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),

@@ -86,7 +86,7 @@
             profile: '/api/accounts/profile/'
         };
 
-        const token = () => localStorage.getItem('access'); // same key as your home.html
+        const token = () => localStorage.getItem('access');
         const authHeaders = (extra = {}) => token()
             ? ({ ...extra, Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' })
             : ({ ...extra, 'Content-Type': 'application/json' });
