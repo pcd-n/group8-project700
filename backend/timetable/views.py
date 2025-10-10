@@ -16,20 +16,25 @@ def sessions_list(request):
     Return timetable sessions for alias, optionally filtered by unit_code & campus.
     Safe across old semester DBs that don't have 'notes' yet.
     """
-    alias = request.GET.get("alias") or get_current_semester_alias()
-    unit_code = request.GET.get("unit_code")
-    campus = request.GET.get("campus")
+    alias       = request.GET.get("alias") or get_current_semester_alias()
+    unit_code   = request.GET.get("unit_code")
+    campus      = request.GET.get("campus")
+    tutor_email = request.GET.get("tutor_email") or request.GET.get("email")
+    tutor_id    = request.GET.get("tutor_id")
 
     with force_write_alias(alias):
-        qs = TimeTable.objects.select_related(
-            "unit_course__unit", "campus", "tutor_user", "master_class"
+        qs = TimeTable.objects.using(alias).select_related(
+             "unit_course__unit", "campus", "tutor_user", "master_class"
         )
 
         if unit_code:
             qs = qs.filter(unit_course__unit__unit_code__iexact=unit_code)
         if campus:
             qs = qs.filter(campus__campus_name__iexact=campus)
-
+        if tutor_email:
+            qs = qs.filter(tutor_user__email__iexact=tutor_email)
+        if tutor_id:
+            qs = qs.filter(tutor_user_id=tutor_id)
         rows = []
         for t in qs:
             # duration

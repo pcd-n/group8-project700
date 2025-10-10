@@ -3,6 +3,7 @@ from rest_framework import serializers
 from .models import EoiApp, MasterEoI, TutorsCourses, TutorSkills, TutorSupervisors
 
 class EoiAppSerializer(serializers.ModelSerializer):
+    unit_id   = serializers.IntegerField(source="unit.unit_id", read_only=True)
     unit_code = serializers.CharField(source="unit.unit_code", read_only=True)
     unit_name = serializers.CharField(source="unit.unit_name", read_only=True)
     campus_name = serializers.CharField(source="campus.campus_name", read_only=True)
@@ -30,7 +31,7 @@ class EoiAppSerializer(serializers.ModelSerializer):
             # identity
             "scd_id", "eoi_app_id", "is_current", "status", "remarks",
             # linkage
-            "unit_code", "unit_name", "campus_name",
+            "unit_id", "unit_code", "unit_name", "campus_name",
             "user_id", "user_username", "user_name", "user_email",
             # what the page displays
             "preference", "availability", "tutor_current", "tutor_email", "tutor_name",
