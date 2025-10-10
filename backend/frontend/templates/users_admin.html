@@ -205,8 +205,9 @@
             const preview = (r.user_note || '').trim();
             const previewShort = preview ? preview.slice(0, 40) + (preview.length > 40 ? '…' : '') : '—';
 
-            const list = asArrayMaybePaginated(roles);
-            const roleOpts = roles.map(opt => {
+            // Normalize + filter roles (avoid roles.map crash and hide unsupported roles)
+            const list = allowedRoles(asArrayMaybePaginated(roles));
+            const roleOpts = list.map(opt => {
                 const sel = (opt.role_name === r.role_name) ? 'selected' : '';
                 return `<option value="${opt.role_name}" ${sel}>${opt.role_name}</option>`;
             }).join('');
@@ -230,6 +231,7 @@
             </td>
             </tr>`;
         }
+
 
 
         function escapeHtml(s) {
