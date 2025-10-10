@@ -55,7 +55,7 @@
     <div class="container py-4">
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h1 id="ttTitle" class="h5 m-0">Timetable: —</h1>
-            <a id="backLink" href="allocationunits.html" class="btn btn-outline-secondary">← Back</a>
+            <a id="backLink" href="/allocations/" class="btn btn-outline-secondary">← Back</a>
         </div>
         <div id="gridWrap" class="table-responsive"></div>
         <div id="empty" class="alert alert-warning d-none mt-3">No assigned classes for this tutor.</div>
@@ -69,7 +69,7 @@
         const tutorEmail = decodeURIComponent(qs.get("email") || "");
 
         document.getElementById("ttTitle").textContent = tutorName ? `Timetable: ${tutorName}` : "Timetable";
-        document.getElementById("backLink").href = `allocationunits.html?alias=${encodeURIComponent(alias)}`;
+        document.getElementById("backLink").href = `/allocations/?alias=${encodeURIComponent(alias)}`;
 
         const token = () => localStorage.getItem("access");
         const authHeaders = (extra = {}) => token() ? ({ ...extra, Authorization: `Bearer ${token()}` }) : extra;

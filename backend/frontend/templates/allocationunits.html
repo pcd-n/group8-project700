@@ -108,7 +108,7 @@
             const alias = await resolveAlias();
             document.getElementById("aliasTag").textContent = `Semester: ${alias}`;
             const backBtn = document.getElementById("backBtn");
-            if (backBtn) backBtn.href = `/home.html?alias=${encodeURIComponent(alias)}`;
+            if (backBtn) backBtn.href = `/home/?alias=${encodeURIComponent(alias)}`;
 
             // NEW: use allocation/units (alias-aware) instead of timetable/sessions
             const rows = await apiGet(`/allocation/units/?alias=${encodeURIComponent(alias)}`);
@@ -121,13 +121,13 @@
             }
 
             tbody.innerHTML = rows.map(u => {
-                const url = `allocationdetails.html?alias=${encodeURIComponent(alias)}&code=${encodeURIComponent(u.unit_code)}&campus=${encodeURIComponent(u.campus)}&name=${encodeURIComponent(u.unit_name || "")}`;
+                const url = `/allocationdetails/?alias=${encodeURIComponent(alias)}&code=${encodeURIComponent(u.unit_code)}&campus=${encodeURIComponent(u.campus)}&name=${encodeURIComponent(u.unit_name || "")}`;
 
                 // tutors already aggregated server-side
                 const tutors = Array.isArray(u.tutors) ? u.tutors : [];
                 const tutorHtml = tutors.length
                     ? tutors.map(t => {
-                        const ttUrl = `tutortimetable.html?alias=${encodeURIComponent(alias)}&name=${encodeURIComponent(t.name)}${t.email ? `&email=${encodeURIComponent(t.email)}` : ""}`;
+                        const ttUrl = `/tutors/timetable/?alias=${encodeURIComponent(alias)}&name=${encodeURIComponent(t.name)}${t.email ? `&email=${encodeURIComponent(t.email)}` : ""}`;
                         return `<a class="unitlink" href="${ttUrl}">${t.name}</a>`;
                     }).join(", ")
                     : `<span class="text-muted">—</span>`;

@@ -92,7 +92,7 @@
 
     document.addEventListener("DOMContentLoaded", () => {
       const backBtn = document.getElementById("backBtn");
-      backBtn.href = `allocationunits.html?alias=${encodeURIComponent(alias)}`;
+      backBtn.href = `/allocations/?alias=${encodeURIComponent(alias)}`;
       document.getElementById("title").textContent = (code && unitName) ? `${code} – ${unitName}` : (code || unitName || "Unit");
     });
 
@@ -271,7 +271,7 @@
         }
 
         // reload page to reflect current state
-        location.href = `/allocationdetails.html?alias=${encodeURIComponent(alias)}&code=${encodeURIComponent(code)}&campus=${encodeURIComponent(campus)}&name=${encodeURIComponent(unitName)}`;
+        location.href = `/allocationdetails/?alias=${encodeURIComponent(alias)}&code=${encodeURIComponent(code)}&campus=${encodeURIComponent(campus)}&name=${encodeURIComponent(unitName)}`;
       });
     }
   </script>

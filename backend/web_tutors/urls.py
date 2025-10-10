@@ -23,7 +23,8 @@ urlpatterns = [
 
     # (Optional legacy) keep these only while migrating old links
     path("unitdetails/", TemplateView.as_view(template_name="unitdetails.html")),          # legacy querystring version
-    path("allocationdetails.html", TemplateView.as_view(template_name="allocationdetails.html")),  # legacy
+    path("allocations/", TemplateView.as_view(template_name="allocationunits.html"), name="allocation_units"),
+    path("allocationdetails/", TemplateView.as_view(template_name="allocationdetails.html"), name="allocation_details"),  # querystring style
 
     # HEALTH
     path("health/", health_view, name="health"),
@@ -36,8 +37,8 @@ urlpatterns = [
     path("api/accounts/roles/", roles_list, name="roles_list"),
     
     # Pretty management page for Users (now served by Django instead of Apache 404)
-    path("admin/users", TemplateView.as_view(template_name="users_admin.html"), name="users_admin"),
-    path("admin/users/", TemplateView.as_view(template_name="users_admin.html")),  # accept trailing slash too
+    path("admin/users",  TemplateView.as_view(template_name="users_admin.html"), name="users_admin"),
+    path("admin/users/", TemplateView.as_view(template_name="users_admin.html")),  # accept trailing slash
 
     # API DOCS
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
@@ -50,7 +51,6 @@ urlpatterns = [
         path("units/", include("units.urls")),
         path("eoi/", include("eoi.urls")),
         path("timetable/", include("timetable.urls")),
-        path("allocation/", include("allocation.urls")),
         path("imports/", include("imports.urls")),
         path("dashboard/", include("dashboard.urls")),
     ])),
