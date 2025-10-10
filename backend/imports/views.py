@@ -97,52 +97,41 @@ class UploadImportView(APIView):
         
 class ImportStatusView(APIView):
     """
-    Returns whether the active/viewed semester (alias) already has data.
-    Also returns last uploaded filenames (from UploadJob on default DB).
+    Report whether a semester DB already has EOI data and/or class sessions,
+    and return filenames/timestamps of the most recent uploads.
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        # Use explicit ?alias=... if provided; otherwise the active/current semester
-        alias = request.query_params.get("alias") or get_active_semester_alias(request)
+        alias = request.query_params.get("alias") or get_current_semester_alias()
         if not alias or alias == "default":
-            return Response({"detail": "No semester alias."}, status=400)
+            return Response({"detail": "No semester alias provided."}, status=400)
 
-        # authoritative checks against the semester DB
-        with force_write_alias(alias):
-            has_eoi = EoiApp.objects.using(alias).exists()
-            has_sessions = TimeTable.objects.using(alias).exists()
+        # Presence flags (in the semester DB)
+        has_eoi = EoiApp.objects.using(alias).exists()
+        has_sessions = TimeTable.objects.using(alias).exists()
 
-        # last uploads are recorded on the default DB
-        last_eoi = (UploadJob.objects
-                    .filter(import_type__iexact="eoi")
-                    .order_by("-created_at")
-                    .first())
-        last_alloc = (UploadJob.objects
-                      .filter(import_type__in=["tutorial_allocations", "allocations"])
-                      .order_by("-created_at")
-                      .first())
-        last_master = (UploadJob.objects
-                       .filter(import_type__in=["master_classes", "master_class_list"])
-                       .order_by("-created_at")
-                       .first())
-
-        def _job_meta(j):
-            if not j:
+        # Upload metadata is stored in default DB (UploadJob)
+        def last_job(import_type):
+            job = (
+                UploadJob.objects
+                .filter(import_type=import_type)
+                .order_by("-created_at")
+                .first()
+            )
+            if not job:
                 return None
             return {
-                "filename": getattr(j.file, "name", ""),
-                "finished_at": j.finished_at,
-                "ok": j.ok,
-                "rows_ok": j.rows_ok,
-                "rows_error": j.rows_error,
+                "filename": getattr(job.file, "name", "") or "",
+                "uploaded_at": job.created_at,
+                "created_by": getattr(job.created_by, "email", None),
             }
 
-        return Response({
+        data = {
             "alias": alias,
             "has_eoi": has_eoi,
             "has_sessions": has_sessions,
-            "last_eoi": _job_meta(last_eoi),
-            "last_allocations": _job_meta(last_alloc),
-            "last_master_classes": _job_meta(last_master),
-        }, status=200)
+            "last_eoi": last_job("eoi"),
+            "last_master_classes": last_job("master_class_list"),
+        }
+        return Response(data, status=200)
