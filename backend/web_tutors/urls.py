@@ -18,6 +18,7 @@ urlpatterns = [
 
     # Pretty Unit + Allocation pages
     # e.g. /units/KIT101/ or /units/KIT101/?name=Programming%20Fundamentals
+    path("api/accounts/roles/", roles_list, name="roles_list"),
     path("units/<slug:code>/", TemplateView.as_view(template_name="unitdetails.html"), name="unit_details"),
     path("allocations/<int:id>/", TemplateView.as_view(template_name="allocationdetails.html"), name="alloc_details"),
 
@@ -33,7 +34,7 @@ urlpatterns = [
 
     # DJANGO ADMIN
     path("admin/", admin.site.urls),
-
+    
     # Accounts / Users (API + pretty Users page)
     path("api/accounts/", include(('users.urls', 'accounts'), namespace='accounts')),
     path("api/accounts/roles/", roles_list, name="roles_list"),

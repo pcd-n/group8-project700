@@ -122,14 +122,19 @@
         let rows = []; // UserRolesSerializer items
 
         // ========= load & render =========
+        function asArrayMaybePaginated(x) {
+            if (Array.isArray(x)) return x;
+            if (x && Array.isArray(x.results)) return x.results;
+            return [];
+        }
         async function loadAll() {
             try {
                 const [r, u] = await Promise.all([
                     getJSON(API.roles),
                     getJSON(API.listUserRoles)
                 ]);
-                roles = r;
-                rows = u;
+                roles = asArrayMaybePaginated(r);   // <-- tolerate pagination
+                rows = asArrayMaybePaginated(u);   // (not strictly needed, but safe)
                 renderCreateRoleOptions();
                 renderGroups();
             } catch (e) {
@@ -139,9 +144,9 @@
 
         function renderCreateRoleOptions() {
             const select = document.getElementById('cuRole');
-            select.innerHTML = roles.map(r => `<option value="${r.role_name}">${r.role_name}</option>`).join('');
-            // default to Tutor if exists
-            const tutor = roles.find(r => r.role_name === 'Tutor');
+            const list = asArrayMaybePaginated(roles);       // <-- guard here too
+            select.innerHTML = list.map(r => `<option value="${r.role_name}">${r.role_name}</option>`).join('');
+            const tutor = list.find(r => r.role_name === 'Tutor');
             if (tutor) select.value = 'Tutor';
         }
 
@@ -194,6 +199,7 @@
             const preview = (r.user_note || '').trim();
             const previewShort = preview ? preview.slice(0, 40) + (preview.length > 40 ? '…' : '') : '—';
 
+            const list = asArrayMaybePaginated(roles);
             const roleOpts = roles.map(opt => {
                 const sel = (opt.role_name === r.role_name) ? 'selected' : '';
                 return `<option value="${opt.role_name}" ${sel}>${opt.role_name}</option>`;
