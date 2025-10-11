@@ -81,7 +81,7 @@ class SemesterCurrentView(APIView):
     Return the active alias the frontend should use.
     Priority: session view_alias -> current semester.
     """
-    permission_classes = [IsAdminRole, IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         alias = get_active_semester_alias(request)  # resolves view_semester or current

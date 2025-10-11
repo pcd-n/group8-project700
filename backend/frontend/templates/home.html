@@ -318,7 +318,8 @@
       } else if (isCoordinator && !isAdmin) {
         // Coordinators cannot upload EOI/Master Class List
         btnUpload?.classList.add("d-none");
-        // Always show the green button, but make it a navigation to allocations
+        // Remove the upload-first handler, then navigate straight to allocations
+        try { btnProceed.removeEventListener("click", proceedUploadOrRun); } catch { }
         try {
           const { alias } = await apiGet(API.current());
           btnProceed.onclick = () => { location.href = `/allocations/?alias=${encodeURIComponent(alias)}`; };
