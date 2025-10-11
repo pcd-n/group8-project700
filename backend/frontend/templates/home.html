@@ -273,16 +273,13 @@
         const isCoordinator = roles.includes("Coordinator");
         const isTutor = roles.includes("Tutor") && !isAdmin && !isCoordinator;
 
-        // Admin/Coordinator: show the semester tools card
-        if (isAdmin || isCoordinator) {
-          adminCard.classList.remove("d-none");
-        } else {
-          // keep hidden for Tutors/others
-          adminCard.classList.add("d-none");
-        }
+        // Only Admin sees "Create & set current" / view tools
+        if (isAdmin) adminCard.classList.remove("d-none");
+        else adminCard.classList.add("d-none");
 
         await initRoleUI({ me, isAdmin, isCoordinator, isTutor });
-      } catch (_) {
+      }
+      catch (_) {
         // If profile failed, default to safest: hide admin tools
         adminCard.classList.add("d-none");
       }
@@ -318,7 +315,17 @@
           btnMyTT.href = url;
           btnMyTT.classList.remove("d-none");
         }
+      } else if (isCoordinator && !isAdmin) {
+        // Coordinators cannot upload EOI/Master Class List
+        btnUpload?.classList.add("d-none");
+        // Always show the green button, but make it a navigation to allocations
+        try {
+          const { alias } = await apiGet(API.current());
+          btnProceed.onclick = () => { location.href = `/allocations/?alias=${encodeURIComponent(alias)}`; };
+        } catch { /* if alias fails, the backend change in step 1 fixes it */ }
+        btnProceed.classList.remove("d-none");
       } else {
+        // Admin
         btnUpload?.classList.remove("d-none");
         btnProceed?.classList.remove("d-none");
       }
