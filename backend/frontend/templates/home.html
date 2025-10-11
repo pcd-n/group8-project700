@@ -295,35 +295,37 @@
       const btnMyTT = document.getElementById("btnMyTimetable");
 
       if (isTutor) {
-        // Hide all admin/coordinator things for tutors
+        // Hide admin/coordinator controls
         btnUpload?.classList.add("d-none");
         btnProceed?.classList.add("d-none");
         btnUsers?.classList.add("d-none");
 
-        // Build the “My Timetable” link with current alias + user email/name
-        try {
-          const { alias } = await apiGet(API.current());
-          const email = (me?.email || "").toLowerCase();
-          const name = ((me?.first_name || "") + " " + (me?.last_name || "")).trim() || (me?.username || "Me");
+        // ALWAYS derive name/email first so catch can use them too
+        const email = (me?.email || "").toLowerCase();
+        const name = ((me?.first_name || "") + " " + (me?.last_name || "")).trim()
+          || (me?.username || "Me");
 
-          const url = `/tutors/timetable/?alias=${encodeURIComponent(alias)}`
+        try {
+          // Prefer current alias when available
+          const { alias } = await apiGet(API.current());
+          btnMyTT.href =
+            `/tutors/timetable/?alias=${encodeURIComponent(alias)}`
             + `&name=${encodeURIComponent(name)}`
             + `&email=${encodeURIComponent(email)}`;
-          btnMyTT.href = url;
           btnMyTT.classList.remove("d-none");
         } catch {
-          // If current alias fails, still show button without alias (page will resolve)
-          btnMyTT.href = `/tutors/timetable/?name=${encodeURIComponent(name)}&email=${encodeURIComponent(email)}`;
+          // Still show the button even if alias fetch fails
+          btnMyTT.href =
+            `/tutors/timetable/?name=${encodeURIComponent(name)}`
+            + `&email=${encodeURIComponent(email)}`;
           btnMyTT.classList.remove("d-none");
         }
       } else {
-        // Admin/Coordinator: show everything as you already do
+        // Admin/Coordinator keep the usual controls
         btnUpload?.classList.remove("d-none");
         btnProceed?.classList.remove("d-none");
-        // Users Management is already gated elsewhere; keep it
       }
     }
-
     // =================================
     async function loadWelcome() {
       if (!token()) return; // not logged in
