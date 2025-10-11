@@ -30,11 +30,11 @@
 <body>
     <div class="container">
         <h1 class="my-4 h4 fw-semibold">Tutor Allocation – Units</h1>
+
         <div class="d-flex justify-content-between align-items-center mb-2">
             <div id="aliasTag" class="text-muted small"></div>
-            <a id="backBtn" href="#" class="btn btn-outline-secondary">← Back to Home</a>
+            <a id="backBtn" href="/home/" class="btn btn-outline-secondary">← Back to Home</a>
         </div>
-        <div id="aliasTag" class="mb-3 text-muted small"></div>
 
         <div class="table-responsive table-wrap">
             <table class="table table-bordered align-middle">
@@ -49,51 +49,31 @@
                 </thead>
                 <tbody id="unitsBody">
                     <tr>
-                        <td colspan="4" class="text-center text-muted">Loading…</td>
+                        <td colspan="5" class="text-center text-muted">Loading…</td>
                     </tr>
                 </tbody>
             </table>
         </div>
+
         <div id="recordCount" class="small text-muted"></div>
     </div>
 
     <script>
-        // ---- auth / API helpers (same style as allocationdetails.html) ----
+        // --- auth helpers ---
         const API_BASE = "/api";
         const token = () => localStorage.getItem("access");
         const authHeaders = (extra = {}) => token() ? ({ ...extra, Authorization: `Bearer ${token()}` }) : extra;
 
         async function apiGet(path) {
-            const res = await fetch(`${API_BASE}${path}`, {
-                headers: authHeaders(),
-                credentials: "include",
-            });
-
-            // Read the body ONCE as text
+            const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders(), credentials: "include" });
             const raw = await res.text();
-
-            // Try to parse JSON from it (if any)
-            let data = null;
-            if (raw) {
-                try { data = JSON.parse(raw); } catch { /* not JSON; keep raw */ }
-            }
-
-            if (res.status === 401) {
-                window.location = "/";
-                throw new Error("Unauthorized");
-            }
-
-            if (!res.ok) {
-                // Prefer JSON error.detail, then raw text, then status line
-                const msg = (data && (data.detail || data.message)) || raw || `GET ${path} -> ${res.status}`;
-                throw new Error(msg);
-            }
-
-            // Return JSON if we parsed it, otherwise the raw text
+            let data = null; if (raw) { try { data = JSON.parse(raw); } catch { } }
+            if (res.status === 401) { location.href = "/"; throw new Error("Unauthorized"); }
+            if (!res.ok) throw new Error((data && (data.detail || data.message)) || raw || `GET ${path} -> ${res.status}`);
             return data ?? raw;
         }
 
-        // ---- resolve alias reliably (URL param or /semesters/current/) ----
+        // Resolve alias from URL (?alias=) or from /semesters/current/
         async function resolveAlias() {
             const qs = new URLSearchParams(location.search);
             const fromUrl = qs.get("alias");
@@ -103,42 +83,42 @@
         }
 
         async function loadUnits() {
-            if (!token()) { window.location = "/"; return; }
+            if (!token()) { location.href = "/"; return; }
 
             const alias = await resolveAlias();
             document.getElementById("aliasTag").textContent = `Semester: ${alias}`;
-            const backBtn = document.getElementById("backBtn");
-            if (backBtn) backBtn.href = `/home.html?alias=${encodeURIComponent(alias)}`;
+            document.getElementById("backBtn").href = `/home/?alias=${encodeURIComponent(alias)}`;
 
-            // NEW: use allocation/units (alias-aware) instead of timetable/sessions
+            // IMPORTANT: include trailing slash on DRF endpoints
             const rows = await apiGet(`/allocation/units/?alias=${encodeURIComponent(alias)}`);
 
             const tbody = document.getElementById("unitsBody");
-            if (!rows.length) {
+            if (!Array.isArray(rows) || rows.length === 0) {
                 tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">No units found.</td></tr>`;
                 document.getElementById("recordCount").textContent = "0 units";
                 return;
             }
 
             tbody.innerHTML = rows.map(u => {
-                const url = `allocationdetails.html?alias=${encodeURIComponent(alias)}&code=${encodeURIComponent(u.unit_code)}&campus=${encodeURIComponent(u.campus)}&name=${encodeURIComponent(u.unit_name || "")}`;
+                const detailUrl = `/allocationdetails/?alias=${encodeURIComponent(alias)}&code=${encodeURIComponent(u.unit_code)}&campus=${encodeURIComponent(u.campus)}&name=${encodeURIComponent(u.unit_name || "")}`;
 
-                // tutors already aggregated server-side
                 const tutors = Array.isArray(u.tutors) ? u.tutors : [];
                 const tutorHtml = tutors.length
                     ? tutors.map(t => {
-                        const ttUrl = `tutortimetable.html?alias=${encodeURIComponent(alias)}&name=${encodeURIComponent(t.name)}${t.email ? `&email=${encodeURIComponent(t.email)}` : ""}`;
+                        // pretty URL for timetable page (you have a TemplateView at /tutors/timetable/)
+                        const ttUrl = `/tutors/timetable/?alias=${encodeURIComponent(alias)}&name=${encodeURIComponent(t.name)}${t.email ? `&email=${encodeURIComponent(t.email)}` : ""}`;
                         return `<a class="unitlink" href="${ttUrl}">${t.name}</a>`;
                     }).join(", ")
                     : `<span class="text-muted">—</span>`;
 
-                return `<tr>
-                <td><a class="unitlink" href="${url}">${u.unit_code}</a></td>
-                <td><a class="unitlink" href="${url}">${u.unit_name || ""}</a></td>
-                <td>${u.campus}</td>
-                <td class="text-end">${u.session_count}</td>
-                <td>${tutorHtml}</td>
-            </tr>`;
+                return `
+          <tr>
+            <td><a class="unitlink" href="${detailUrl}">${u.unit_code}</a></td>
+            <td><a class="unitlink" href="${detailUrl}">${u.unit_name || ""}</a></td>
+            <td>${u.campus}</td>
+            <td class="text-end">${u.session_count}</td>
+            <td>${tutorHtml}</td>
+          </tr>`;
             }).join("");
 
             document.getElementById("recordCount").textContent = `${rows.length} units found`;
@@ -148,8 +128,8 @@
             loadUnits().catch(err => {
                 console.error(err);
                 alert(`Failed to load units.\n${err.message || err}`);
-                const tbody = document.getElementById("unitsBody");
-                tbody.innerHTML = `<tr><td colspan="4" class="text-danger text-center">${(err && err.message) || "Error"}</td></tr>`;
+                document.getElementById("unitsBody").innerHTML =
+                    `<tr><td colspan="5" class="text-danger text-center">${(err && err.message) || "Error"}</td></tr>`;
             });
         });
     </script>

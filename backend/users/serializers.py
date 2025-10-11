@@ -1,3 +1,4 @@
+#backend/users/serializers.py
 from rest_framework import serializers
 from .models import (
     User, Role, Permission, UserRoles, Supervisor, Campus
@@ -54,9 +55,21 @@ class UserCreateSerializer(serializers.ModelSerializer):
             'role_name',
             'is_supervisor', 'campus_id', 'note'
         ]
+        # IMPORTANT: let custom validation handle uniqueness/linking.
+        # DRF auto-validators would otherwise block "email already exists".
+        extra_kwargs = {
+            'email': {'validators': []},
+            'username': {'validators': []},
+        }
 
     # --- Validation ---
-
+    def validate_email(self, value):
+        if self.context.get('allow_existing_email'):
+            return value
+        if value and User.objects.using(DEFAULT_DB).filter(email__iexact=value).exists():
+            raise serializers.ValidationError("User with this email already exists.")
+        return value
+    
     def validate_username(self, value):
         if User.objects.using(DEFAULT_DB).filter(username=value).exists():
             raise serializers.ValidationError("User with this username already exists.")
@@ -69,10 +82,11 @@ class UserCreateSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
-        # if supervisor requested, campus must be provided
-        if attrs.get('is_supervisor') and not attrs.get('campus_id'):
-            raise serializers.ValidationError({"campus_id": "Campus is required when is_supervisor is true."})
-        return attrs
+        role = (attrs.get('role_name') or '').strip().lower()
+        email = (attrs.get('email') or '').strip()
+        if role == 'tutor' and not email:
+            raise serializers.ValidationError({'email': 'Email is required for Tutor accounts.'})
+        return super().validate(attrs)
 
     # --- Create ---
 
@@ -107,9 +121,10 @@ class UserUpdateSerializer(serializers.ModelSerializer):
 # --- RBAC + objects on DEFAULT_DB --------------------------------------------
 
 class RoleSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(source='role_name', read_only=True)
     class Meta:
         model = Role
-        fields = ['id', 'role_name', 'description', 'created_at', 'updated_at']
+        fields = ['id', 'role_name', 'name', 'description', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
 
     def validate_role_name(self, value):

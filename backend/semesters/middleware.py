@@ -1,3 +1,4 @@
+# backend/semesters/middleware.py
 from django.conf import settings
 import logging
 from .services import hydrate_runtime_databases, ensure_current_semester_alias, _register_alias

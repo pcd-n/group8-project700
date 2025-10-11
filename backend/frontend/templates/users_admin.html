@@ -75,7 +75,6 @@
     </div>
 
     <script>
-        // ========= config / helpers =========
         const API = {
             roles: '/api/accounts/roles/',
             listUserRoles: '/api/accounts/user-roles/',
@@ -86,7 +85,7 @@
             profile: '/api/accounts/profile/'
         };
 
-        const token = () => localStorage.getItem('access'); // same key as your home.html
+        const token = () => localStorage.getItem('access');
         const authHeaders = (extra = {}) => token()
             ? ({ ...extra, Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' })
             : ({ ...extra, 'Content-Type': 'application/json' });
@@ -96,53 +95,114 @@
             box.className = `alert alert-${type}`;
             box.textContent = msg;
             box.classList.remove('d-none');
-            setTimeout(() => box.classList.add('d-none'), 4000);
+            setTimeout(() => box.classList.add('d-none'), 5000);
         }
 
-        async function getJSON(url) {
-            const res = await fetch(url, { headers: authHeaders(), credentials: 'include' });
-            if (!res.ok) throw new Error(`${url} → ${res.status}`);
-            return res.json();
-        }
-        async function postJSON(url, body) {
-            const res = await fetch(url, { method: 'POST', headers: authHeaders(), credentials: 'include', body: JSON.stringify(body || {}) });
-            const payload = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(payload?.error || payload?.detail || `${url} → ${res.status}`);
-            return payload;
-        }
-        async function putJSON(url, body) {
-            const res = await fetch(url, { method: 'PUT', headers: authHeaders(), credentials: 'include', body: JSON.stringify(body || {}) });
-            const payload = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(payload?.error || payload?.detail || `${url} → ${res.status}`);
-            return payload;
+        // ---- extract DRF errors nicely ----
+        function pickApiError(payload, fallback) {
+            if (!payload || typeof payload !== 'object') return fallback;
+            if (typeof payload.detail === 'string') return payload.detail;
+            // serializer field errors: {field: ["msg", ...], ...}
+            for (const [k, v] of Object.entries(payload)) {
+                if (Array.isArray(v) && v.length) return `${k}: ${v[0]}`;
+                if (typeof v === 'string') return `${k}: ${v}`;
+            }
+            return fallback;
         }
 
-        // ========= page state =========
-        let roles = []; // [{id, role_name}]
-        let rows = []; // UserRolesSerializer items
+        function pickApiError(payload, fallback = 'Request failed') {
+            if (!payload) return fallback;
+            if (typeof payload === 'string') return payload;
+            if (payload.detail) return String(payload.detail);
+            if (payload.error) return String(payload.error);
+            if (Array.isArray(payload)) return payload.join(' | ') || fallback;
+            if (typeof payload === 'object') {
+                const parts = [];
+                for (const [k, v] of Object.entries(payload)) {
+                    const msg = Array.isArray(v) ? v.join(', ') : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+                    parts.push(`${k}: ${msg}`);
+                }
+                return parts.join(' | ') || fallback;
+            }
+            return fallback;
+        }
 
-        // ========= load & render =========
+        async function requestJSON(method, url, body) {
+            const res = await fetch(url, {
+                method,
+                headers: authHeaders(),
+                credentials: 'include',
+                body: body === undefined ? undefined : JSON.stringify(body)
+            });
+            let data = null; try { data = await res.json(); } catch { }
+            if (!res.ok) throw new Error(pickApiError(data, `${url} → ${res.status}`));
+            return data ?? {};
+        }
+
+        const getJSON = (url) => requestJSON('GET', url);
+        const postJSON = (url, body) => requestJSON('POST', url, body);
+        const putJSON = (url, body) => requestJSON('PUT', url, body);
+        // ---- roles + rows ----
+        let roles = [];
+        let rows = [];
+
+        function asArrayMaybePaginated(x) {
+            if (Array.isArray(x)) return x;
+            if (x && Array.isArray(x.results)) return x.results;
+            return [];
+        }
+        function allowedRoles(list) {
+            const allow = new Set(['Admin', 'Coordinator', 'Tutor']);
+            return (Array.isArray(list) ? list : []).filter(r => allow.has(r.role_name || r.name));
+        }
+
         async function loadAll() {
             try {
-                const [r, u] = await Promise.all([
-                    getJSON(API.roles),
-                    getJSON(API.listUserRoles)
-                ]);
-                roles = r;
-                rows = u;
+                const [r, u] = await Promise.all([getJSON(API.roles), getJSON(API.listUserRoles)]);
+                roles = asArrayMaybePaginated(r);
+                rows = asArrayMaybePaginated(u);
                 renderCreateRoleOptions();
                 renderGroups();
-            } catch (e) {
-                showAlert(e.message || 'Failed to load data');
-            }
+            } catch (e) { showAlert(e.message || 'Failed to load'); }
         }
 
         function renderCreateRoleOptions() {
             const select = document.getElementById('cuRole');
-            select.innerHTML = roles.map(r => `<option value="${r.role_name}">${r.role_name}</option>`).join('');
-            // default to Tutor if exists
-            const tutor = roles.find(r => r.role_name === 'Tutor');
-            if (tutor) select.value = 'Tutor';
+            const list = allowedRoles(roles);
+            select.innerHTML = list.map(r => `<option value="${r.role_name}">${r.role_name}</option>`).join('');
+            if (list.find(r => r.role_name === 'Tutor')) select.value = 'Tutor';
+        }
+
+        function renderRow(r) {
+            const uname = r.user_username || r.user_email || '';
+            const display = r.user_name || '';
+            const preview = (r.user_note || '').trim();
+            const previewShort = preview ? (preview.length > 40 ? preview.slice(0, 40) + '…' : preview) : '—';
+
+            const list = allowedRoles(asArrayMaybePaginated(roles));
+            const roleOpts = list.map(opt => {
+                const sel = (opt.role_name === r.role_name) ? 'selected' : '';
+                return `<option value="${opt.role_name}" ${sel}>${opt.role_name}</option>`;
+            }).join('');
+
+            return `
+        <tr>
+            <td class="mono">${escapeHtml(uname)}</td>
+            <td>${escapeHtml(display || '—')}</td>
+            <td>
+            <select class="form-select form-select-sm" data-action="change-role" data-user="${r.user}">
+                ${roleOpts}
+            </select>
+            </td>
+            <td class="d-flex flex-column gap-2">
+            <div class="small text-muted">Note: ${escapeHtml(previewShort)}</div>
+            <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-outline-primary" data-action="edit-note" data-user="${r.user}">Edit note</button>
+                <button class="btn btn-sm btn-outline-secondary" data-action="reset" data-user="${r.user}">Reset password</button>
+                <button class="btn btn-sm btn-outline-danger" data-action="deactivate" data-user="${r.user}">Deactivate</button>
+            </div>
+            </td>
+        </tr>`;
         }
 
         function renderGroups() {
@@ -155,76 +215,33 @@
             const sorted = Array.from(byRole.entries()).sort((a, b) => a[0].localeCompare(b[0]));
             const container = document.getElementById('groupsContainer');
             container.innerHTML = '';
-
             sorted.forEach(([roleName, items]) => {
                 const card = document.createElement('div');
                 card.className = 'card card-role';
                 card.innerHTML = `
-          <div class="card-body">
+            <div class="card-body">
             <div class="d-flex align-items-center justify-content-between mb-2">
-              <h5 class="card-title mb-0">${roleName} <span class="text-muted">(${items.length})</span></h5>
+                <h5 class="card-title mb-0">${roleName} <span class="text-muted">(${items.length})</span></h5>
             </div>
             <div class="table-responsive">
-              <table class="table table-sm align-middle">
+                <table class="table table-sm align-middle">
                 <thead class="table-light">
-                  <tr>
-                    <th>Username</th>
-                    <th>Name</th>
-                    <th style="width:240px">Role</th>
-                    <th style="width:260px">Actions</th>
-                  </tr>
+                    <tr>
+                    <th>Username</th><th>Name</th><th style="width:240px">Role</th><th style="width:260px">Actions</th>
+                    </tr>
                 </thead>
-                <tbody>
-                  ${items.map(renderRow).join('')}
-                </tbody>
-              </table>
+                <tbody>${items.map(renderRow).join('')}</tbody>
+                </table>
             </div>
-          </div>`;
+            </div>`;
                 container.appendChild(card);
             });
-
-            if (sorted.length === 0) {
-                container.innerHTML = `<div class="alert alert-secondary">No users found.</div>`;
-            }
+            if (!sorted.length) container.innerHTML = `<div class="alert alert-secondary">No users found.</div>`;
         }
 
-        function renderRow(r) {
-            const uname = r.user_username || r.user_email || '';
-            const display = r.user_name || '';
-            const preview = (r.user_note || '').trim();
-            const previewShort = preview ? preview.slice(0, 40) + (preview.length > 40 ? '…' : '') : '—';
+        function escapeHtml(s) { return String(s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m])); }
 
-            const roleOpts = roles.map(opt => {
-                const sel = (opt.role_name === r.role_name) ? 'selected' : '';
-                return `<option value="${opt.role_name}" ${sel}>${opt.role_name}</option>`;
-            }).join('');
-
-            return `
-            <tr>
-            <td class="mono">${escapeHtml(uname)}</td>
-            <td>${escapeHtml(display || '—')}</td>
-            <td>
-                <select class="form-select form-select-sm" data-action="change-role" data-user="${r.user}">
-                ${roleOpts}
-                </select>
-            </td>
-            <td class="d-flex flex-column gap-2">
-                <div class="small text-muted">Note: ${escapeHtml(previewShort)}</div>
-                <div class="d-flex gap-2">
-                <button class="btn btn-sm btn-outline-primary" data-action="edit-note" data-user="${r.user}">Edit note</button>
-                <button class="btn btn-sm btn-outline-secondary" data-action="reset" data-user="${r.user}">Reset password</button>
-                <button class="btn btn-sm btn-outline-danger" data-action="deactivate" data-user="${r.user}">Deactivate</button>
-                </div>
-            </td>
-            </tr>`;
-        }
-
-
-        function escapeHtml(s) {
-            return String(s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
-        }
-
-        // ========= handlers =========
+        // events
         document.getElementById('btnRefresh').addEventListener('click', loadAll);
 
         document.getElementById('formCreate').addEventListener('submit', async (e) => {
@@ -237,20 +254,22 @@
                 first_name: document.getElementById('cuFirst').value.trim(),
                 last_name: document.getElementById('cuLast').value.trim(),
                 note: document.getElementById('cuNote').value.trim() || null,
+                // make intent explicit (matches your serializer defaults)
+                is_supervisor: false,
+                campus_id: null
             };
             try {
                 await postJSON(API.register, body);
-                // reset form
                 e.target.reset();
                 renderCreateRoleOptions();
                 showAlert('User created', 'success');
                 await loadAll();
             } catch (err) {
                 showAlert(err.message || 'Create failed');
+                console.warn('Create user error:', err); // lets you see full detail in DevTools
             }
         });
 
-        // delegate table actions
         document.getElementById('groupsContainer').addEventListener('change', async (e) => {
             const sel = e.target;
             if (sel.matches('select[data-action="change-role"]')) {
@@ -260,76 +279,50 @@
                     await postJSON(API.assignRole(userId), { role_name: newRole });
                     showAlert('Role updated', 'success');
                     await loadAll();
-                } catch (err) {
-                    showAlert(err.message || 'Role update failed');
-                }
+                } catch (err) { showAlert(err.message || 'Role update failed'); }
             }
         });
 
         document.getElementById('groupsContainer').addEventListener('click', async (e) => {
             const btn = e.target.closest('button[data-action]');
             if (!btn) return;
-            const userId = btn.getAttribute('data-user');
+            const userId = Number(btn.getAttribute('data-user'));
 
             if (btn.dataset.action === 'edit-note') {
-                const userId = Number(btn.getAttribute('data-user'));
                 const current = rows.find(x => x.user === userId)?.user_note || '';
                 const next = prompt('Edit note for this user:', current || '');
-                if (next === null) return; // cancel
-                try {
-                    // Admin-only; backend will enforce
-                    await putJSON(API.updateUser(userId), { note: next });
-                    showAlert('Note updated', 'success');
-                    await loadAll();
-                } catch (err) {
-                    showAlert(err.message || 'Note update failed');
-                }
+                if (next === null) return;
+                try { await putJSON(API.updateUser(userId), { note: next }); showAlert('Note updated', 'success'); await loadAll(); }
+                catch (err) { showAlert(err.message || 'Note update failed'); }
             }
 
             if (btn.dataset.action === 'reset') {
-                const pwd = prompt('Enter a new password:');
+                const pwd = prompt('Enter a new password: (min 8 chars)');
                 if (!pwd) return;
-                try {
-                    await postJSON(API.resetPassword, { user_id: Number(userId), new_password: pwd });
-                    showAlert('Password updated', 'success');
-                } catch (err) {
-                    showAlert(err.message || 'Password reset failed');
-                }
+                try { await postJSON(API.resetPassword, { user_id: userId, new_password: pwd }); showAlert('Password updated', 'success'); }
+                catch (err) { showAlert(err.message || 'Password reset failed'); }
             }
 
             if (btn.dataset.action === 'deactivate') {
                 if (!confirm('Deactivate this user?')) return;
-                try {
-                    await putJSON(API.updateUser(Number(userId)), { is_active: false });
-                    showAlert('User deactivated', 'success');
-                    await loadAll();
-                } catch (err) {
-                    showAlert(err.message || 'Deactivate failed');
-                }
+                try { await putJSON(API.updateUser(userId), { is_active: false }); showAlert('User deactivated', 'success'); await loadAll(); }
+                catch (err) { showAlert(err.message || 'Deactivate failed'); }
             }
         });
 
-        // ========= auth gate + admin check =========
+        // gate: admin only
         (async function init() {
-            if (!token()) {
-                location.href = '/';
-                return;
-            }
+            if (!token()) { location.href = '/'; return; }
             try {
                 const me = await getJSON(API.profile);
-                const roles = Array.isArray(me?.roles) ? me.roles.map(r => r.name) : [];
-                const isAdmin = !!me?.is_staff || roles.includes('Admin');
-                if (!isAdmin) {
-                    document.body.innerHTML = '<div class="container py-5"><div class="alert alert-danger">Forbidden</div></div>';
-                    return;
-                }
-            } catch {
-                document.body.innerHTML = '<div class="container py-5"><div class="alert alert-danger">Unauthorized</div></div>';
-                return;
-            }
+                const rs = Array.isArray(me?.roles) ? me.roles.map(r => r.name) : [];
+                const isAdmin = !!me?.is_staff || rs.includes('Admin');
+                if (!isAdmin) { document.body.innerHTML = '<div class="container py-5"><div class="alert alert-danger">Forbidden</div></div>'; return; }
+            } catch { document.body.innerHTML = '<div class="container py-5"><div class="alert alert-danger">Unauthorized</div></div>'; return; }
             await loadAll();
         })();
     </script>
+
 </body>
 
 </html>

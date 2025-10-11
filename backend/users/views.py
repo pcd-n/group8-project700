@@ -5,7 +5,10 @@ from rest_framework import status, generics, serializers
 from rest_framework.permissions import AllowAny, IsAuthenticated, BasePermission
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
+from django.db import IntegrityError
+from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
+from rest_framework.decorators import api_view, permission_classes
 from django.contrib.auth import authenticate
 from django.db import transaction
 from drf_spectacular.utils import extend_schema, OpenApiExample
@@ -19,6 +22,7 @@ from .permissions import (
     IsAdminRole, IsAdminOrCoordinator, TutorReadOnly,
     CanManageAllocations, CanSetPreferences,
 )
+from semesters.services import get_active_semester_alias
 from rich.console import Console
 import logging
 
@@ -27,6 +31,21 @@ DEFAULT_DB = "default"
 console = Console()
 logger = logging.getLogger(__name__)
 
+@api_view(["GET"])
+@permission_classes([IsAdminRole])
+def roles_list(request):
+    roles = Role.objects.using(DEFAULT_DB).all().order_by("role_name")
+    data = RoleSerializer(roles, many=True).data
+    return Response(data) 
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def logout_view(request):
+    from django.contrib.auth import logout as django_logout
+    django_logout(request)
+    resp = Response(status=204)
+    resp.delete_cookie('access'); resp.delete_cookie('refresh')
+    return resp
 
 class LoginSerializer(serializers.Serializer):
     username = serializers.CharField(help_text="User's username")
@@ -68,15 +87,104 @@ class LoginView(generics.CreateAPIView):
         }, status=status.HTTP_200_OK)
 
 class RegisterView(generics.CreateAPIView):
-    permission_classes = [IsAdminRole]   # Admin only
+    permission_classes = [IsAdminRole]
     serializer_class = UserCreateSerializer
+
+    def _unique_username_on_default(self, base):
+        base = (base or "").strip() or "user"
+        u = base
+        i = 1
+        while User.objects.using(DEFAULT_DB).filter(username=u).exists():
+            i += 1
+            u = f"{base}_{i}"
+        return u
     
     def create(self, request, *args, **kwargs):
-        ser = self.get_serializer(data=request.data)
-        ser.is_valid(raise_exception=True)
-        user = ser.save()
-        tokens = User.objects.get_tokens_for_user(user)
-        return Response({'user': UserSerializer(user).data, 'tokens': tokens}, status=status.HTTP_201_CREATED)
+        # Tell the serializer we're allowed to link by an existing email
+        s = self.get_serializer(data=request.data,
+                                context={"request": request,
+                                         "allow_existing_email": True})
+        s.is_valid(raise_exception=True)
+
+        data     = s.validated_data
+        email    = (data.get("email") or "").strip().lower()
+        username = (data.get("username") or "").strip()
+        password = (data.get("password") or "").strip()
+        first    = (data.get("first_name") or "").strip()
+        last     = (data.get("last_name") or "").strip()
+        role     = data.get("role_name") or "Tutor"
+
+        alias = get_active_semester_alias(request)
+
+        # --- Try to locate the EOI tutor in the current semester DB by email ---
+        existing_alias_user = None
+        if alias and alias != DEFAULT_DB and email:
+            existing_alias_user = User.objects.using(alias).filter(email__iexact=email).first()
+
+        # --- Ensure a platform account on DEFAULT (that’s the account that logs in) ---
+        # If a platform user exists, update it; otherwise create it.
+        platform_user = User.objects.using(DEFAULT_DB).filter(email__iexact=email).first() if email else None
+        # Choose a username (unique on DEFAULT)
+        if platform_user:
+            if username and platform_user.username != username:
+                # If requested username clashes with someone else, uniquify it
+                if User.objects.using(DEFAULT_DB).filter(username=username).exclude(id=platform_user.id).exists():
+                    username = self._unique_username_on_default(username)
+                platform_user.username = username or platform_user.username
+            # Update details/password
+            if first: platform_user.first_name = first
+            if last:  platform_user.last_name  = last
+            if password: platform_user.set_password(password)
+            platform_user.is_active = True
+            platform_user.save(using=DEFAULT_DB)
+            # Assign/refresh role on default
+            platform_user.assign_role(role)
+            info_msg = "Linked to existing platform account"
+        else:
+            # No platform user yet → create one on DEFAULT with a unique username
+            if not username:
+                username = (email.split("@", 1)[0] if email else None) or "user"
+            username = self._unique_username_on_default(username)
+            platform_user = User.objects.create_user(
+                username=username,
+                password=password,
+                role_name=role,
+                email=email,
+                first_name=first,
+                last_name=last,
+                is_active=True,
+            )
+            info_msg = "Created platform account and linked to EOI"
+
+        # --- (Optional) also stamp a username into the alias user for consistency ---
+        if existing_alias_user and not existing_alias_user.username:
+            # Keep usernames readable but avoid collisions inside alias
+            base = platform_user.username
+            u = base
+            i = 1
+            while User.objects.using(alias).filter(username=u).exists():
+                i += 1
+                u = f"{base}_{i}"
+            existing_alias_user.username = u
+            # No need to set password on alias; login uses DEFAULT
+            if first: existing_alias_user.first_name = first
+            if last:  existing_alias_user.last_name  = last
+            existing_alias_user.is_active = True
+            existing_alias_user.save(using=alias)
+
+        # Build tokens for immediate login if you want
+        try:
+            refresh = RefreshToken.for_user(platform_user)
+            tokens = {"access": str(refresh.access_token), "refresh": str(refresh)}
+        except Exception:
+            tokens = None
+
+        return Response(
+            {"user": UserSerializer(platform_user).data,
+             "tokens": tokens,
+             "info": info_msg},
+            status=status.HTTP_200_OK,
+        )
     
 class UserUpdatePermission(BasePermission):
     """Custom permission for user updates - Admin/Coordinator can update any user, users can update themselves."""
@@ -113,7 +221,7 @@ class UserUpdateView(APIView):
         request=UserUpdateSerializer,
         responses={200: UserUpdateSerializer},
         description="Update user information",
-        operation_id="user_update_self" if not "user_id" else "user_update_by_id",
+        operation_id="user_update", 
         examples=[
             OpenApiExample(
                 'User Update Example',
@@ -126,25 +234,19 @@ class UserUpdateView(APIView):
         ]
     )
     def put(self, request, user_id=None):
-        """Handle single user update."""
-        # Allow users to update their own profile or staff to update any user
-        if user_id:
-            if not request.user.is_staff and request.user.id != user_id:
-                return Response(
-                    {'error': 'Permission denied'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
+        """Update a user (self; or Admin/Coordinator can update others)."""
+        if user_id is not None:
             try:
                 user = User.objects.using(DEFAULT_DB).get(id=user_id)
-                data = request.data or {}
-                if 'note' in data and not (request.user.is_staff or request.user.has_role('Admin')):
-                    return Response({'error': 'Only Admin can set notes'}, status=status.HTTP_403_FORBIDDEN)
-
             except User.DoesNotExist:
-                return Response(
-                    {'error': 'User not found'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
+                return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+            # Enforce object-level permission policy
+            self.check_object_permissions(request, user)
+            # Only Admin/staff can set 'note'
+            if 'note' in (request.data or {}) and not (
+                request.user.is_staff or request.user.has_role('Admin')
+            ):
+                return Response({'error': 'Only Admin can set notes'}, status=status.HTTP_403_FORBIDDEN)
         else:
             user = request.user
         
@@ -540,7 +642,8 @@ class UserRolesView(APIView):
                     disabled_roles.append(assignment.role.role_name)
                 
                 console.print(f"[yellow] Disabled roles for {user.email}: {', '.join(disabled_roles)}[/yellow]")
-                
+                return Response(status=status.HTTP_204_NO_CONTENT)                
+
         except User.DoesNotExist:
             return Response(
                 {'error': 'User not found'},

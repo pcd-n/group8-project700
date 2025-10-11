@@ -1,3 +1,4 @@
+#web_tutors/settings.py
 """
 Django settings for web_tutors project.
 
@@ -280,27 +281,29 @@ LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        "verbose": {
-            "format": "[%(asctime)s] %(levelname)s %(name)s:%(lineno)d — %(message)s"
-        },
-        "simple": {"format": "%(levelname)s %(name)s — %(message)s"},
+        "verbose": {"format": "[%(asctime)s] %(levelname)s %(name)s:%(lineno)d — %(message)s"},
     },
     "handlers": {
-        "console": {
+        "console": {  # still send to console/journal if present
             "class": "logging.StreamHandler",
+            "formatter": "verbose",
+        },
+        "file": {     # << writes a file you can tail
+            "class": "logging.FileHandler",
+            "filename": os.path.join(BASE_DIR, "runserver.log"),
             "formatter": "verbose",
         },
     },
     "loggers": {
-        # our module
-        "imports.views": {              # logger name equals __name__ in that file
-            "handlers": ["console"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        # optional: broader capture for your project
-        "django.request": {"handlers": ["console"], "level": "WARNING", "propagate": False},
-        "": {"handlers": ["console"], "level": "INFO"},  # root fallback
+        # our modules
+        "imports.views": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
+        "semesters.services": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
+
+        # good to have
+        "django.request": {"handlers": ["console", "file"], "level": "WARNING", "propagate": False},
+
+        # root fallback
+        "": {"handlers": ["console", "file"], "level": "INFO"},
     },
 }
 
@@ -311,8 +314,7 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ],
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
-        'rest_framework.authentication.SessionAuthentication',
+        'rest_framework_simplejwt.authentication.JWTAuthentication',  # <-- JWT only
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
@@ -370,7 +372,7 @@ SPECTACULAR_SETTINGS = {
 }
 
 
-LOGIN_URL = '/admin/login/'
+#LOGIN_URL = '/admin/login/'
 
 GOOGLE_OAUTH2_CLIENT_ID = os.getenv('GOOGLE_OAUTH2_CLIENT_ID', '')
 GOOGLE_OAUTH2_CLIENT_SECRET = os.getenv('GOOGLE_OAUTH2_CLIENT_SECRET', '')

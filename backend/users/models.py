@@ -166,7 +166,7 @@ class User(AbstractBaseUser):
 
     def __str__(self):
         status = "Active" if self.is_active else "Disabled"
-        return f"{self.user.username} - {self.role.role_name} ({status})"
+        return f"{self.username or self.email} ({status})"
 
     def save(self, *args, **kwargs):
         kwargs.setdefault("using", DEFAULT_DB)

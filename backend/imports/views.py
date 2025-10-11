@@ -3,7 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
-from django.db import transaction
+from django.db import transaction, connections
 from django.db.utils import IntegrityError, OperationalError
 from django.core.exceptions import ValidationError
 from django.utils import timezone
@@ -14,6 +14,8 @@ from .models import UploadJob
 from .services import IMPORT_DISPATCH
 from users.permissions import IsAdminRole
 from semesters.services import get_active_semester_alias, ensure_migrated
+from timetable.models import TimeTable
+from eoi.models import EoiApp
 
 import logging
 logger = logging.getLogger(__name__) 
@@ -52,18 +54,22 @@ class UploadImportView(APIView):
         s.is_valid(raise_exception=True)
 
         job = UploadJob.objects.create(
-            file=s.validated_data["file"],   # job is always on default DB
+            file=s.validated_data["file"],
             import_type=s.validated_data["import_type"],
             created_by=request.user,
         )
 
         alias = get_active_semester_alias(request)
-        logger.info("EOI upload using alias=%s", alias) 
         if not alias or alias == "default":
+            logger.warning("EOI upload aborted: no active semester alias.")
             return Response({"detail": "No current semester is set."}, status=400)
-        ensure_migrated(alias)
 
-        kind = str(job.import_type).lower().strip()
+        db_name = connections[alias].settings_dict.get("NAME")
+        kind = str(s.validated_data["import_type"]).lower().strip()
+        logger.info("EOI upload import_type=%s using alias=%s, DB=%s", kind, alias, db_name)
+
+        ensure_migrated(alias)  # idempotent
+
         importer = IMPORT_DISPATCH.get(kind)
         if importer is None:
             return Response({"detail": f"Unsupported import type '{kind}'."}, status=400)
@@ -76,12 +82,56 @@ class UploadImportView(APIView):
             job.save(update_fields=["finished_at"])
 
             return Response(
-                {"ok": True, "result": result, "job": UploadJobSerializer(job).data},
+                {"ok": True, "alias": alias, "db": db_name, "result": result, "job": UploadJobSerializer(job).data},
                 status=201,
             )
 
         except (ValidationError, IntegrityError, OperationalError) as e:
-            return Response({"detail": _pretty_err(e)}, status=400)
+            # 🔎 LOG FULL STACK and return detail + context
+            logger.exception("EOI upload failed (db=%s, alias=%s): %s", db_name, alias, e)
+            return Response({"detail": _pretty_err(e), "alias": alias, "db": db_name}, status=400)
 
         except Exception as e:
-            return Response({"detail": _pretty_err(e)}, status=400)
+            logger.exception("EOI upload unexpected error (db=%s, alias=%s): %s", db_name, alias, e)
+            return Response({"detail": _pretty_err(e), "alias": alias, "db": db_name}, status=400)
+        
+class ImportStatusView(APIView):
+    """
+    Report whether a semester DB already has EOI data and/or class sessions,
+    and return filenames/timestamps of the most recent uploads.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        alias = request.query_params.get("alias") or get_active_semester_alias(request)
+        if not alias or alias == "default":
+            return Response({"detail": "No semester alias provided."}, status=400)
+
+        # Presence flags (in the semester DB)
+        has_eoi = EoiApp.objects.using(alias).exists()
+        has_sessions = TimeTable.objects.using(alias).exists()
+
+        # Upload metadata is stored in default DB (UploadJob)
+        def last_job(import_type):
+            job = (
+                UploadJob.objects
+                .filter(import_type=import_type)
+                .order_by("-created_at")
+                .first()
+            )
+            if not job:
+                return None
+            return {
+                "filename": getattr(job.file, "name", "") or "",
+                "uploaded_at": job.created_at,
+                "created_by": getattr(job.created_by, "email", None),
+            }
+
+        data = {
+            "alias": alias,
+            "has_eoi": has_eoi,
+            "has_sessions": has_sessions,
+            "last_eoi": last_job("eoi"),
+            "last_master_classes": last_job("master_class_list"),
+        }
+        return Response(data, status=200)

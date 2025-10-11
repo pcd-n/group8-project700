@@ -61,6 +61,15 @@
 </head>
 
 <body>
+  <!-- Top bar: welcome + logout side by side -->
+  <div class="container py-2">
+    <div class="d-flex align-items-center">
+      <div id="welcomeBox" class="small text-muted me-3 text-truncate" style="max-width:75%;">
+        <!-- Welcome back, Name (Role) | -->
+      </div>
+      <button id="btnLogout" class="btn btn-outline-danger btn-sm">Logout</button>
+    </div>
+  </div>
   <div class="container hero">
     <div>
       <h1 class="h5 fw-semibold mb-4">Web Based Tutor Allocation System</h1>
@@ -112,9 +121,14 @@
         <div id="allocInfoRow" class="file-note mt-1"></div>
         <div id="allocFileName" class="file-note"></div>
 
+        <!-- Tutor-only: view their timetable -->
+        <a id="btnMyTimetable" href="#" class="btn btn-primary btn-pill btn-wide d-none">
+          View My Timetable
+        </a>
+
         <!-- Admin-only: Users Management -->
         <div class="d-flex justify-content-center mt-3">
-          <a id="btnUsersMgmt" href="/admin/users" class="btn btn-outline-dark btn-pill btn-wide d-none">
+          <a id="btnUsersMgmt" href="/manage/users" class="btn btn-outline-dark btn-pill btn-wide d-none">
             Users Management
           </a>
         </div>
@@ -247,28 +261,109 @@
     // =========================
     const adminCard = document.getElementById("adminSemesterTools");
     async function maybeShowAdminTools() {
-      const candidates = Array.isArray(API.meCandidates) ? API.meCandidates : [];
-      if (candidates.length === 0) {
-        // no way to check → show UI; server will still enforce perms on POST
-        adminCard.classList.remove("d-none");
-        return;
-      }
-      for (const p of candidates) {
-        try {
-          const me = await apiGet(p);
-          const isAdmin =
-            !!me?.is_staff ||
-            (Array.isArray(me?.roles) && me.roles.includes("Admin")) ||
-            me?.role === "Admin";
-          if (isAdmin) {
-            adminCard.classList.remove("d-none");
-            return;
-          }
-        } catch (_) {
+      try {
+        const res = await fetch('/api/accounts/profile/', {
+          headers: authHeaders(),
+          credentials: 'include'
+        });
+        if (!res.ok) return;
+        const me = await res.json();
+        const roles = Array.isArray(me?.roles) ? me.roles.map(r => r.name) : [];
+        const isAdmin = !!me?.is_staff || roles.includes("Admin");
+        const isCoordinator = roles.includes("Coordinator");
+        const isTutor = roles.includes("Tutor") && !isAdmin && !isCoordinator;
+
+        // Admin/Coordinator: show the semester tools card
+        if (isAdmin || isCoordinator) {
+          adminCard.classList.remove("d-none");
+        } else {
+          // keep hidden for Tutors/others
+          adminCard.classList.add("d-none");
         }
+
+        await initRoleUI({ me, isAdmin, isCoordinator, isTutor });
+      } catch (_) {
+        // If profile failed, default to safest: hide admin tools
+        adminCard.classList.add("d-none");
       }
-      adminCard.classList.remove("d-none");
     }
+
+    async function initRoleUI({ me, isAdmin, isCoordinator, isTutor }) {
+      const btnUpload = document.getElementById("btnUpload");
+      const btnProceed = document.getElementById("btnProceedAlloc");
+      const btnUsers = document.getElementById("btnUsersMgmt");
+      const btnMyTT = document.getElementById("btnMyTimetable");
+
+      if (isTutor) {
+        btnUpload?.classList.add("d-none");
+        btnProceed?.classList.add("d-none");
+        btnUsers?.classList.add("d-none");
+
+        const email = (me?.email || "").toLowerCase();
+        const name =
+          `${me?.first_name || ""} ${me?.last_name || ""}`.trim() ||
+          me?.username || "Tutor";
+
+        try {
+          const { alias } = await apiGet(API.current());
+
+          // Build identical shape to admin links, but include &email only if present
+          let url = `/tutors/timetable/?alias=${encodeURIComponent(alias)}&name=${encodeURIComponent(name)}`;
+          if (email) url += `&email=${encodeURIComponent(email)}`;
+          btnMyTT.href = url;
+          btnMyTT.classList.remove("d-none");
+        } catch {
+          let url = `/tutors/timetable/?name=${encodeURIComponent(name)}`;
+          if (email) url += `&email=${encodeURIComponent(email)}`;
+          btnMyTT.href = url;
+          btnMyTT.classList.remove("d-none");
+        }
+      } else {
+        btnUpload?.classList.remove("d-none");
+        btnProceed?.classList.remove("d-none");
+      }
+    }
+    // =================================
+    async function loadWelcome() {
+      if (!token()) return; // not logged in
+      try {
+        const res = await fetch('/api/accounts/profile/', {
+          headers: authHeaders(),
+          credentials: 'include'
+        });
+        if (!res.ok) return;
+        const me = await res.json();
+
+        // Name
+        const name =
+          (me.first_name || me.last_name) ? `${me.first_name || ''} ${me.last_name || ''}`.trim()
+            : (me.username || me.email || 'User');
+
+        // Role(s) – your profile returns roles: [{ id, name }]
+        const roles = Array.isArray(me?.roles) ? me.roles.map(r => r.name) : [];
+        const mainRole = roles[0] || (me.is_staff ? 'Admin' : 'User');
+
+        document.getElementById('welcomeBox').textContent =
+          `Welcome back, ${name} (${mainRole}),`;
+      } catch (_) { /* ignore */ }
+    }
+
+    async function doLogout() {
+      try {
+        // Call backend (will 204)
+        await fetch('/api/accounts/logout/', {
+          method: 'POST',
+          headers: authHeaders(),
+          credentials: 'include'
+        });
+      } catch (_) { /* ignore errors */ }
+      // Clear local client auth and bounce to login
+      localStorage.removeItem('access');
+      localStorage.removeItem('refresh');
+      window.location.href = '/';
+    }
+
+    document.getElementById('btnLogout').addEventListener('click', doLogout);
 
     // =========================
     // Semester UI
@@ -364,24 +459,6 @@
       } catch { return false; }
     }
 
-    async function proceedToAllocation() {
-      try {
-        // 1) Upload EOI workbook (already current by design)
-        await apiPostFile(API.upload(), fileInput.files[0]);
-
-        // 2) Finalize workbook (still in current alias)
-        const current = await apiGet(API.current()); // { alias: "sem_2023_s4", ... }
-        await apiPostJSON(API.finalize(current.alias), {});
-
-        // 3) Run allocation (again in current alias)
-        await apiPostJSON(API.runAllocation(current.alias), {});
-
-        // 4) Redirect to allocation details for the **current** alias
-        location.href = `/allocationunits.html?alias=${encodeURIComponent(current.alias)}`;
-      } catch (err) {
-        alert(err.message || err);
-      }
-    }
     // =========================
     // EOI upload (unchanged UX) + local preview
     // =========================
@@ -492,7 +569,7 @@
       const rowsArr = Array.from(codeName.entries())
         .sort((a, b) => a[0].localeCompare(b[0]));
       unitsBody.innerHTML = rowsArr.map(([code, name]) => {
-        const url = `unitdetails.html?code=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}`;
+        const url = `/units/${encodeURIComponent(code)}/?name=${encodeURIComponent(name)}`;
         return `<tr>
           <td class="fw-semibold"><a class="text-decoration-none" href="${url}">${code}</a></td>
           <td><a class="text-decoration-none" href="${url}">${name}</a></td>
@@ -507,7 +584,7 @@
     function renderUnits() {
       unitsBody.innerHTML = "";
       unitSheets.forEach((u) => {
-        const url = `unitdetails.html?sheet=${encodeURIComponent(u.sheetName)}&title=${encodeURIComponent(u.title)}&code=${encodeURIComponent(u.code)}&name=${encodeURIComponent(u.name)}`;
+        const url = `/units/${encodeURIComponent(u.code)}/?name=${encodeURIComponent(u.name)}&sheet=${encodeURIComponent(u.sheetName)}&title=${encodeURIComponent(u.title)}`;
         const tr = document.createElement("tr");
         tr.innerHTML = `
           <td class="fw-semibold"><a class="text-decoration-none" href="${url}">${u.code || ""}</a></td>
@@ -580,7 +657,7 @@
         console.log(msg);
         alert("Allocation completed.");
 
-        location.href = `/allocationunits.html?alias=${encodeURIComponent(alias)}`;
+        location.href = `/allocations/?alias=${encodeURIComponent(alias)}`;
       } catch (e) {
         alert(e.message || "Failed to run allocation.");
         btnProceed.disabled = false;
@@ -614,7 +691,8 @@
     // =========================
     document.addEventListener("DOMContentLoaded", async () => {
       if (!token()) return (window.location.href = "/"); // require login
-      await maybeShowAdminTools();     // your existing function
+      await loadWelcome();
+      await maybeShowAdminTools();
       await maybeShowUsersMgmt();      // function for Users Management button
       await loadSemesters();
       try {
@@ -653,7 +731,7 @@
           // 2) Remove the upload-first click behavior and just navigate
           btnProceed.removeEventListener("click", proceedUploadOrRun);
           btnProceed.onclick = () => {
-            location.href = `/allocationunits.html?alias=${encodeURIComponent(alias)}`;
+            location.href = `/allocations/?alias=${encodeURIComponent(alias)}`;
           };
           // (Optional) Show the overwrite note/button next to Proceed:
           const allocInfoRow = document.getElementById("allocInfoRow");
@@ -688,7 +766,7 @@
             const rowsArr = JSON.parse(raw); // Array<[code,name]>
 
             unitsBody.innerHTML = rowsArr.map(([code, name]) => {
-              const url = `unitdetails.html?code=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}`;
+              const url = `/units/${encodeURIComponent(code)}/?name=${encodeURIComponent(name)}`;
               return `<tr>
                 <td class="fw-semibold"><a class="text-decoration-none" href="${url}">${code}</a></td>
                 <td><a class="text-decoration-none" href="${url}">${name}</a></td>
@@ -738,7 +816,7 @@
 
         const rowsArr = Array.from(byCode.entries()).sort((a, b) => a[0].localeCompare(b[0]));
         unitsBody.innerHTML = rowsArr.map(([code, name]) => {
-          const url = `unitdetails.html?code=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}`;
+          const url = `/units/${encodeURIComponent(code)}/?name=${encodeURIComponent(name)}`;
           return `<tr>
             <td class="fw-semibold"><a class="text-decoration-none" href="${url}">${code}</a></td>
             <td><a class="text-decoration-none" href="${url}">${name}</a></td>

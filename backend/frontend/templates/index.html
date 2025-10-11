@@ -161,7 +161,7 @@
         if (refresh) localStorage.setItem("refresh", refresh);
         localStorage.setItem("user", JSON.stringify(data.user || {}));
 
-        window.location.href = "/home.html";
+        window.location.href = "/home/";
       } catch (err) {
         alert(err.message || "Login failed");
       }

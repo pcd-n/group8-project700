@@ -3,6 +3,7 @@ from rest_framework import serializers
 from .models import EoiApp, MasterEoI, TutorsCourses, TutorSkills, TutorSupervisors
 
 class EoiAppSerializer(serializers.ModelSerializer):
+    unit_id   = serializers.IntegerField(source="unit.unit_id", read_only=True)
     unit_code = serializers.CharField(source="unit.unit_code", read_only=True)
     unit_name = serializers.CharField(source="unit.unit_name", read_only=True)
     campus_name = serializers.CharField(source="campus.campus_name", read_only=True)
@@ -13,10 +14,16 @@ class EoiAppSerializer(serializers.ModelSerializer):
     user_name = serializers.SerializerMethodField()
     user_email = serializers.EmailField(source="applicant_user.email", read_only=True)
 
-    def get_applicant_name(self, obj):
-        fn = (obj.applicant_user.first_name or "").strip()
-        ln = (obj.applicant_user.last_name or "").strip()
-        return (fn + " " + ln).strip() or obj.applicant_user.username
+    # method name must match field name (get_user_name)
+    def get_user_name(self, obj):
+        u = getattr(obj, "applicant_user", None)
+        if not u:
+            # fallbacks from EOI extras if user is missing
+            return (obj.tutor_name or "").strip() or (obj.tutor_email or "")
+        fn = (u.first_name or "").strip()
+        ln = (u.last_name or "").strip()
+        full = (fn + " " + ln).strip()
+        return full or (u.username or u.email or "")
 
     class Meta:
         model = EoiApp
@@ -24,7 +31,7 @@ class EoiAppSerializer(serializers.ModelSerializer):
             # identity
             "scd_id", "eoi_app_id", "is_current", "status", "remarks",
             # linkage
-            "unit_code", "unit_name", "campus_name",
+            "unit_id", "unit_code", "unit_name", "campus_name",
             "user_id", "user_username", "user_name", "user_email",
             # what the page displays
             "preference", "availability", "tutor_current", "tutor_email", "tutor_name",

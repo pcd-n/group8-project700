@@ -54,8 +54,8 @@
 <body>
     <div class="container py-4">
         <div class="d-flex justify-content-between align-items-center mb-3">
-            <h1 id="ttTitle" class="h5 m-0">Timetable: —</h1>
-            <a id="backLink" href="allocationunits.html" class="btn btn-outline-secondary">← Back</a>
+            <h1 id="ttTitle" class="h5 m-0">Timetable</h1>
+            <a id="backLink" href="/home/" class="btn btn-outline-secondary">← Back</a>
         </div>
         <div id="gridWrap" class="table-responsive"></div>
         <div id="empty" class="alert alert-warning d-none mt-3">No assigned classes for this tutor.</div>
@@ -63,30 +63,93 @@
 
     <script>
         const API_BASE = "/api";
-        const qs = new URLSearchParams(location.search);
-        const alias = qs.get("alias") || "";
-        const tutorName = decodeURIComponent(qs.get("name") || "");
-        const tutorEmail = decodeURIComponent(qs.get("email") || "");
-
-        document.getElementById("ttTitle").textContent = tutorName ? `Timetable: ${tutorName}` : "Timetable";
-        document.getElementById("backLink").href = `allocationunits.html?alias=${encodeURIComponent(alias)}`;
-
         const token = () => localStorage.getItem("access");
         const authHeaders = (extra = {}) => token() ? ({ ...extra, Authorization: `Bearer ${token()}` }) : extra;
+
+        const qs = new URLSearchParams(location.search);
+        const alias = qs.get("alias") || "";
+        const tutorName = qs.get("name") || "";
+        const tutorEmail = (qs.get("email") || "").toLowerCase();
+
+        document.getElementById("ttTitle").textContent = tutorName ? `Timetable: ${tutorName}` : "Timetable";
+        document.getElementById("backLink").href = `/allocations/?alias=${encodeURIComponent(alias)}`;
+
         async function apiGet(path) {
             const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders(), credentials: "include" });
             let data = null; try { data = await res.json(); } catch { }
             if (res.status === 401) { location.href = "/"; throw new Error("Unauthorized"); }
-            if (!res.ok) throw new Error(data?.detail || `GET ${path} -> ${res.status}`);
-            return data;
+            if (!res.ok) { throw new Error(data?.detail || `GET ${path} -> ${res.status}`); }
+            return data || [];
+        }
+
+        const backLink = document.getElementById("backLink");
+        // If they arrived from allocations, keep that experience for admins/coordinators
+        if (document.referrer && document.referrer.includes('/allocations/')) {
+            backLink.href = document.referrer;
+        } else {
+            backLink.href = '/home/';
+        }
+
+        async function getCurrentAlias() {
+            try {
+                const res = await fetch(`${API_BASE}/semesters/current/`, { headers: authHeaders(), credentials: "include" });
+                if (!res.ok) throw new Error();
+                const { alias } = await res.json();
+                return alias || "";
+            } catch {
+                return "";
+            }
+        }
+
+        async function resolveTutorIdentity() {
+            if (!tutorEmail) {
+                const me = await apiGet('/accounts/profile/');
+                tutorEmail = (me?.email || '').toLowerCase();
+                if (!tutorName) {
+                    tutorName = `${me?.first_name || ''} ${me?.last_name || ''}`.trim() || me?.username || '';
+                }
+                document.getElementById("ttTitle").textContent = tutorName ? `Timetable: ${tutorName}` : "Timetable";
+
+                // If still no email, try to infer from sessions by name (only if unique)
+                if (!tutorEmail) {
+                    const curr = await apiGet(API.current()).catch(() => ({ alias: alias || '' }));
+                    const useAlias = alias || curr.alias || '';
+                    if (useAlias) {
+                        const all = await apiGet(`/timetable/sessions/?alias=${encodeURIComponent(useAlias)}`);
+                        const emails = new Set(
+                            all
+                                .filter(s => (s.tutor || '').toLowerCase() === tutorName.toLowerCase())
+                                .map(s => (s.tutor_email || '').toLowerCase())
+                                .filter(Boolean)
+                        );
+                        if (emails.size === 1) {
+                            tutorEmail = [...emails][0];
+                        }
+                    }
+                }
+
+                // reflect in URL (no reload)
+                const url = new URL(location.href);
+                if (tutorName) url.searchParams.set('name', tutorName);
+                if (tutorEmail) url.searchParams.set('email', tutorEmail);
+                if (alias) url.searchParams.set('alias', alias);
+                history.replaceState(null, '', url);
+            }
         }
 
         document.addEventListener("DOMContentLoaded", async () => {
+            if (!token()) { location.href = "/"; return; }
+
+            let useAlias = alias;
+            if (!useAlias) useAlias = await getCurrentAlias();
             try {
-                const all = await apiGet(`/timetable/sessions/?alias=${encodeURIComponent(alias)}`);
+                // DRF endpoint requires trailing slash
+                const all = await apiGet(`/timetable/sessions/?alias=${encodeURIComponent(useAlias)}`);
+
                 const mine = all.filter(s => {
-                    if (tutorEmail) return (s.tutor_email || "").toLowerCase() === tutorEmail.toLowerCase();
-                    return (s.tutor || "").toLowerCase() === (tutorName || "").toLowerCase();
+                    if (tutorEmail) return ((s.tutor_email || '').toLowerCase() === tutorEmail);
+                    if (tutorName) return ((s.tutor || '').toLowerCase() === tutorName.toLowerCase());
+                    return false;
                 });
 
                 if (!mine.length) {
@@ -101,10 +164,9 @@
         });
 
         const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
-        const HSTART = 8, HEND = 20; // 8:00 → 20:00
+        const HSTART = 8, HEND = 20;
 
         function renderWeekGrid(rows) {
-            // bucket by day -> by hour
             const byDay = new Map(DAYS.map(d => [d, []]));
             rows.forEach(r => byDay.get(r.day_of_week || "")?.push(r));
 
@@ -116,17 +178,15 @@
                 html += `<tr><th class="timecol">${h}:00</th>`;
                 for (const day of DAYS) {
                     const matches = (byDay.get(day) || []).filter(s => {
-                        const st = (s.start_time || "").split(":").map(Number);
-                        return st[0] === h; // place the block on its starting hour
+                        const parts = (s.start_time || "").split(":").map(n => parseInt(n, 10));
+                        const hour = Number.isFinite(parts[0]) ? parts[0] : -1;
+                        return hour === h; // place on starting hour only
                     });
                     html += `<td class="slot">`;
                     matches.forEach(s => {
-                        const label = [
-                            (s.activity_code || "").toUpperCase(),
-                            s.location ? ` ${s.location}` : "",
-                            s.weeks ? ` ${s.weeks}` : ""
-                        ].join("");
-                        html += `<div class="event" title="${label}">${(s.activity_code || "").toUpperCase()}${s.location ? `<br/>${s.location}` : ""}${s.weeks ? `<br/>${s.weeks}` : ""}</div>`;
+                        const code = (s.activity_code || "").toUpperCase();
+                        const label = `${code}${s.location ? ` ${s.location}` : ""}${s.weeks ? ` ${s.weeks}` : ""}`;
+                        html += `<div class="event" title="${label}">${code}${s.location ? `<br/>${s.location}` : ""}${s.weeks ? `<br/>${s.weeks}` : ""}</div>`;
                     });
                     html += `</td>`;
                 }
