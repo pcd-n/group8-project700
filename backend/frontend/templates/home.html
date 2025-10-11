@@ -247,12 +247,9 @@
     async function getCurrentAlias() {
       try {
         const { alias } = await apiGet(API.current());  // FIX: call API.current()
-        return alias;
-      } catch (e) {
-        const list = await apiGet(API.semestersList);
-        const cur = (list || []).find(s => s.is_current) || (list || [])[0];
-        if (!cur) throw new Error("No semesters available");
-        return cur.alias;
+        return alias || null;
+      } catch {
+        return null;
       }
     }
 
@@ -272,6 +269,9 @@
         const isAdmin = !!me?.is_staff || roles.includes("Admin");
         const isCoordinator = roles.includes("Coordinator");
         const isTutor = roles.includes("Tutor") && !isAdmin && !isCoordinator;
+        window.__isAdmin = isAdmin;
+        window.__isCoordinator = isCoordinator;
+        window.__isTutor = isTutor;
 
         // Only Admin sees "Create & set current" / view tools
         if (isAdmin) adminCard.classList.remove("d-none");
@@ -320,11 +320,9 @@
         btnUpload?.classList.add("d-none");
         // Remove the upload-first handler, then navigate straight to allocations
         try { btnProceed.removeEventListener("click", proceedUploadOrRun); } catch { }
-        try {
-          const { alias } = await apiGet(API.current());
-          btnProceed.onclick = () => { location.href = `/allocations/?alias=${encodeURIComponent(alias)}`; };
-        } catch { /* if alias fails, the backend change in step 1 fixes it */ }
         btnProceed.classList.remove("d-none");
+        // Navigate without alias; backend will use the current semester
+        btnProceed.onclick = () => { location.href = `/allocations/`; };
       } else {
         // Admin
         btnUpload?.classList.remove("d-none");
@@ -702,7 +700,7 @@
       await loadWelcome();
       await maybeShowAdminTools();
       await maybeShowUsersMgmt();      // function for Users Management button
-      await loadSemesters();
+
       try {
         const alias = await getCurrentAlias();
         await loadUnitsFromServerForAlias(alias);
@@ -801,6 +799,9 @@
         console.warn("restore preview failed:", e);
       }
 
+      if (window.__isAdmin) {
+        await loadSemesters();
+      }
 
     });
 
