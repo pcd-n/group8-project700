@@ -90,64 +90,102 @@ class RegisterView(generics.CreateAPIView):
     permission_classes = [IsAdminRole]
     serializer_class = UserCreateSerializer
 
+    def _unique_username_on_default(self, base):
+        base = (base or "").strip() or "user"
+        u = base
+        i = 1
+        while User.objects.using(DEFAULT_DB).filter(username=u).exists():
+            i += 1
+            u = f"{base}_{i}"
+        return u
+    
     def create(self, request, *args, **kwargs):
-        s = self.get_serializer(data=request.data)
+        # Tell the serializer we're allowed to link by an existing email
+        s = self.get_serializer(data=request.data,
+                                context={"request": request,
+                                         "allow_existing_email": True})
         s.is_valid(raise_exception=True)
 
-        data = s.validated_data
-        email = (data.get("email") or "").strip().lower()
+        data     = s.validated_data
+        email    = (data.get("email") or "").strip().lower()
         username = (data.get("username") or "").strip()
         password = (data.get("password") or "").strip()
-        first = (data.get("first_name") or "").strip()
-        last  = (data.get("last_name") or "").strip()
+        first    = (data.get("first_name") or "").strip()
+        last     = (data.get("last_name") or "").strip()
+        role     = data.get("role_name") or "Tutor"
 
         alias = get_active_semester_alias(request)
 
-        # --- Attach to existing EOI tutor in semester DB ---
-        if alias and alias != "default" and email:
-            existing = User.objects.using(alias).filter(email__iexact=email).first()
-            if existing:
-                # make username unique in the alias DB if needed
-                if not existing.username:
-                    base = username or email.split("@")[0]
-                    u = base
-                    i = 1
-                    while User.objects.using(alias).filter(username=u).exists():
-                        i += 1
-                        u = f"{base}_{i}"
-                    existing.username = u
-                if password:
-                    existing.set_password(password)
-                if first:
-                    existing.first_name = first
-                if last:
-                    existing.last_name = last
-                existing.is_active = True
-                with transaction.atomic(using=alias):
-                    existing.save(using=alias)
-                return Response(
-                    {"user": UserSerializer(existing).data,
-                     "info": f"Linked existing EOI tutor in {alias}"},
-                    status=status.HTTP_200_OK,
-                )
+        # --- Try to locate the EOI tutor in the current semester DB by email ---
+        existing_alias_user = None
+        if alias and alias != DEFAULT_DB and email:
+            existing_alias_user = User.objects.using(alias).filter(email__iexact=email).first()
 
-        # --- Normal default-DB creation path (unchanged) ---
-        try:
-            user = s.save()
-        except IntegrityError as e:
-            raise ValidationError({"non_field_errors": [f"Integrity error: {e}"]})
+        # --- Ensure a platform account on DEFAULT (that’s the account that logs in) ---
+        # If a platform user exists, update it; otherwise create it.
+        platform_user = User.objects.using(DEFAULT_DB).filter(email__iexact=email).first() if email else None
+        # Choose a username (unique on DEFAULT)
+        if platform_user:
+            if username and platform_user.username != username:
+                # If requested username clashes with someone else, uniquify it
+                if User.objects.using(DEFAULT_DB).filter(username=username).exclude(id=platform_user.id).exists():
+                    username = self._unique_username_on_default(username)
+                platform_user.username = username or platform_user.username
+            # Update details/password
+            if first: platform_user.first_name = first
+            if last:  platform_user.last_name  = last
+            if password: platform_user.set_password(password)
+            platform_user.is_active = True
+            platform_user.save(using=DEFAULT_DB)
+            # Assign/refresh role on default
+            platform_user.assign_role(role)
+            info_msg = "Linked to existing platform account"
+        else:
+            # No platform user yet → create one on DEFAULT with a unique username
+            if not username:
+                username = (email.split("@", 1)[0] if email else None) or "user"
+            username = self._unique_username_on_default(username)
+            platform_user = User.objects.create_user(
+                username=username,
+                password=password,
+                role_name=role,
+                email=email,
+                first_name=first,
+                last_name=last,
+                is_active=True,
+            )
+            info_msg = "Created platform account and linked to EOI"
 
+        # --- (Optional) also stamp a username into the alias user for consistency ---
+        if existing_alias_user and not existing_alias_user.username:
+            # Keep usernames readable but avoid collisions inside alias
+            base = platform_user.username
+            u = base
+            i = 1
+            while User.objects.using(alias).filter(username=u).exists():
+                i += 1
+                u = f"{base}_{i}"
+            existing_alias_user.username = u
+            # No need to set password on alias; login uses DEFAULT
+            if first: existing_alias_user.first_name = first
+            if last:  existing_alias_user.last_name  = last
+            existing_alias_user.is_active = True
+            existing_alias_user.save(using=alias)
+
+        # Build tokens for immediate login if you want
         try:
-            refresh = RefreshToken.for_user(user)
+            refresh = RefreshToken.for_user(platform_user)
             tokens = {"access": str(refresh.access_token), "refresh": str(refresh)}
         except Exception:
             tokens = None
 
         return Response(
-            {"user": UserSerializer(user).data, "tokens": tokens},
-            status=status.HTTP_201_CREATED,
+            {"user": UserSerializer(platform_user).data,
+             "tokens": tokens,
+             "info": info_msg},
+            status=status.HTTP_200_OK,
         )
-
+    
 class UserUpdatePermission(BasePermission):
     """Custom permission for user updates - Admin/Coordinator can update any user, users can update themselves."""
     
