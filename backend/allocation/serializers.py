@@ -44,3 +44,38 @@ class AssignRequestSerializer(serializers.Serializer):
         if not attrs.get("tutor_user_id") and not attrs.get("tutor_email") and "notes" not in attrs:
             raise serializers.ValidationError("Provide tutor_user_id, tutor_email, or notes.")
         return attrs
+    
+
+class TutorDetailSerializer(serializers.Serializer):
+    """Serializer for tutor search response."""
+
+    id = serializers.IntegerField()
+    email = serializers.EmailField()
+    first_name = serializers.CharField()
+    last_name = serializers.CharField()
+    full_name = serializers.CharField()
+
+
+class CampusSerializer(serializers.Serializer):
+    """Serializer for campus information."""
+
+    campus_name = serializers.CharField()
+    campus_location = serializers.CharField()
+
+
+class AllocationUnitSerializer(serializers.Serializer):
+    """Serializer for allocated unit information."""
+
+    unit_code = serializers.CharField()
+    unit_name = serializers.CharField()
+    campus = serializers.CharField()
+    total_sessions = serializers.IntegerField()
+    approved_sessions = serializers.IntegerField()
+
+
+class TutorSearchResponseSerializer(serializers.Serializer):
+    """Serializer for tutor search response."""
+
+    tutor = TutorDetailSerializer()
+    campus = CampusSerializer(many=True)
+    allocation_units = AllocationUnitSerializer(many=True)
