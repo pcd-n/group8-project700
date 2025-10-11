@@ -516,13 +516,11 @@ class RunAllocationView(APIView):
                     )
                     created.append(alloc)
                     break  # next session after first valid tutor
-
-        except Exception as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        finally:
-            if ctx:
-                ctx.__exit__(None, None, None)
+                
+        return Response(
+            {"created": len(created), "allocations": AllocationSerializer(created, many=True).data},
+            status=status.HTTP_200_OK,
+        )
 
 class TutorSearchView(APIView):
     """
@@ -716,8 +714,3 @@ class TutorSearchView(APIView):
         }
 
         return Response(response_data, status=status.HTTP_200_OK)
-
-        return Response(
-            {"created": len(created), "allocations": AllocationSerializer(created, many=True).data},
-            status=status.HTTP_200_OK,
-        )

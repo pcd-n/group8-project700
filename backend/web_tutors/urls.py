@@ -15,11 +15,8 @@ urlpatterns = [
     # FRONTEND PAGES
     path("", TemplateView.as_view(template_name="index.html")),
     path("home/", TemplateView.as_view(template_name="home.html")),
-    path("unitdetails/", TemplateView.as_view(template_name="unitdetails.html"), name="unit_details"),
-    path("tutor-search/", TemplateView.as_view(template_name="tutor_search.html"), name="tutor_search",  ),
-    path("", TemplateView.as_view(template_name="index.html"), name="index"),
-    path("home/", TemplateView.as_view(template_name="home.html"), name="home"),
 
+    path("tutor-search/", TemplateView.as_view(template_name="tutor_search.html"), name="tutor_search"),
     # Pretty Unit + Allocation pages
     # e.g. /units/KIT101/ or /units/KIT101/?name=Programming%20Fundamentals
     path("api/accounts/roles/", roles_list, name="roles_list"),
