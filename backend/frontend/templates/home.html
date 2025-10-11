@@ -306,12 +306,12 @@
           const email = (me?.email || "").toLowerCase();
           const name = ((me?.first_name || "") + " " + (me?.last_name || "")).trim() || (me?.username || "Me");
 
-          const url = `/tutortimetable.html?alias=${encodeURIComponent(alias)}&email=${encodeURIComponent(email)}&name=${encodeURIComponent(name)}`;
+          const url = `/tutors/timetable/?alias=${encodeURIComponent(alias)}&email=${encodeURIComponent(email)}&name=${encodeURIComponent(name)}`;
           btnMyTT.href = url;
           btnMyTT.classList.remove("d-none");
         } catch {
           // If current alias fails, still show button without alias (page will resolve)
-          btnMyTT.href = `/tutortimetable.html?email=${encodeURIComponent(me?.email || "")}`;
+          btnMyTT.href = `/tutors/timetable/?email=${encodeURIComponent(me?.email || "")}`;
           btnMyTT.classList.remove("d-none");
         }
       } else {
