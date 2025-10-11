@@ -101,6 +101,42 @@
             }
         }
 
+        async function resolveTutorIdentity() {
+            if (!tutorEmail) {
+                const me = await apiGet('/accounts/profile/');
+                tutorEmail = (me?.email || '').toLowerCase();
+                if (!tutorName) {
+                    tutorName = `${me?.first_name || ''} ${me?.last_name || ''}`.trim() || me?.username || '';
+                }
+                document.getElementById("ttTitle").textContent = tutorName ? `Timetable: ${tutorName}` : "Timetable";
+
+                // If still no email, try to infer from sessions by name (only if unique)
+                if (!tutorEmail) {
+                    const curr = await apiGet(API.current()).catch(() => ({ alias: alias || '' }));
+                    const useAlias = alias || curr.alias || '';
+                    if (useAlias) {
+                        const all = await apiGet(`/timetable/sessions/?alias=${encodeURIComponent(useAlias)}`);
+                        const emails = new Set(
+                            all
+                                .filter(s => (s.tutor || '').toLowerCase() === tutorName.toLowerCase())
+                                .map(s => (s.tutor_email || '').toLowerCase())
+                                .filter(Boolean)
+                        );
+                        if (emails.size === 1) {
+                            tutorEmail = [...emails][0];
+                        }
+                    }
+                }
+
+                // reflect in URL (no reload)
+                const url = new URL(location.href);
+                if (tutorName) url.searchParams.set('name', tutorName);
+                if (tutorEmail) url.searchParams.set('email', tutorEmail);
+                if (alias) url.searchParams.set('alias', alias);
+                history.replaceState(null, '', url);
+            }
+        }
+
         document.addEventListener("DOMContentLoaded", async () => {
             if (!token()) { location.href = "/"; return; }
 
@@ -111,8 +147,9 @@
                 const all = await apiGet(`/timetable/sessions/?alias=${encodeURIComponent(useAlias)}`);
 
                 const mine = all.filter(s => {
-                    if (tutorEmail) return (s.tutor_email || "").toLowerCase() === tutorEmail;
-                    return (s.tutor || "").toLowerCase() === (tutorName || "").toLowerCase();
+                    if (tutorEmail) return ((s.tutor_email || '').toLowerCase() === tutorEmail);
+                    if (tutorName) return ((s.tutor || '').toLowerCase() === tutorName.toLowerCase());
+                    return false;
                 });
 
                 if (!mine.length) {

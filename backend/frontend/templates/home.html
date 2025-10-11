@@ -295,33 +295,30 @@
       const btnMyTT = document.getElementById("btnMyTimetable");
 
       if (isTutor) {
-        // Hide admin/coordinator controls
         btnUpload?.classList.add("d-none");
         btnProceed?.classList.add("d-none");
         btnUsers?.classList.add("d-none");
 
-        // ALWAYS derive name/email first so catch can use them too
         const email = (me?.email || "").toLowerCase();
-        const name = ((me?.first_name || "") + " " + (me?.last_name || "")).trim()
-          || (me?.username || "Me");
+        const name =
+          `${me?.first_name || ""} ${me?.last_name || ""}`.trim() ||
+          me?.username || "Tutor";
 
         try {
-          // Prefer current alias when available
           const { alias } = await apiGet(API.current());
-          btnMyTT.href =
-            `/tutors/timetable/?alias=${encodeURIComponent(alias)}`
-            + `&name=${encodeURIComponent(name)}`
-            + `&email=${encodeURIComponent(email)}`;
+
+          // Build identical shape to admin links, but include &email only if present
+          let url = `/tutors/timetable/?alias=${encodeURIComponent(alias)}&name=${encodeURIComponent(name)}`;
+          if (email) url += `&email=${encodeURIComponent(email)}`;
+          btnMyTT.href = url;
           btnMyTT.classList.remove("d-none");
         } catch {
-          // Still show the button even if alias fetch fails
-          btnMyTT.href =
-            `/tutors/timetable/?name=${encodeURIComponent(name)}`
-            + `&email=${encodeURIComponent(email)}`;
+          let url = `/tutors/timetable/?name=${encodeURIComponent(name)}`;
+          if (email) url += `&email=${encodeURIComponent(email)}`;
+          btnMyTT.href = url;
           btnMyTT.classList.remove("d-none");
         }
       } else {
-        // Admin/Coordinator keep the usual controls
         btnUpload?.classList.remove("d-none");
         btnProceed?.classList.remove("d-none");
       }

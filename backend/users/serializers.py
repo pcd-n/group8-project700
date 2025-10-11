@@ -82,10 +82,11 @@ class UserCreateSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
-        # if supervisor requested, campus must be provided
-        if attrs.get('is_supervisor') and not attrs.get('campus_id'):
-            raise serializers.ValidationError({"campus_id": "Campus is required when is_supervisor is true."})
-        return attrs
+        role = (attrs.get('role_name') or '').strip().lower()
+        email = (attrs.get('email') or '').strip()
+        if role == 'tutor' and not email:
+            raise serializers.ValidationError({'email': 'Email is required for Tutor accounts.'})
+        return super().validate(attrs)
 
     # --- Create ---
 
