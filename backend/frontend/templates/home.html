@@ -256,27 +256,20 @@
     // =========================
     const adminCard = document.getElementById("adminSemesterTools");
     async function maybeShowAdminTools() {
-      const candidates = Array.isArray(API.meCandidates) ? API.meCandidates : [];
-      if (candidates.length === 0) {
-        // no way to check → show UI; server will still enforce perms on POST
-        adminCard.classList.remove("d-none");
-        return;
-      }
-      for (const p of candidates) {
-        try {
-          const me = await apiGet(p);
-          const isAdmin =
-            !!me?.is_staff ||
-            (Array.isArray(me?.roles) && me.roles.includes("Admin")) ||
-            me?.role === "Admin";
-          if (isAdmin) {
-            adminCard.classList.remove("d-none");
-            return;
-          }
-        } catch (_) {
+      try {
+        const res = await fetch('/api/accounts/profile/', { headers: authHeaders(), credentials: 'include' });
+        if (!res.ok) return; // not logged in / unauthorized
+        const me = await res.json();
+        const roles = Array.isArray(me?.roles) ? me.roles.map(r => r.name) : [];
+        const isAdmin = !!me?.is_staff || roles.includes('Admin');
+        if (isAdmin) {
+          adminCard.classList.remove("d-none");
+        } else {
+          adminCard.classList.add("d-none");   // ensure hidden for Coordinator/Tutor
         }
+      } catch (_) {
+        adminCard.classList.add("d-none");
       }
-      adminCard.classList.remove("d-none");
     }
 
     // =================================
@@ -551,6 +544,60 @@
       recordCount.textContent = `${unitSheets.length} Records Found`;
     }
 
+    // Tutor UI - view timetable only
+    function hideAllMainActions() {
+      // Hide upload and allocation controls
+      document.getElementById("btnUpload")?.classList.add("hidden");
+      document.getElementById("eoiFile")?.classList.add("hidden");
+      document.getElementById("btnProceedAlloc")?.classList.add("hidden");
+      document.getElementById("allocFile")?.classList.add("hidden");
+      document.getElementById("eoiInfoRow")?.classList.add("hidden");
+      document.getElementById("fileName")?.classList.add("hidden");
+      document.getElementById("allocInfoRow")?.classList.add("hidden");
+      document.getElementById("allocFileName")?.classList.add("hidden");
+
+      // Hide units/alloc sections
+      document.getElementById("unitsSection")?.classList.add("hidden");
+      document.getElementById("allocSection")?.classList.add("hidden");
+
+      // Hide admin tools (belt & braces)
+      document.getElementById("adminSemesterTools")?.classList.add("d-none");
+      // Hide Users Management link
+      document.getElementById("btnUsersMgmt")?.classList.add("d-none");
+    }
+
+    async function enforceTutorUI() {
+      try {
+        const res = await fetch('/api/accounts/profile/', { headers: authHeaders(), credentials: 'include' });
+        if (!res.ok) return;
+        const me = await res.json();
+        const roles = Array.isArray(me?.roles) ? me.roles.map(r => r.name) : [];
+        const isTutor = roles.includes('Tutor') && !roles.includes('Admin') && !roles.includes('Coordinator');
+        if (!isTutor) return;
+
+        // 1) Hide everything except logout + welcome
+        hideAllMainActions();
+
+        // 2) Compute current alias and build the single button
+        const aliasRes = await fetch('/api/semesters/current/', { headers: authHeaders(), credentials: 'include' });
+        const { alias } = aliasRes.ok ? await aliasRes.json() : { alias: "" };
+
+        const name = (me?.user?.full_name || me?.user?.username || me?.user?.email || "Tutor");
+        const email = me?.user?.email || "";
+
+        const wrap = document.querySelector(".hero .d-flex.flex-column.align-items-center.gap-2");
+        if (wrap) {
+          const btn = document.createElement("a");
+          btn.className = "btn btn-dark btn-pill btn-wide";
+          const qs = new URLSearchParams({ alias: alias || "", name, email });
+          btn.href = `/tutors/timetable/?${qs.toString()}`;
+          btn.textContent = "View My Timetable";
+          wrap.innerHTML = "";         // clear any other buttons
+          wrap.appendChild(btn);
+        }
+      } catch (_) { /* ignore */ }
+    }
+
     // =========================
     // Tutor allocation workflow
     // =========================
@@ -650,6 +697,7 @@
       await loadWelcome();
       await maybeShowAdminTools();     // your existing function
       await maybeShowUsersMgmt();      // function for Users Management button
+      await enforceTutorUI();
       await loadSemesters();
       try {
         const alias = await getCurrentAlias();

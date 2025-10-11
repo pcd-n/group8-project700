@@ -14,7 +14,7 @@ from .services import (
 )
 
 class SemesterListView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminRole]
 
     def get(self, request):
         qs = list_existing_semesters()
@@ -26,7 +26,7 @@ class SemesterCreateView(APIView):
     Creates the physical semester database (via create_semester_db) and
     IMMEDIATELY migrates it so schema matches the codebase.
     """
-    permission_classes = [IsAuthenticated, IsAdminRole]
+    permission_classes = [IsAdminRole]
 
     def post(self, request):
         s = CreateSemesterSerializer(data=request.data)
@@ -50,7 +50,7 @@ class SemesterSelectView(APIView):
     """
     Set *viewing* semester (read-only). Pass {"alias": null} to revert to current.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminRole]
 
     def post(self, request):
         s = SelectViewSerializer(data=request.data)
@@ -67,7 +67,7 @@ class SemesterSetCurrentView(APIView):
     Marks an existing semester as *current* and ensures its schema is up-to-date.
     This avoids 1054 Unknown column errors when the UI switches to the new current DB.
     """
-    permission_classes = [IsAuthenticated, IsAdminRole]
+    permission_classes = [IsAdminRole]
     def post(self, request, alias):
         if not Semester.objects.filter(alias=alias).exists():
             return Response({"detail": "Unknown alias"}, status=404)
@@ -81,7 +81,7 @@ class SemesterCurrentView(APIView):
     Return the active alias the frontend should use.
     Priority: session view_alias -> current semester.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminRole]
 
     def get(self, request):
         alias = get_active_semester_alias(request)  # resolves view_semester or current

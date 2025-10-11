@@ -1,3 +1,4 @@
+#web_tutors/settings.py
 """
 Django settings for web_tutors project.
 

@@ -17,7 +17,7 @@ from semesters.threadlocal import force_write_alias
 from semesters.router import get_current_semester_alias
 from users.models import User, Campus
 from units.models import Unit, UnitCourse
-from users.permissions import IsAdminOrCoordinator
+from users.permissions import IsAdminOrCoordinator, TutorReadOnly
 
 User = get_user_model()
 
@@ -451,7 +451,7 @@ class RunAllocationView(APIView):
     """
     Runs a simple automatic allocation for the current semester DB.
     """
-    permission_classes = [IsAdminOrCoordinator]
+    permission_classes = [IsAdminOrCoordinator & TutorReadOnly]
 
     def post(self, request):
         alias = request.GET.get("alias") or request.data.get("alias") or _get_alias(request)

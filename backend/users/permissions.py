@@ -39,7 +39,12 @@ class TutorReadOnly(BasePermission):
     """
     Tutors may only perform SAFE_METHODS.
     Admin/Coordinator unaffected.
+    Allow tutors to POST to logout.
     """
+    ALLOW_TUTOR_POST_PATHS = {
+        "/api/accounts/logout/",
+    }
+
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
@@ -47,9 +52,13 @@ class TutorReadOnly(BasePermission):
             return True
         rn = role_name(request.user)
         if rn == "Tutor":
-            return request.method in SAFE_METHODS
+            if request.method in SAFE_METHODS:
+                return True
+            # allow explicit non-safe calls that must work for tutors
+            if request.method == "POST" and request.path in self.ALLOW_TUTOR_POST_PATHS:
+                return True
+            return False
         return True
-
 
 class IsStaffOrOwner(BasePermission):
     """
