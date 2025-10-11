@@ -121,6 +121,11 @@
         <div id="allocInfoRow" class="file-note mt-1"></div>
         <div id="allocFileName" class="file-note"></div>
 
+        <!-- Tutor-only: view their timetable -->
+        <a id="btnMyTimetable" href="#" class="btn btn-primary btn-pill btn-wide d-none">
+          View My Timetable
+        </a>
+
         <!-- Admin-only: Users Management -->
         <div class="d-flex justify-content-center mt-3">
           <a id="btnUsersMgmt" href="/manage/users" class="btn btn-outline-dark btn-pill btn-wide d-none">
@@ -256,27 +261,65 @@
     // =========================
     const adminCard = document.getElementById("adminSemesterTools");
     async function maybeShowAdminTools() {
-      const candidates = Array.isArray(API.meCandidates) ? API.meCandidates : [];
-      if (candidates.length === 0) {
-        // no way to check → show UI; server will still enforce perms on POST
-        adminCard.classList.remove("d-none");
-        return;
-      }
-      for (const p of candidates) {
-        try {
-          const me = await apiGet(p);
-          const isAdmin =
-            !!me?.is_staff ||
-            (Array.isArray(me?.roles) && me.roles.includes("Admin")) ||
-            me?.role === "Admin";
-          if (isAdmin) {
-            adminCard.classList.remove("d-none");
-            return;
-          }
-        } catch (_) {
+      try {
+        const res = await fetch('/api/accounts/profile/', {
+          headers: authHeaders(),
+          credentials: 'include'
+        });
+        if (!res.ok) return;
+        const me = await res.json();
+        const roles = Array.isArray(me?.roles) ? me.roles.map(r => r.name) : [];
+        const isAdmin = !!me?.is_staff || roles.includes("Admin");
+        const isCoordinator = roles.includes("Coordinator");
+        const isTutor = roles.includes("Tutor") && !isAdmin && !isCoordinator;
+
+        // Admin/Coordinator: show the semester tools card
+        if (isAdmin || isCoordinator) {
+          adminCard.classList.remove("d-none");
+        } else {
+          // keep hidden for Tutors/others
+          adminCard.classList.add("d-none");
         }
+
+        await initRoleUI({ me, isAdmin, isCoordinator, isTutor });
+      } catch (_) {
+        // If profile failed, default to safest: hide admin tools
+        adminCard.classList.add("d-none");
       }
-      adminCard.classList.remove("d-none");
+    }
+
+    async function initRoleUI({ me, isAdmin, isCoordinator, isTutor }) {
+      const btnUpload = document.getElementById("btnUpload");
+      const btnProceed = document.getElementById("btnProceedAlloc");
+      const btnUsers = document.getElementById("btnUsersMgmt");
+      const btnMyTT = document.getElementById("btnMyTimetable");
+
+      if (isTutor) {
+        // Hide all admin/coordinator things for tutors
+        btnUpload?.classList.add("d-none");
+        btnProceed?.classList.add("d-none");
+        btnUsers?.classList.add("d-none");
+
+        // Build the “My Timetable” link with current alias + user email/name
+        try {
+          const { alias } = await apiGet(API.current());
+          const email = (me?.email || "").toLowerCase();
+          const name = ((me?.first_name || "") + " " + (me?.last_name || "")).trim() || (me?.username || "Me");
+
+          const url = `/tutortimetable.html?alias=${encodeURIComponent(alias)}&email=${encodeURIComponent(email)}&name=${encodeURIComponent(name)}`;
+          btnMyTT.href = url;
+          btnMyTT.classList.remove("d-none");
+        } catch {
+          // If current alias fails, still show button without alias (page will resolve)
+          btnMyTT.href = `/tutortimetable.html?email=${encodeURIComponent(me?.email || "")}`;
+          btnMyTT.classList.remove("d-none");
+        }
+      } else {
+        // Admin/Coordinator: show everything as you already do
+        btnUpload?.classList.remove("d-none");
+        btnProceed?.classList.remove("d-none");
+        // Users Management is already gated elsewhere; keep it
+      }
     }
 
     // =================================
@@ -648,7 +691,7 @@
     document.addEventListener("DOMContentLoaded", async () => {
       if (!token()) return (window.location.href = "/"); // require login
       await loadWelcome();
-      await maybeShowAdminTools();     // your existing function
+      await maybeShowAdminTools();
       await maybeShowUsersMgmt();      // function for Users Management button
       await loadSemesters();
       try {

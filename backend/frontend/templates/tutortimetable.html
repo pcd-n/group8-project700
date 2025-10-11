@@ -55,7 +55,7 @@
     <div class="container py-4">
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h1 id="ttTitle" class="h5 m-0">Timetable</h1>
-            <a id="backLink" href="/allocations/" class="btn btn-outline-secondary">← Back</a>
+            <a id="backLink" href="/home/" class="btn btn-outline-secondary">← Back</a>
         </div>
         <div id="gridWrap" class="table-responsive"></div>
         <div id="empty" class="alert alert-warning d-none mt-3">No assigned classes for this tutor.</div>
@@ -82,12 +82,33 @@
             return data || [];
         }
 
+        const backLink = document.getElementById("backLink");
+        // If they arrived from allocations, keep that experience for admins/coordinators
+        if (document.referrer && document.referrer.includes('/allocations/')) {
+            backLink.href = document.referrer;
+        } else {
+            backLink.href = '/home/';
+        }
+
+        async function getCurrentAlias() {
+            try {
+                const res = await fetch(`${API_BASE}/semesters/current/`, { headers: authHeaders(), credentials: "include" });
+                if (!res.ok) throw new Error();
+                const { alias } = await res.json();
+                return alias || "";
+            } catch {
+                return "";
+            }
+        }
+
         document.addEventListener("DOMContentLoaded", async () => {
             if (!token()) { location.href = "/"; return; }
 
+            let useAlias = alias;
+            if (!useAlias) useAlias = await getCurrentAlias();
             try {
                 // DRF endpoint requires trailing slash
-                const all = await apiGet(`/timetable/sessions/?alias=${encodeURIComponent(alias)}`);
+                const all = await apiGet(`/timetable/sessions/?alias=${encodeURIComponent(useAlias)}`);
 
                 const mine = all.filter(s => {
                     if (tutorEmail) return (s.tutor_email || "").toLowerCase() === tutorEmail;
