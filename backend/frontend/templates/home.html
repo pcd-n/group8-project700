@@ -606,15 +606,54 @@
     const allocFileName = document.getElementById("allocFileName");
 
     // Click -> pick file if none, otherwise run workflow
-    function proceedUploadOrRun(e) {
-      if (!allocFile.files?.length) {
-        e.preventDefault();
-        e.stopPropagation();
-        allocFile.click();
-      } else {
-        startAllocationWorkflow();
+    async function onProceedToAllocation(e) {
+      e?.preventDefault?.();
+
+      // 1) current alias
+      let alias = "";
+      try {
+        const r = await fetch('/api/semesters/current/', { credentials: 'include' });
+        if (r.ok) {
+          const j = await r.json();
+          alias = j?.alias || "";
+        }
+      } catch { }
+
+      // helper: if any unit or class exists, treat as already loaded
+      async function hasData() {
+        try {
+          // try “status” endpoint first (if present in your server)
+          const rs = await fetch(`/api/imports/status/?alias=${encodeURIComponent(alias)}`,
+            { credentials: 'include' });
+          if (rs.ok) {
+            const st = await rs.json();
+            if (st?.has_eoi || st?.has_sessions || st?.has_master_classes) return true;
+          }
+        } catch { }
+        // fallback: ask units list directly
+        try {
+          const ru = await fetch(`/api/units/?alias=${encodeURIComponent(alias)}`,
+            { credentials: 'include' });
+          if (ru.ok) {
+            const u = await ru.json();
+            if ((Array.isArray(u) && u.length) || (u?.results?.length > 0)) return true;
+          }
+        } catch { }
+        return false;
       }
+
+      if (await hasData()) {
+        // go straight to allocation UI that reads semester DB
+        window.location.href = `/allocation/?alias=${encodeURIComponent(alias)}`;
+        return;
+      }
+
+      alert("No EOI/master class data found for the current semester. Please ask an Admin to upload.");
     }
+
+    // wire it
+    document.getElementById('btnProceedAlloc')?.removeEventListener('click', proceedUploadOrRun);
+    document.getElementById('btnProceedAlloc')?.addEventListener('click', onProceedToAllocation);
     btnProceed.addEventListener("click", proceedUploadOrRun);
 
     // Keep your existing onchange:
@@ -698,8 +737,8 @@
         const me = await r.json();
         const roles = (me?.roles || []).map(r => r.name);
         const isAdmin = !!me?.is_staff || roles.includes('Admin');
-        // Only Admin can see upload
-        if (isAdmin) btn.classList.remove('d-none'); else btn.classList.add('d-none');
+        // Only Admin sees upload
+        btn.classList.toggle('d-none', !isAdmin);
       } catch { btn.classList.add('d-none'); }
     }
 

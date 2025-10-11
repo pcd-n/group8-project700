@@ -99,13 +99,15 @@ class RegisterView(generics.CreateAPIView):
         username = (data.get("username") or "").strip()
         password = (data.get("password") or "").strip()
         first = (data.get("first_name") or "").strip()
-        last = (data.get("last_name") or "").strip()
+        last  = (data.get("last_name") or "").strip()
 
         alias = get_active_semester_alias(request)
-        # --- Case 1: EOI tutor already exists in semester DB ---
+
+        # --- Attach to existing EOI tutor in semester DB ---
         if alias and alias != "default" and email:
             existing = User.objects.using(alias).filter(email__iexact=email).first()
             if existing:
+                # make username unique in the alias DB if needed
                 if not existing.username:
                     base = username or email.split("@")[0]
                     u = base
@@ -129,9 +131,9 @@ class RegisterView(generics.CreateAPIView):
                     status=status.HTTP_200_OK,
                 )
 
-        # --- Case 2: Normal Admin-created account in default DB ---
+        # --- Normal default-DB creation path (unchanged) ---
         try:
-            user = s.save()  # saves to DEFAULT_DB via serializer
+            user = s.save()
         except IntegrityError as e:
             raise ValidationError({"non_field_errors": [f"Integrity error: {e}"]})
 
@@ -145,7 +147,7 @@ class RegisterView(generics.CreateAPIView):
             {"user": UserSerializer(user).data, "tokens": tokens},
             status=status.HTTP_201_CREATED,
         )
-    
+
 class UserUpdatePermission(BasePermission):
     """Custom permission for user updates - Admin/Coordinator can update any user, users can update themselves."""
     
