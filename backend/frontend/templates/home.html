@@ -256,36 +256,52 @@
     // =========================
     const adminCard = document.getElementById("adminSemesterTools");
     async function maybeShowAdminTools() {
-      try {
-        const res = await fetch('/api/accounts/profile/', { headers: authHeaders(), credentials: 'include' });
-        if (!res.ok) return;
-        const me = await res.json();
-        const roles = Array.isArray(me?.roles) ? me.roles.map(r => r.name) : [];
-        const isAdmin = !!me?.user?.is_staff || roles.includes('Admin');
-        adminCard.classList.toggle("d-none", !isAdmin);
-      } catch {
-        adminCard.classList.add("d-none");
+      const candidates = Array.isArray(API.meCandidates) ? API.meCandidates : [];
+      if (candidates.length === 0) {
+        // no way to check → show UI; server will still enforce perms on POST
+        adminCard.classList.remove("d-none");
+        return;
       }
+      for (const p of candidates) {
+        try {
+          const me = await apiGet(p);
+          const isAdmin =
+            !!me?.is_staff ||
+            (Array.isArray(me?.roles) && me.roles.includes("Admin")) ||
+            me?.role === "Admin";
+          if (isAdmin) {
+            adminCard.classList.remove("d-none");
+            return;
+          }
+        } catch (_) {
+        }
+      }
+      adminCard.classList.remove("d-none");
     }
 
     // =================================
     async function loadWelcome() {
-      if (!token()) return;
+      if (!token()) return; // not logged in
       try {
-        const res = await fetch('/api/accounts/profile/', { headers: authHeaders(), credentials: 'include' });
+        const res = await fetch('/api/accounts/profile/', {
+          headers: authHeaders(),
+          credentials: 'include'
+        });
         if (!res.ok) return;
         const me = await res.json();
 
-        const u = me?.user || {};
+        // Name
+        const name =
+          (me.first_name || me.last_name) ? `${me.first_name || ''} ${me.last_name || ''}`.trim()
+            : (me.username || me.email || 'User');
+
+        // Role(s) – your profile returns roles: [{ id, name }]
         const roles = Array.isArray(me?.roles) ? me.roles.map(r => r.name) : [];
-        const mainRole = roles[0] || (u.is_staff ? 'Admin' : 'User');
+        const mainRole = roles[0] || (me.is_staff ? 'Admin' : 'User');
 
-        const name = (u.first_name || u.last_name)
-          ? `${u.first_name || ''} ${u.last_name || ''}`.trim()
-          : (u.username || u.email || 'User');
-
-        document.getElementById('welcomeBox').textContent = `Welcome back, ${name} (${mainRole}),`;
-      } catch { /* ignore */ }
+        document.getElementById('welcomeBox').textContent =
+          `Welcome back, ${name} (${mainRole}),`;
+      } catch (_) { /* ignore */ }
     }
 
     async function doLogout() {
@@ -535,60 +551,6 @@
       recordCount.textContent = `${unitSheets.length} Records Found`;
     }
 
-    // Tutor UI - view timetable only
-    function hideAllMainActions() {
-      // Hide upload and allocation controls
-      document.getElementById("btnUpload")?.classList.add("hidden");
-      document.getElementById("eoiFile")?.classList.add("hidden");
-      document.getElementById("btnProceedAlloc")?.classList.add("hidden");
-      document.getElementById("allocFile")?.classList.add("hidden");
-      document.getElementById("eoiInfoRow")?.classList.add("hidden");
-      document.getElementById("fileName")?.classList.add("hidden");
-      document.getElementById("allocInfoRow")?.classList.add("hidden");
-      document.getElementById("allocFileName")?.classList.add("hidden");
-
-      // Hide units/alloc sections
-      document.getElementById("unitsSection")?.classList.add("hidden");
-      document.getElementById("allocSection")?.classList.add("hidden");
-
-      // Hide admin tools (belt & braces)
-      document.getElementById("adminSemesterTools")?.classList.add("d-none");
-      // Hide Users Management link
-      document.getElementById("btnUsersMgmt")?.classList.add("d-none");
-    }
-
-    async function enforceTutorUI() {
-      try {
-        const res = await fetch('/api/accounts/profile/', { headers: authHeaders(), credentials: 'include' });
-        if (!res.ok) return;
-        const me = await res.json();
-        const roles = Array.isArray(me?.roles) ? me.roles.map(r => r.name) : [];
-        const isTutor = roles.includes('Tutor') && !roles.includes('Admin') && !roles.includes('Coordinator');
-        if (!isTutor) return;
-
-        // 1) Hide everything except logout + welcome
-        hideAllMainActions();
-
-        // 2) Compute current alias and build the single button
-        const aliasRes = await fetch('/api/semesters/current/', { headers: authHeaders(), credentials: 'include' });
-        const { alias } = aliasRes.ok ? await aliasRes.json() : { alias: "" };
-
-        const name = (me?.user?.full_name || me?.user?.username || me?.user?.email || "Tutor");
-        const email = me?.user?.email || "";
-
-        const wrap = document.querySelector(".hero .d-flex.flex-column.align-items-center.gap-2");
-        if (wrap) {
-          const btn = document.createElement("a");
-          btn.className = "btn btn-dark btn-pill btn-wide";
-          const qs = new URLSearchParams({ alias: alias || "", name, email });
-          btn.href = `/tutors/timetable/?${qs.toString()}`;
-          btn.textContent = "View My Timetable";
-          wrap.innerHTML = "";         // clear any other buttons
-          wrap.appendChild(btn);
-        }
-      } catch (_) { /* ignore */ }
-    }
-
     // =========================
     // Tutor allocation workflow
     // =========================
@@ -597,44 +559,15 @@
     const allocFileName = document.getElementById("allocFileName");
 
     // Click -> pick file if none, otherwise run workflow
-    async function onProceedToAllocation(e) {
-      e?.preventDefault?.();
-
-      // Current alias
-      let alias = "";
-      try {
-        const r = await fetch('/api/semesters/current/', { headers: authHeaders(), credentials: 'include' });
-        if (r.ok) alias = (await r.json())?.alias || "";
-      } catch { }
-
-      // Try imports/status, then fall back to /units
-      async function hasData() {
-        try {
-          const rs = await fetch(`/api/imports/status/?alias=${encodeURIComponent(alias)}`, { headers: authHeaders(), credentials: 'include' });
-          if (rs.ok) {
-            const st = await rs.json();
-            if (st?.has_eoi || st?.has_sessions || st?.has_master_classes) return true;
-          }
-        } catch { }
-        try {
-          const ru = await fetch(`/api/units/?alias=${encodeURIComponent(alias)}`, { headers: authHeaders(), credentials: 'include' });
-          if (ru.ok) {
-            const u = await ru.json();
-            if ((Array.isArray(u) && u.length) || (u?.results?.length > 0)) return true;
-          }
-        } catch { }
-        return false;
-      }
-
-      if (await hasData()) {
-        window.location.href = `/allocation/?alias=${encodeURIComponent(alias)}`;
+    function proceedUploadOrRun(e) {
+      if (!allocFile.files?.length) {
+        e.preventDefault();
+        e.stopPropagation();
+        allocFile.click();
       } else {
-        alert("No EOI/master class data found for the current semester. Please ask an Admin to upload.");
+        startAllocationWorkflow();
       }
     }
-
-    // Wire it once
-    document.getElementById('btnProceedAlloc')?.addEventListener('click', onProceedToAllocation);
     btnProceed.addEventListener("click", proceedUploadOrRun);
 
     // Keep your existing onchange:
@@ -692,51 +625,23 @@
     // --- Show the Users Management button only for Admins ---
     async function maybeShowUsersMgmt() {
       try {
-        const res = await fetch('/api/accounts/profile/', { headers: authHeaders(), credentials: 'include' });
-        if (!res.ok) return;
-        const me = await res.json();
-        const roles = Array.isArray(me?.roles) ? me.roles.map(r => r.name) : [];
-        const isAdmin = !!me?.user?.is_staff || roles.includes('Admin');
-        document.getElementById('btnUsersMgmt')?.classList.toggle('d-none', !isAdmin);
-      } catch { /* ignore */ }
-    }
-
-    async function maybeShowEoiUpload() {
-      const btn = document.getElementById("btnUpload");
-      if (!btn) return;
-      try {
-        const r = await fetch('/api/accounts/profile/', { headers: authHeaders(), credentials: 'include' });
-        if (!r.ok) { btn.classList.add('d-none'); return; }
-        const me = await r.json();
-        const roles = (me?.roles || []).map(r => r.name);
-        const isAdmin = !!me?.user?.is_staff || roles.includes('Admin');
-        btn.classList.toggle('d-none', !isAdmin);
-      } catch { btn.classList.add('d-none'); }
-    }
-    async function onProceedToAllocation() {
-      // 1) get current alias from backend
-      const cur = await fetch('/api/semesters/current/', { credentials: 'include' }).then(r => r.ok ? r.json() : {});
-      const alias = cur?.alias || "";
-
-      // 2) ask imports/status if EOI + sessions exist
-      const st = await fetch(`/api/imports/status/?alias=${encodeURIComponent(alias)}`, { credentials: 'include' })
-        .then(r => r.ok ? r.json() : null);
-
-      // 3) If EOI already uploaded for this semester -> go straight to allocation page
-      if (st && (st.has_eoi || st.has_sessions)) {
-        window.location.href = `/allocation/?alias=${encodeURIComponent(alias)}`;
-        return;
+        const res = await fetch('/api/accounts/profile/', {
+          headers: authHeaders(),
+          credentials: 'include'
+        });
+        if (!res.ok) return; // not logged in / unauthorized
+        const data = await res.json();
+        // roles structure from your UserProfileView: roles: [{ id, name }]
+        const roles = Array.isArray(data?.roles) ? data.roles.map(r => r.name) : [];
+        const isAdmin = !!data?.is_staff || roles.includes('Admin');
+        if (isAdmin) {
+          document.getElementById('btnUsersMgmt')?.classList.remove('d-none');
+        }
+      } catch (e) {
+        // ignore - server will still enforce perms
       }
-
-      // 4) Otherwise, tell the user (coordinators shouldn’t upload)
-      alert("No EOI/master class data found for the current semester. Please ask an Admin to upload.");
     }
 
-    // wire it once
-    document.getElementById('btnProceedAlloc')?.addEventListener('click', (e) => {
-      e.preventDefault();
-      onProceedToAllocation();
-    });
     // =========================
     // Init
     // =========================
@@ -745,8 +650,6 @@
       await loadWelcome();
       await maybeShowAdminTools();     // your existing function
       await maybeShowUsersMgmt();      // function for Users Management button
-      await maybeShowEoiUpload();
-      await enforceTutorUI();
       await loadSemesters();
       try {
         const alias = await getCurrentAlias();
@@ -782,7 +685,7 @@
         const hasClassList = await semesterHasClassList(alias);
         if (hasClassList) {
           // 2) Remove the upload-first click behavior and just navigate
-
+          btnProceed.removeEventListener("click", proceedUploadOrRun);
           btnProceed.onclick = () => {
             location.href = `/allocations/?alias=${encodeURIComponent(alias)}`;
           };
@@ -801,7 +704,7 @@
               allocFile.value = "";
               allocFileName.textContent = "";
               btnProceed.onclick = null;
-
+              btnProceed.addEventListener("click", proceedUploadOrRun, { once: false });
               alert("Please choose the new Master Class List to upload.");
             });
           }
