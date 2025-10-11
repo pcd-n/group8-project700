@@ -55,6 +55,12 @@ class UserCreateSerializer(serializers.ModelSerializer):
             'role_name',
             'is_supervisor', 'campus_id', 'note'
         ]
+        # IMPORTANT: let custom validation handle uniqueness/linking.
+        # DRF auto-validators would otherwise block "email already exists".
+        extra_kwargs = {
+            'email': {'validators': []},
+            'username': {'validators': []},
+        }
 
     # --- Validation ---
     def validate_email(self, value):
