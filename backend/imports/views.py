@@ -103,7 +103,7 @@ class ImportStatusView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        alias = request.query_params.get("alias") or get_current_semester_alias()
+        alias = request.query_params.get("alias") or get_active_semester_alias(request)
         if not alias or alias == "default":
             return Response({"detail": "No semester alias provided."}, status=400)
 

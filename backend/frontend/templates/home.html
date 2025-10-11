@@ -689,6 +689,44 @@
       }
     }
 
+    async function maybeShowEoiUpload() {
+      const btn = document.getElementById("btnUpload");
+      if (!btn) return;
+      try {
+        const r = await fetch('/api/accounts/profile/', { credentials: 'include' });
+        if (!r.ok) { btn.classList.add('d-none'); return; }
+        const me = await r.json();
+        const roles = (me?.roles || []).map(r => r.name);
+        const isAdmin = !!me?.is_staff || roles.includes('Admin');
+        // Only Admin can see upload
+        if (isAdmin) btn.classList.remove('d-none'); else btn.classList.add('d-none');
+      } catch { btn.classList.add('d-none'); }
+    }
+
+    async function onProceedToAllocation() {
+      // 1) get current alias from backend
+      const cur = await fetch('/api/semesters/current/', { credentials: 'include' }).then(r => r.ok ? r.json() : {});
+      const alias = cur?.alias || "";
+
+      // 2) ask imports/status if EOI + sessions exist
+      const st = await fetch(`/api/imports/status/?alias=${encodeURIComponent(alias)}`, { credentials: 'include' })
+        .then(r => r.ok ? r.json() : null);
+
+      // 3) If EOI already uploaded for this semester -> go straight to allocation page
+      if (st && (st.has_eoi || st.has_sessions)) {
+        window.location.href = `/allocation/?alias=${encodeURIComponent(alias)}`;
+        return;
+      }
+
+      // 4) Otherwise, tell the user (coordinators shouldn’t upload)
+      alert("No EOI/master class data found for the current semester. Please ask an Admin to upload.");
+    }
+
+    // wire it once
+    document.getElementById('btnProceedAlloc')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      onProceedToAllocation();
+    });
     // =========================
     // Init
     // =========================

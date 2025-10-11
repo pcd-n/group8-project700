@@ -22,6 +22,7 @@ from .permissions import (
     IsAdminRole, IsAdminOrCoordinator, TutorReadOnly,
     CanManageAllocations, CanSetPreferences,
 )
+from semesters.services import get_active_semester_alias
 from rich.console import Console
 import logging
 
@@ -93,14 +94,47 @@ class RegisterView(generics.CreateAPIView):
         s = self.get_serializer(data=request.data)
         s.is_valid(raise_exception=True)
 
-        try:
-            user = s.save()  # your serializer already saves to DEFAULT_DB
-        except IntegrityError as e:
-            # Map integrity errors (e.g. duplicate email/username) to 400
-            # If you want clearer messages, you can check the message text here.
-            raise ValidationError({"non_field_errors": ["Integrity error: " + str(e)]})
+        data = s.validated_data
+        email = (data.get("email") or "").strip().lower()
+        username = (data.get("username") or "").strip()
+        password = (data.get("password") or "").strip()
+        first = (data.get("first_name") or "").strip()
+        last = (data.get("last_name") or "").strip()
 
-        # (optional) return JWTs like LoginView; fine if frontend ignores these
+        alias = get_active_semester_alias(request)
+        # --- Case 1: EOI tutor already exists in semester DB ---
+        if alias and alias != "default" and email:
+            existing = User.objects.using(alias).filter(email__iexact=email).first()
+            if existing:
+                if not existing.username:
+                    base = username or email.split("@")[0]
+                    u = base
+                    i = 1
+                    while User.objects.using(alias).filter(username=u).exists():
+                        i += 1
+                        u = f"{base}_{i}"
+                    existing.username = u
+                if password:
+                    existing.set_password(password)
+                if first:
+                    existing.first_name = first
+                if last:
+                    existing.last_name = last
+                existing.is_active = True
+                with transaction.atomic(using=alias):
+                    existing.save(using=alias)
+                return Response(
+                    {"user": UserSerializer(existing).data,
+                     "info": f"Linked existing EOI tutor in {alias}"},
+                    status=status.HTTP_200_OK,
+                )
+
+        # --- Case 2: Normal Admin-created account in default DB ---
+        try:
+            user = s.save()  # saves to DEFAULT_DB via serializer
+        except IntegrityError as e:
+            raise ValidationError({"non_field_errors": [f"Integrity error: {e}"]})
+
         try:
             refresh = RefreshToken.for_user(user)
             tokens = {"access": str(refresh.access_token), "refresh": str(refresh)}
@@ -109,7 +143,7 @@ class RegisterView(generics.CreateAPIView):
 
         return Response(
             {"user": UserSerializer(user).data, "tokens": tokens},
-            status=status.HTTP_201_CREATED
+            status=status.HTTP_201_CREATED,
         )
     
 class UserUpdatePermission(BasePermission):
