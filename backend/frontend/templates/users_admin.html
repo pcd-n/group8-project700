@@ -3,232 +3,202 @@
 
 <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Users Management</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
     <style>
-        body {
-            background: #fff;
+        .card-role {
+            border-radius: 16px;
         }
 
         .mono {
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-        }
-
-        .hidden {
-            display: none !important;
-        }
-
-        .container-narrow {
-            max-width: 1100px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
         }
     </style>
 </head>
 
-<body>
-    <div class="container container-narrow py-4">
+<body class="bg-light">
+    <div class="container py-4">
         <div class="d-flex align-items-center justify-content-between mb-3">
-            <h2 class="m-0">Users Management</h2>
+            <h1 class="h4 m-0">Users Management</h1>
             <div class="d-flex gap-2">
-                <a class="btn btn-outline-secondary" href="/home">← Home</a>
-                <button id="btnRefresh" class="btn btn-outline-secondary">Refresh</button>
+                <a href="/home/" class="btn btn-outline-secondary">← Home</a>
+                <button id="btnRefresh" class="btn btn-outline-dark">Refresh</button>
             </div>
         </div>
 
-        <div id="alerts"></div>
+        <div id="alertBox" class="alert d-none" role="alert"></div>
 
-        <!-- Create -->
+        <!-- Create user -->
         <div class="card mb-4">
             <div class="card-body">
                 <h5 class="card-title">Create New User</h5>
                 <form id="formCreate" class="row g-3">
-                    <div class="col-md-6">
-                        <label for="cuUsername" class="form-label">Username</label>
-                        <input id="cuUsername" type="text" class="form-control" autocomplete="off" />
+                    <div class="col-md-3">
+                        <label class="form-label">Username</label>
+                        <input id="cuUsername" class="form-control" required />
                     </div>
-                    <div class="col-md-6">
-                        <label for="cuPassword" class="form-label">Password</label>
-                        <input id="cuPassword" type="password" class="form-control" autocomplete="new-password" />
+                    <div class="col-md-3">
+                        <label class="form-label">Password</label>
+                        <input id="cuPassword" type="password" minlength="8" class="form-control" required />
                     </div>
-
-                    <div class="col-md-6">
-                        <label for="cuRole" class="form-label">Role</label>
-                        <select id="cuRole" class="form-select">
-                            <!-- populated by renderCreateRoleOptions -->
-                        </select>
+                    <div class="col-md-3">
+                        <label class="form-label">Role</label>
+                        <select id="cuRole" class="form-select"></select>
                     </div>
 
-                    <div class="col-md-6">
+                    <div class="mb-3">
                         <label for="cuEmail" class="form-label">Email</label>
-                        <input id="cuEmail" type="email" class="form-control" placeholder="email@example.com" />
-                        <!-- Tutor email dropdown (only when Role=Tutor) -->
+                        <input id="cuEmail" type="email" class="form-control" placeholder="email@example.com">
+                        <!-- Tutor email dropdown (shown only when Role = Tutor) -->
                         <select id="cuEmailSelect" class="form-select mt-2 d-none"></select>
                         <div id="cuEmailHelp" class="form-text d-none">Picked from current semester (EOI upload)</div>
                     </div>
 
-                    <div class="col-md-6">
-                        <label for="cuFirst" class="form-label">First name</label>
-                        <input id="cuFirst" type="text" class="form-control" />
+                    <div class="col-md-3">
+                        <label class="form-label">First name</label>
+                        <input id="cuFirst" class="form-control" />
                     </div>
-                    <div class="col-md-6">
-                        <label for="cuLast" class="form-label">Last name</label>
-                        <input id="cuLast" type="text" class="form-control" />
+                    <div class="col-md-3">
+                        <label class="form-label">Last name</label>
+                        <input id="cuLast" class="form-control" />
                     </div>
 
                     <div class="col-12">
-                        <label for="cuNote" class="form-label">Note</label>
+                        <label class="form-label">Note</label>
                         <textarea id="cuNote" class="form-control" rows="2"></textarea>
                     </div>
-
                     <div class="col-12">
-                        <button class="btn btn-dark" type="submit">Create User</button>
+                        <button class="btn btn-dark">Create User</button>
                     </div>
                 </form>
             </div>
         </div>
 
-        <!-- Existing users -->
-        <div id="groupsContainer" class="card">
-            <div class="card-body">
-                <h5 class="card-title">Existing Users</h5>
-                <div class="table-responsive">
-                    <table class="table table-sm align-middle">
-                        <thead>
-                            <tr>
-                                <th class="w-25">Username / Email</th>
-                                <th class="w-25">Name</th>
-                                <th class="w-25">Role</th>
-                                <th class="w-25">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="rows"></tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
+        <!-- Users grouped by role -->
+        <div id="groupsContainer" class="vstack gap-3"></div>
     </div>
 
     <script>
-        // ========= Utilities =========
-        function token() {
-            try { return localStorage.getItem('access_token'); } catch { return null; }
-        }
+        // ---------- API endpoints (unchanged from your working page) ----------
+        const API = {
+            roles: '/api/accounts/roles/',
+            listUserRoles: '/api/accounts/user-roles/',
+            assignRole: (userId) => `/api/accounts/user-roles/${userId}/`,
+            register: '/api/accounts/register/',
+            resetPassword: '/api/accounts/users/reset-password/',      // expects {user_id,new_password}
+            updateUser: (id) => `/api/accounts/users/update/${id}/`,   // PUT note / is_active
+            profile: '/api/accounts/profile/'
+        };
+
+        // ---------- Auth helpers (match old storage; add safe fallback) ----------
+        const token = () =>
+            localStorage.getItem('access') ||
+            localStorage.getItem('access_token') || // fallback if some pages stored a different key
+            null;
+
         const authHeaders = (extra = {}) => token()
             ? ({ ...extra, Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' })
             : ({ ...extra, 'Content-Type': 'application/json' });
 
-        async function safeJson(res) {
-            try { return await res.json(); } catch { return null; }
+        // ---------- Alerts ----------
+        function showAlert(msg, type = 'danger') {
+            const box = document.getElementById('alertBox');
+            box.className = `alert alert-${type}`;
+            box.textContent = msg;
+            box.classList.remove('d-none');
+            setTimeout(() => box.classList.add('d-none'), 5000);
         }
 
-        function pickApiError(obj, fallback = 'Request failed') {
-            if (!obj) return fallback;
-            if (typeof obj === 'string') return obj;
-            if (obj.detail) return obj.detail;
-            if (obj.error) return obj.error;
-            if (obj.message) return obj.message;
-            try { return JSON.stringify(obj); } catch { return fallback; }
-        }
-
-        async function requestJSON(method, url, body) {
-            const init = { method, headers: authHeaders() };
-            if (body !== undefined) init.body = JSON.stringify(body);
-            const res = await fetch(url, init);
-            if (!res.ok) {
-                const err = await safeJson(res);
-                throw new Error(pickApiError(err, `${method} ${url} failed`));
+        // ---------- Error helpers ----------
+        function pickApiError(payload, fallback = 'Request failed') {
+            if (!payload) return fallback;
+            if (typeof payload === 'string') return payload;
+            if (payload.detail) return String(payload.detail);
+            if (payload.error) return String(payload.error);
+            if (Array.isArray(payload)) return payload.join(' | ') || fallback;
+            if (typeof payload === 'object') {
+                const parts = [];
+                for (const [k, v] of Object.entries(payload)) {
+                    const msg = Array.isArray(v) ? v.join(', ') : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+                    parts.push(`${k}: ${msg}`);
+                }
+                return parts.join(' | ') || fallback;
             }
-            if (res.status === 204) return true;
-            return await safeJson(res);
+            return fallback;
+        }
+        async function safeJson(res) { try { return await res.json(); } catch { return null; } }
+
+        // ---------- Request helpers ----------
+        async function requestJSON(method, url, body) {
+            const res = await fetch(url, {
+                method,
+                headers: authHeaders(),
+                credentials: 'include',
+                body: body === undefined ? undefined : JSON.stringify(body)
+            });
+            let data = await safeJson(res);
+            if (!res.ok) throw new Error(pickApiError(data, `${url} → ${res.status}`));
+            return data ?? {};
         }
         const getJSON = (url) => requestJSON('GET', url);
         const postJSON = (url, body) => requestJSON('POST', url, body);
         const putJSON = (url, body) => requestJSON('PUT', url, body);
-        const delJSON = (url) => requestJSON('DELETE', url);
-
-        function escapeHtml(s) {
-            return (s ?? '').toString()
-                .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
-        }
-        function showAlert(msg, type = 'danger') {
-            const el = document.createElement('div');
-            el.className = `alert alert-${type} alert-dismissible fade show`;
-            el.role = 'alert';
-            el.innerHTML = `${escapeHtml(msg)}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
-            document.getElementById('alerts').appendChild(el);
-            setTimeout(() => el.remove(), 5000);
-        }
-        function asArrayMaybePaginated(x) {
-            if (!x) return [];
-            if (Array.isArray(x)) return x;
-            if (x.results && Array.isArray(x.results)) return x.results;
-            return [];
+        async function delJSON(url) {
+            const res = await fetch(url, { method: 'DELETE', headers: authHeaders() });
+            if (!res.ok && res.status !== 204) {
+                const err = await safeJson(res);
+                throw new Error(pickApiError(err, 'Delete failed'));
+            }
+            return true;
         }
 
-        // ========= Alias helpers =========
-        async function getCurrentAlias() {
-            // 1) ?alias=
-            const qs = new URLSearchParams(location.search);
-            const fromUrl = qs.get('alias');
-            if (fromUrl) return fromUrl;
-            // 2) server
-            try {
-                const r = await getJSON('/api/semesters/current/');
-                if (r?.alias) return r.alias;
-            } catch { }
-            // 3) sessionStorage (Home sets this after uploads)
-            const cached = sessionStorage.getItem('eoiPreviewAlias');
-            return cached || '';
+        // ---------- Small utils ----------
+        function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m])); }
+        function asArrayMaybePaginated(x) { if (Array.isArray(x)) return x; if (x && Array.isArray(x.results)) return x.results; return []; }
+        function allowedRoles(list) {
+            const allow = new Set(['Admin', 'Coordinator', 'Tutor']);
+            return (Array.isArray(list) ? list : []).filter(r => allow.has(r.role_name || r.name));
         }
 
-        // ========= API endpoints =========
-        const API = {
-            profile: '/api/accounts/profile/',
-            roles: '/api/accounts/roles/',
-            userRoles: '/api/accounts/user-roles/',
-            register: '/api/accounts/register/',
-            resetPassword: (userId) => `/api/accounts/users/${userId}/reset-password/`,
-            updateNote: (userId) => `/api/accounts/users/${userId}/note/`,
-            assignRole: (userId) => `/api/accounts/user-roles/${userId}/`,
-            deleteUser: (userId, alias) => `/api/accounts/users/${userId}/?alias=${encodeURIComponent(alias)}`,
-            eoiEmails: (alias) => `/api/accounts/tutors/eoi-emails/?alias=${encodeURIComponent(alias)}`,
-        };
-
-        // ========= State =========
+        // ---------- State ----------
         let roles = [];
-        let users = [];
+        let rows = [];
         let cachedEOITutors = null;   // [{email, first_name, last_name}]
         let cachedAlias = null;
         window.__me = null;
 
-        // ========= Role helpers =========
-        function allowedRoles(list) { return list; } // keep as-is (no feature removal)
+        // ---------- Alias helpers (match other pages) ----------
+        async function getCurrentAlias() {
+            const qs = new URLSearchParams(location.search);
+            const fromUrl = qs.get('alias');
+            if (fromUrl) return fromUrl;
+            try {
+                const { alias } = await getJSON('/api/semesters/current/');
+                if (alias) return alias;
+            } catch (_) { }
+            return sessionStorage.getItem('eoiPreviewAlias') || '';
+        }
 
-        // ========= UI refs =========
+        // ---------- Tutor EOI email picker ----------
+        async function fetchEOITutorEmails(alias) {
+            // NOTE: mounted under /api/accounts/... on your backend
+            const url = `/api/accounts/tutors/eoi-emails/?alias=${encodeURIComponent(alias)}`;
+            try { return await getJSON(url); }
+            catch (e) { console.warn('EOI emails not available:', e); return []; }
+        }
+
         const roleSelect = document.getElementById('cuRole');
         const emailInput = document.getElementById('cuEmail');
         const emailSelect = document.getElementById('cuEmailSelect');
         const emailHelp = document.getElementById('cuEmailHelp');
         const firstInput = document.getElementById('cuFirst');
         const lastInput = document.getElementById('cuLast');
-        const rowsTbody = document.getElementById('rows');
 
-        // ========= Tutor email dropdown logic =========
-        async function fetchEOITutorEmails(alias) {
-            const url = API.eoiEmails(alias);
-            try {
-                return await getJSON(url);
-            } catch (e) {
-                console.warn('EOI emails list not available:', e);
-                return [];
-            }
-        }
         function showTutorEmailSelect(show) {
             if (show) {
                 emailInput.classList.add('d-none');
-                emailInput.required = false; // avoid hidden+required oddities
+                emailInput.required = false; // avoid hidden+required issues
                 emailSelect.classList.remove('d-none');
                 emailHelp.classList.remove('d-none');
             } else {
@@ -254,46 +224,29 @@
         }
         async function syncEmailControlForRole() {
             const isTutor = roleSelect.value === 'Tutor';
-            if (!isTutor) {
-                showTutorEmailSelect(false);
-                emailInput.required = false; // optional, we also validate on submit
-                return;
-            }
-            emailInput.required = false; // we enforce via JS guard instead
+            if (!isTutor) { showTutorEmailSelect(false); emailInput.required = false; return; }
             showTutorEmailSelect(true);
             const alias = cachedAlias || (cachedAlias = await getCurrentAlias());
-            if (!cachedEOITutors) {
-                cachedEOITutors = await fetchEOITutorEmails(alias);
-            }
-            if (cachedEOITutors && cachedEOITutors.length) {
-                populateEmailSelect(cachedEOITutors);
-            } else {
-                // fallback to manual input if list unavailable/empty
-                showTutorEmailSelect(false);
-            }
+            if (!cachedEOITutors) cachedEOITutors = await fetchEOITutorEmails(alias);
+            if (cachedEOITutors?.length) populateEmailSelect(cachedEOITutors);
+            else showTutorEmailSelect(false); // fallback to manual input
         }
         emailSelect.addEventListener('change', () => {
             const val = (emailSelect.value || '').toLowerCase();
-            emailInput.value = val; // submit handler reads from input
+            emailInput.value = val;
             const t = (cachedEOITutors || []).find(x => x.email === val);
-            if (t) {
-                firstInput.value = t.first_name || '';
-                lastInput.value = t.last_name || '';
-            }
+            if (t) { firstInput.value = t.first_name || ''; lastInput.value = t.last_name || ''; }
             document.getElementById('cuUsername').focus();
         });
         roleSelect.addEventListener('change', syncEmailControlForRole);
 
-        // ========= Renderers =========
+        // ---------- Render ----------
         function renderCreateRoleOptions() {
-            const list = allowedRoles(asArrayMaybePaginated(roles));
-            roleSelect.innerHTML = list.map(r => `<option value="${escapeHtml(r.role_name)}">${escapeHtml(r.role_name)}</option>`).join('');
-            // default to Tutor to encourage using the dropdown when needed
-            if (list.some(x => x.role_name === 'Tutor')) roleSelect.value = 'Tutor';
+            const list = allowedRoles(roles);
+            roleSelect.innerHTML = list.map(r => `<option value="${r.role_name}">${r.role_name}</option>`).join('');
+            if (list.find(r => r.role_name === 'Tutor')) roleSelect.value = 'Tutor';
         }
-
         function renderRow(r) {
-            // self-protection: don't allow removing yourself
             const isMe = !!(window.__me && window.__me.id === r.user);
             const canRemove = !isMe;
 
@@ -310,13 +263,10 @@
 
             const removeBtn = canRemove
                 ? `<button class="btn btn-sm btn-outline-danger"
-                     data-action="remove"
-                     data-user="${r.user}"
-                     title="Remove platform account. If Tutor, clears alias username.">
-               Remove
-           </button>`
+             data-action="remove" data-user="${r.user}"
+             title="Remove platform account. If Tutor, clears alias username.">Remove</button>`
                 : `<button class="btn btn-sm btn-outline-danger" disabled
-                   title="You cannot remove your own account.">Remove</button>`;
+             title="You cannot remove your own account.">Remove</button>`;
 
             return `
         <tr>
@@ -324,8 +274,7 @@
           <td>${escapeHtml(display)}</td>
           <td>
             <select class="form-select form-select-sm"
-                    data-action="change-role"
-                    data-user="${r.user}">
+                    data-action="change-role" data-user="${r.user}">
               ${roleOpts}
             </select>
           </td>
@@ -333,54 +282,144 @@
             <div class="small text-muted">Note: ${escapeHtml(previewShort)}</div>
             <div class="d-flex gap-2">
               <button class="btn btn-sm btn-outline-primary"
-                      data-action="edit-note"
-                      data-user="${r.user}">
-                Edit note
-              </button>
+                      data-action="edit-note" data-user="${r.user}">Edit note</button>
               <button class="btn btn-sm btn-outline-secondary"
-                      data-action="reset"
-                      data-user="${r.user}">
-                Reset password
-              </button>
+                      data-action="reset" data-user="${r.user}">Reset password</button>
               ${removeBtn}
             </div>
           </td>
         </tr>`;
         }
-
-        function renderUsers() {
-            const list = asArrayMaybePaginated(users);
-            rowsTbody.innerHTML = list.map(renderRow).join('');
+        function renderGroups() {
+            const byRole = new Map();
+            rows.forEach(r => {
+                const k = r.role_name || '(No Role)';
+                if (!byRole.has(k)) byRole.set(k, []);
+                byRole.get(k).push(r);
+            });
+            const sorted = Array.from(byRole.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+            const container = document.getElementById('groupsContainer');
+            container.innerHTML = '';
+            sorted.forEach(([roleName, items]) => {
+                const card = document.createElement('div');
+                card.className = 'card card-role';
+                card.innerHTML = `
+          <div class="card-body">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+              <h5 class="card-title mb-0">${roleName} <span class="text-muted">(${items.length})</span></h5>
+            </div>
+            <div class="table-responsive">
+              <table class="table table-sm align-middle">
+                <thead class="table-light">
+                  <tr>
+                    <th>Username</th><th>Name</th><th style="width:240px">Role</th><th style="width:260px">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>${items.map(renderRow).join('')}</tbody>
+              </table>
+            </div>
+          </div>`;
+                container.appendChild(card);
+            });
+            if (!sorted.length) container.innerHTML = `<div class="alert alert-secondary">No users found.</div>`;
         }
 
-        // ========= Loaders =========
+        // ---------- Loaders ----------
         async function loadAll() {
-            const [rRoles, rUsers] = await Promise.all([
-                getJSON(API.roles),
-                getJSON(API.userRoles)
-            ]);
-            roles = rRoles;
-            users = rUsers;
-            renderUsers();
+            const [r, u] = await Promise.all([getJSON(API.roles), getJSON(API.listUserRoles)]);
+            roles = asArrayMaybePaginated(r);
+            rows = asArrayMaybePaginated(u);
+            renderCreateRoleOptions();
+            renderGroups();
         }
 
-        // ========= Actions =========
+        // ---------- Events ----------
+        document.getElementById('btnRefresh').addEventListener('click', async () => {
+            cachedAlias = null;
+            cachedEOITutors = null;
+            await loadAll();
+            await syncEmailControlForRole();
+        });
+
+        // Old listener kept (does nothing if #tblUsers absent), but we’ll also handle remove below
+        document.getElementById('tblUsers')?.addEventListener('click', async (e) => {
+            const btn = e.target.closest('button[data-cmd]');
+            if (!btn) return;
+            if (btn.dataset.cmd === 'remove') {
+                const alias = await getCurrentAlias();
+                const id = btn.dataset.id;
+                try { await delJSON(`/api/accounts/users/${id}/?alias=${encodeURIComponent(alias)}`); showAlert('User removed', 'success'); await loadAll(); }
+                catch (err) { showAlert(err.message || 'Remove failed'); }
+            }
+        });
+
+        document.getElementById('groupsContainer').addEventListener('change', async (e) => {
+            const sel = e.target.closest('select[data-action="change-role"]');
+            if (!sel) return;
+            const userId = sel.getAttribute('data-user');
+            const newRole = sel.value;
+            try { await postJSON(API.assignRole(userId), { role_name: newRole }); showAlert('Role updated', 'success'); await loadAll(); }
+            catch (err) { showAlert(err.message || 'Role update failed'); }
+        });
+
+        document.getElementById('groupsContainer').addEventListener('click', async (e) => {
+            const btn = e.target.closest('button[data-action]');
+            if (!btn) return;
+            const userId = Number(btn.getAttribute('data-user'));
+
+            if (btn.dataset.action === 'edit-note') {
+                const current = rows.find(x => x.user === userId)?.user_note || '';
+                const next = prompt('Edit note for this user:', current || '');
+                if (next === null) return;
+                try { await putJSON(API.updateUser(userId), { note: next }); showAlert('Note updated', 'success'); await loadAll(); }
+                catch (err) { showAlert(err.message || 'Note update failed'); }
+            }
+
+            if (btn.dataset.action === 'reset') {
+                const pwd = prompt('Enter a new password: (min 8 chars)');
+                if (!pwd) return;
+                try { await postJSON(API.resetPassword, { user_id: userId, new_password: pwd }); showAlert('Password updated', 'success'); }
+                catch (err) { showAlert(err.message || 'Password reset failed'); }
+            }
+
+            if (btn.dataset.action === 'remove') {
+                const alias = await getCurrentAlias();
+                const row = btn.closest('tr');
+                const uname = row?.querySelector('td')?.textContent?.trim() || '';
+                if (!confirm(`Remove user ${uname}? This will delete the platform account.\nIf the user is a Tutor, their alias username will be cleared.`)) return;
+                try {
+                    await delJSON(`/api/accounts/users/${userId}/?alias=${encodeURIComponent(alias)}`);
+                    showAlert('User removed', 'success');
+                    await loadAll();
+                    cachedAlias = null; cachedEOITutors = null;
+                    await syncEmailControlForRole();
+                } catch (err) {
+                    showAlert(err.message || 'Remove failed');
+                    console.warn('Remove user error:', err);
+                }
+            }
+        });
+
+        // ---------- Create user ----------
+        function isValidEmail(s) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s); }
         document.getElementById('formCreate').addEventListener('submit', async (e) => {
             e.preventDefault();
             const role = roleSelect.value;
-            let email = (emailInput.value || '').trim().toLowerCase();
+            let email = (emailInput.value || '').trim();
 
-            // Tutor requires an email (selected from dropdown or typed)
-            if (role === 'Tutor' && !email) {
-                showAlert('Email is required for Tutor accounts.', 'warning');
-                return;
+            if (role === 'Tutor') {
+                if (!email) { showAlert('Email is required for Tutor accounts.', 'warning'); return; }
+                email = email.toLowerCase();
+                if (!isValidEmail(email)) { showAlert('Please enter a valid email for the Tutor.', 'warning'); return; }
+            } else {
+                email = email ? email.toLowerCase() : null;
             }
 
             const body = {
                 username: document.getElementById('cuUsername').value.trim(),
                 password: document.getElementById('cuPassword').value,
                 role_name: role,
-                email: email || null,
+                email,
                 first_name: document.getElementById('cuFirst').value.trim(),
                 last_name: document.getElementById('cuLast').value.trim(),
                 note: document.getElementById('cuNote').value.trim() || null,
@@ -391,126 +430,39 @@
             try {
                 await postJSON(API.register, body);
                 e.target.reset();
-                renderCreateRoleOptions();
-                await syncEmailControlForRole(); // prepare Tutor dropdown again
                 showAlert('User created', 'success');
                 await loadAll();
+                renderCreateRoleOptions();
+                await syncEmailControlForRole();
             } catch (err) {
                 showAlert(err.message || 'Create failed');
                 console.warn('Create user error:', err);
             }
         });
 
-        // Delegated actions for table (role change, edit note, reset, remove)
-        document.getElementById('groupsContainer').addEventListener('click', async (e) => {
-            const btn = e.target.closest('button[data-action]');
-            if (!btn) return;
-            const action = btn.dataset.action;
-            const userId = Number(btn.getAttribute('data-user'));
-            if (!userId) return;
-
-            // Reset password
-            if (action === 'reset') {
-                if (!confirm('Reset password for this user?')) return;
-                try {
-                    await postJSON(API.resetPassword(userId), {});
-                    showAlert('Password reset email sent (if configured).', 'success');
-                } catch (err) {
-                    showAlert(err.message || 'Reset password failed');
-                }
-                return;
-            }
-
-            // Edit note
-            if (action === 'edit-note') {
-                const row = btn.closest('tr');
-                const current = (row?.querySelector('.small.text-muted')?.textContent || '').replace(/^Note:\s*/, '').trim();
-                const newNote = prompt('Update note:', current === '—' ? '' : current);
-                if (newNote === null) return;
-                try {
-                    await putJSON(API.updateNote(userId), { note: newNote });
-                    showAlert('Note updated', 'success');
-                    await loadAll();
-                } catch (err) {
-                    showAlert(err.message || 'Update note failed');
-                }
-                return;
-            }
-
-            // Remove (DELETE + clear alias username if Tutor on backend)
-            if (action === 'remove') {
-                const alias = await getCurrentAlias();
-                const row = btn.closest('tr');
-                const uname = row?.querySelector('td')?.textContent?.trim() || '';
-                if (!confirm(`Remove user ${uname}? This will delete the platform account.\nIf the user is a Tutor, their alias username will be cleared.`)) return;
-                try {
-                    await delJSON(API.deleteUser(userId, alias));
-                    showAlert('User removed', 'success');
-                    await loadAll();
-                    // refresh Tutor dropdown caches (in case a removed tutor frees a username etc.)
-                    cachedAlias = null;
-                    cachedEOITutors = null;
-                    await syncEmailControlForRole();
-                } catch (err) {
-                    showAlert(err.message || 'Remove failed');
-                    console.warn('Remove user error:', err);
-                }
-                return;
-            }
-        });
-
-        // Change role (via <select>)
-        document.getElementById('groupsContainer').addEventListener('change', async (e) => {
-            const sel = e.target.closest('select[data-action="change-role"]');
-            if (!sel) return;
-            const newRole = sel.value;
-            const userId = Number(sel.dataset.user);
+        // ---------- Init (Admin gate fixed) ----------
+        (async function init() {
+            if (!token()) { location.href = '/'; return; } // same behavior as old page
             try {
-                await postJSON(API.assignRole(userId), { role_name: newRole });
-                showAlert('Role updated', 'success');
-                await loadAll();
-            } catch (err) {
-                showAlert(err.message || 'Role update failed');
-            }
-        });
-
-        // Refresh button
-        document.getElementById('btnRefresh').addEventListener('click', async () => {
-            cachedAlias = null;
-            cachedEOITutors = null;
-            await loadAll();
-            await syncEmailControlForRole();
-        });
-
-        // ========= Init =========
-        async function init() {
-            if (!token()) {
-                location.href = '/';
+                const me = await getJSON(API.profile);
+                const rs = Array.isArray(me?.roles)
+                    ? me.roles.map(r => r.name || r.role_name)
+                    : [];
+                const isAdmin = !!(me?.user?.is_staff ?? me?.is_staff) || rs.includes('Admin') || rs.includes('Administrator');
+                if (!isAdmin) {
+                    document.body.innerHTML = '<div class="container py-5"><div class="alert alert-danger">Forbidden</div></div>';
+                    return;
+                }
+                window.__me = me?.user || me || null;
+            } catch {
+                document.body.innerHTML = '<div class="container py-5"><div class="alert alert-danger">Unauthorized</div></div>';
                 return;
             }
-
-            // Admin gate
-            let me = null;
-            try { me = await getJSON(API.profile); } catch { }
-            const rs = Array.isArray(me?.roles) ? me.roles.map(r => r.name || r.role_name) : [];
-            const isAdmin = !!me?.user?.is_staff || rs.includes('Admin');
-            if (!isAdmin) {
-                showAlert('Admins only.', 'warning');
-                return;
-            }
-            window.__me = me?.user || null;
-
-            // Load data
             await loadAll();
-
-            // Prepare create form role options + Tutor dropdown (if Tutor selected)
             renderCreateRoleOptions();
             await syncEmailControlForRole();
-        }
-
-        document.addEventListener('DOMContentLoaded', init);
+        })();
     </script>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 
 </html>
