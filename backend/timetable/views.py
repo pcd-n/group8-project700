@@ -8,6 +8,8 @@ from django.core.mail import EmailMessage
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 DAY_MAP = {
     "MON": "Monday", "TUE": "Tuesday", "WED": "Wednesday",
@@ -95,18 +97,24 @@ def sessions_list(request):
     return JsonResponse(rows, safe=False)
 
 class SendEmailWithAttachmentView(APIView):
+    authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated]
+    parser_classes = (MultiPartParser, FormParser)
 
     def post(self, request):
-        to = request.POST.get("to", "").strip()
-        subject = request.POST.get("subject", "").strip() or "Timetable"
-        body = request.POST.get("body", "") or ""
-        f = request.FILES.get("attachment")
+        data = request.data
+        to = (data.get("to") or "").strip()
+        subject = (data.get("subject") or "Timetable").strip()
+        body = data.get("body") or ""
 
+        # Accept file from multipart
+        f = request.FILES.get("attachment")
         if not to or not f:
             return Response({"detail": "Missing recipient or attachment"}, status=400)
 
         msg = EmailMessage(subject=subject, body=body, to=[to])
-        msg.attach(f.name, f.read(), f.content_type or "application/octet-stream")
+        msg.attach(getattr(f, "name", "timetable"),
+                   f.read(),
+                   getattr(f, "content_type", "application/octet-stream"))
         msg.send(fail_silently=False)
         return Response({"ok": True}, status=200)
