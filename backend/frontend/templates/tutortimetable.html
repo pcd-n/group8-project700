@@ -68,8 +68,8 @@
 
         const qs = new URLSearchParams(location.search);
         const alias = qs.get("alias") || "";
-        const tutorName = qs.get("name") || "";
-        const tutorEmail = (qs.get("email") || "").toLowerCase();
+        let tutorName = qs.get("name") || "";
+        let tutorEmail = (qs.get("email") || "").toLowerCase();
 
         document.getElementById("ttTitle").textContent = tutorName ? `Timetable: ${tutorName}` : "Timetable";
         document.getElementById("backLink").href = `/allocations/?alias=${encodeURIComponent(alias)}`;
@@ -80,6 +80,10 @@
             if (res.status === 401) { location.href = "/"; throw new Error("Unauthorized"); }
             if (!res.ok) { throw new Error(data?.detail || `GET ${path} -> ${res.status}`); }
             return data || [];
+        }
+
+        async function getProfile() {
+            return apiGet('/accounts/profile/');
         }
 
         const backLink = document.getElementById("backLink");
@@ -140,8 +144,32 @@
         document.addEventListener("DOMContentLoaded", async () => {
             if (!token()) { location.href = "/"; return; }
 
-            let useAlias = alias;
-            if (!useAlias) useAlias = await getCurrentAlias();
+            // Determine role and lock down identity for Tutors
+            let me = null, roles = [];
+            try {
+                me = await getProfile();
+                roles = Array.isArray(me?.roles) ? me.roles.map(r => r.name) : [];
+            } catch { }
+
+            const isAdmin = !!me?.is_staff || roles.includes('Admin');
+            const isCoord = roles.includes('Coordinator');
+            const isTutor = roles.includes('Tutor') && !isAdmin && !isCoord;
+
+            if (isTutor) {
+                // Force to the authenticated identity
+                tutorEmail = (me?.user?.email || me?.email || '').toLowerCase();
+                tutorName = `${me?.user?.first_name || me?.first_name || ''} ${me?.user?.last_name || me?.last_name || ''}`.trim() || (me?.user?.username || me?.username || '');
+                // Reflect in title and URL (without reload)
+                document.getElementById("ttTitle").textContent = tutorName ? `Timetable: ${tutorName}` : "Timetable";
+                const url = new URL(location.href);
+                if (alias) url.searchParams.set('alias', alias);
+                if (tutorName) url.searchParams.set('name', tutorName);
+                if (tutorEmail) url.searchParams.set('email', tutorEmail);
+                history.replaceState(null, '', url);
+            }
+
+            let useAlias = alias || await getCurrentAlias();
+
             try {
                 // DRF endpoint requires trailing slash
                 const all = await apiGet(`/timetable/sessions/?alias=${encodeURIComponent(useAlias)}`);

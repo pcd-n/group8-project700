@@ -1,6 +1,7 @@
 #backend/users/urls.py
 from django.urls import path
 from . import views
+from .views import eoi_tutor_emails
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
@@ -32,7 +33,7 @@ urlpatterns = [
     path('users/update/', views.UserUpdateView.as_view(), name='user_update_self'),
     path('users/update/<int:user_id>/', views.UserUpdateView.as_view(), name='user_update_specific'),
     path('users/reset-password/', views.ResetPasswordView.as_view(), name='reset_password'),
-
+    path("tutors/eoi-emails/", eoi_tutor_emails, name="eoi-tutor-emails"),
     # =====================================================
     # RBAC - ROLE MANAGEMENT ENDPOINTS (Admin only)
     # =====================================================

@@ -10,7 +10,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
 from rest_framework.decorators import api_view, permission_classes
 from django.contrib.auth import authenticate
-from django.db import transaction
+from django.db import transaction, connections
 from drf_spectacular.utils import extend_schema, OpenApiExample
 from .models import User, Role, Permission, UserRoles, Supervisor, Campus
 from .serializers import (
@@ -33,6 +33,36 @@ logger = logging.getLogger(__name__)
 
 @api_view(["GET"])
 @permission_classes([IsAdminRole])
+def eoi_tutor_emails(request):
+    """
+    GET /api/tutors/eoi-emails/?alias=sem_2025_s2
+    Returns list of {email, first_name, last_name} from the alias DB (EOI upload).
+    """
+    alias = request.GET.get("alias") or get_active_semester_alias()
+    if not alias:
+        return Response({"detail": "No active semester alias."}, status=400)
+
+    # some old aliases might not have username column; safe to ignore
+    # only pick rows that have an email (uploaded EOI tutors)
+    qs = User.objects.using(alias).filter(email__isnull=False).exclude(email="").values(
+        "email", "first_name", "last_name"
+    )
+    # de-dupe + normalise case
+    seen, data = set(), []
+    for r in qs:
+        email = (r["email"] or "").strip().lower()
+        if not email or email in seen:
+            continue
+        seen.add(email)
+        data.append({
+            "email": email,
+            "first_name": (r["first_name"] or "").strip(),
+            "last_name":  (r["last_name"]  or "").strip(),
+        })
+    return Response(data, status=200)
+
+@api_view(["GET"])
+@permission_classes([IsAdminRole])
 def roles_list(request):
     roles = Role.objects.using(DEFAULT_DB).all().order_by("role_name")
     data = RoleSerializer(roles, many=True).data
@@ -46,6 +76,17 @@ def logout_view(request):
     resp = Response(status=204)
     resp.delete_cookie('access'); resp.delete_cookie('refresh')
     return resp
+
+def _ensure_alias_username_column(alias: str):
+    if not alias or alias == DEFAULT_DB:
+        return
+    with connections[alias].cursor() as c:
+        c.execute("SHOW COLUMNS FROM `users_user` LIKE 'username'")
+        has = c.fetchone() is not None
+        if not has:
+            # Minimal compatible field spec with your current User model
+            c.execute("ALTER TABLE `users_user` ADD COLUMN `username` varchar(150) DEFAULT ''")
+            c.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_user_username_uniq ON `users_user` (`username`)")
 
 class LoginSerializer(serializers.Serializer):
     username = serializers.CharField(help_text="User's username")
@@ -119,6 +160,7 @@ class RegisterView(generics.CreateAPIView):
         # --- Try to locate the EOI tutor in the current semester DB by email ---
         existing_alias_user = None
         if alias and alias != DEFAULT_DB and email:
+            _ensure_alias_username_column(alias)
             existing_alias_user = User.objects.using(alias).filter(email__iexact=email).first()
 
         # --- Ensure a platform account on DEFAULT (that’s the account that logs in) ---

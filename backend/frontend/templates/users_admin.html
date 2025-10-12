@@ -47,9 +47,13 @@
                         <label class="form-label">Role</label>
                         <select id="cuRole" class="form-select"></select>
                     </div>
-                    <div class="col-md-3">
-                        <label class="form-label">Email (optional)</label>
-                        <input id="cuEmail" type="email" class="form-control" />
+                    <div class="mb-3">
+                        <label for="cuEmail" class="form-label">Email</label>
+                        <input id="cuEmail" type="email" class="form-control" placeholder="email@example.com">
+
+                        <!-- Tutor email dropdown (shown only when Role = Tutor) -->
+                        <select id="cuEmailSelect" class="form-select mt-2 d-none"></select>
+                        <div id="cuEmailHelp" class="form-text d-none">Picked from current semester (EOI upload)</div>
                     </div>
                     <div class="col-md-3">
                         <label class="form-label">First name</label>
@@ -60,7 +64,7 @@
                         <input id="cuLast" class="form-control" />
                     </div>
                     <div class="col-12">
-                        <label class="form-label">Note (optional)</label>
+                        <label class="form-label">Note</label>
                         <textarea id="cuNote" class="form-control" rows="2"></textarea>
                     </div>
                     <div class="col-12">
@@ -99,17 +103,6 @@
         }
 
         // ---- extract DRF errors nicely ----
-        function pickApiError(payload, fallback) {
-            if (!payload || typeof payload !== 'object') return fallback;
-            if (typeof payload.detail === 'string') return payload.detail;
-            // serializer field errors: {field: ["msg", ...], ...}
-            for (const [k, v] of Object.entries(payload)) {
-                if (Array.isArray(v) && v.length) return `${k}: ${v[0]}`;
-                if (typeof v === 'string') return `${k}: ${v}`;
-            }
-            return fallback;
-        }
-
         function pickApiError(payload, fallback = 'Request failed') {
             if (!payload) return fallback;
             if (typeof payload === 'string') return payload;
@@ -241,32 +234,173 @@
 
         function escapeHtml(s) { return String(s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m])); }
 
+        const roleSelect = document.getElementById('cuRole');
+        const emailInput = document.getElementById('cuEmail');
+        const emailSelect = document.getElementById('cuEmailSelect');
+        const emailHelp = document.getElementById('cuEmailHelp');
+        const firstInput = document.getElementById('cuFirst');
+        const lastInput = document.getElementById('cuLast');
+
+        let cachedEOITutors = null;   // [{email, first_name, last_name}]
+        let cachedAlias = null;
+
+        async function getCurrentAlias() {
+            // 1) respect ?alias= if present (like allocations page)
+            const qs = new URLSearchParams(location.search);
+            const fromUrl = qs.get('alias');
+            if (fromUrl) return fromUrl;
+
+            // 2) ask the server for the current semester (same endpoint shape used elsewhere)
+            try {
+                const { alias } = await getJSON('/api/semesters/current/');
+                if (alias) return alias;
+            } catch (_) { /* ignore and fall through */ }
+
+            // 3) last resort: reuse the alias cached by Home after uploads
+            const cached = sessionStorage.getItem('eoiPreviewAlias');
+            return cached || '';
+        }
+
+        async function fetchEOITutorEmails(alias) {
+            const url = `/api/tutors/eoi-emails/?alias=${encodeURIComponent(alias)}`;
+            return getJSON(url); // your existing GET helper
+        }
+
+        function showTutorEmailSelect(show) {
+            if (show) {
+                emailInput.classList.add('d-none');
+                emailInput.required = false;
+                emailSelect.classList.remove('d-none');
+                emailHelp.classList.remove('d-none');
+            } else {
+                emailInput.classList.remove('d-none');
+                emailSelect.classList.add('d-none');
+                emailHelp.classList.add('d-none');
+            }
+        }
+
+        function populateEmailSelect(list) {
+            emailSelect.innerHTML = '';
+            const opt0 = document.createElement('option');
+            opt0.value = '';
+            opt0.textContent = '— Select a tutor email —';
+            emailSelect.appendChild(opt0);
+
+            list.forEach(t => {
+                const o = document.createElement('option');
+                o.value = t.email.toLowerCase();
+                o.textContent = `${t.email}  (${(t.first_name || '').trim()} ${(t.last_name || '').trim()})`;
+                emailSelect.appendChild(o);
+            });
+        }
+
+        async function syncEmailControlForRole() {
+            const isTutor = roleSelect.value === 'Tutor';
+            if (!isTutor) {
+                showTutorEmailSelect(false);
+                emailInput.required = false;
+                return;
+            }
+
+            // Tutor role: show dropdown
+            emailInput.required = true;
+            showTutorEmailSelect(true);
+
+            // Load only once per alias
+            const alias = cachedAlias || (cachedAlias = await getCurrentAlias());
+            if (!cachedEOITutors) {
+                try {
+                    cachedEOITutors = await fetchEOITutorEmails(alias);
+                } catch (e) {
+                    // If API not available, gracefully fall back to manual input
+                    cachedEOITutors = [];
+                }
+            }
+            if (cachedEOITutors?.length) {
+                populateEmailSelect(cachedEOITutors);
+            } else {
+                // no data -> fall back to manual input
+                showTutorEmailSelect(false);
+            }
+        }
+
+        // When a tutor email is selected: set email value + autofill names
+        emailSelect.addEventListener('change', () => {
+            const val = (emailSelect.value || '').toLowerCase();
+            emailInput.value = val; // still posted by form code
+            const t = (cachedEOITutors || []).find(x => x.email === val);
+            if (t) {
+                firstInput.value = t.first_name || '';
+                lastInput.value = t.last_name || '';
+            }
+            document.getElementById('cuUsername').focus();
+        });
+
+        roleSelect.addEventListener('change', syncEmailControlForRole);
+
+        // Call once on load (so if the default role is Tutor, it prepares dropdown)
+        syncEmailControlForRole();
+
+        function syncEmailRequired() {
+            const need = roleSelect.value === 'Tutor';
+            emailInput.required = need;                // HTML5 required on for tutors
+            emailInput.placeholder = need ? 'Required for Tutor' : '';
+        }
+
+        function isValidEmail(s) {
+            return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+        }
+
         // events
-        document.getElementById('btnRefresh').addEventListener('click', loadAll);
+        document.getElementById('btnRefresh').addEventListener('click', async () => {
+            cachedAlias = null;
+            cachedEOITutors = null;
+            await loadAll();
+            await syncEmailControlForRole();
+        });
 
         document.getElementById('formCreate').addEventListener('submit', async (e) => {
             e.preventDefault();
+
+            const role = roleSelect.value;
+            let email = (emailInput.value || '').trim();
+
+            // Tutor-specific check (client-side)
+            if (role === 'Tutor') {
+                if (!email) {
+                    showAlert('Email is required for Tutor accounts.', 'warning');
+                    return;
+                }
+                email = email.toLowerCase();
+                if (!isValidEmail(email)) {
+                    showAlert('Please enter a valid email for the Tutor.', 'warning');
+                    return;
+                }
+            } else {
+                email = email ? email.toLowerCase() : null; // keep your null for non-tutors
+            }
+
             const body = {
                 username: document.getElementById('cuUsername').value.trim(),
                 password: document.getElementById('cuPassword').value,
-                role_name: document.getElementById('cuRole').value,
-                email: document.getElementById('cuEmail').value.trim() || null,
+                role_name: role,
+                email,
                 first_name: document.getElementById('cuFirst').value.trim(),
                 last_name: document.getElementById('cuLast').value.trim(),
                 note: document.getElementById('cuNote').value.trim() || null,
-                // make intent explicit (matches your serializer defaults)
                 is_supervisor: false,
                 campus_id: null
             };
+
             try {
                 await postJSON(API.register, body);
                 e.target.reset();
-                renderCreateRoleOptions();
                 showAlert('User created', 'success');
                 await loadAll();
+                renderCreateRoleOptions();
             } catch (err) {
                 showAlert(err.message || 'Create failed');
-                console.warn('Create user error:', err); // lets you see full detail in DevTools
+                console.warn('Create user error:', err);
             }
         });
 
@@ -320,9 +454,10 @@
                 if (!isAdmin) { document.body.innerHTML = '<div class="container py-5"><div class="alert alert-danger">Forbidden</div></div>'; return; }
             } catch { document.body.innerHTML = '<div class="container py-5"><div class="alert alert-danger">Unauthorized</div></div>'; return; }
             await loadAll();
+            renderCreateRoleOptions();
+            await syncEmailControlForRole();
         })();
     </script>
-
 </body>
 
 </html>

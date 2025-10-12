@@ -706,6 +706,14 @@
         document.getElementById('allocInfoRow')?.classList.add('d-none');
       }
 
+      // Tutor-only – hide everything else and stop here
+      if (window.__isTutor) {
+        // ensure upload/allocation/users mgmt are already hidden by initRoleUI
+        document.getElementById('unitsSection')?.classList.add('hidden');
+        document.getElementById('allocSection')?.classList.add('hidden');
+        return; // do not load units/allocations, no extra notes, nothing
+      }
+
       try {
         const alias = await getCurrentAlias();
         await loadUnitsFromServerForAlias(alias);
