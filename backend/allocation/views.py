@@ -47,77 +47,95 @@ class ListAllTutorsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        # 1) seed with platform tutors (default DB) if any
-        tutors = {}
-        for u in User.objects.all().only("email", "first_name", "last_name"):
-            if not u.email:
-                continue
-            key = u.email.strip().lower()
-            tutors.setdefault(key, {
-                "email": key,
-                "first_name": (u.first_name or "").strip(),
-                "last_name": (u.last_name or "").strip(),
-                "allocated_classes": 0,
-            })
+      # -------- 0) build role map & exclusion set from DEFAULT DB --------
+      exclude_emails = set()
+      tutor_emails = set()
 
-        # 2) collect tutors present in EACH semester DB (EOI-imported tutors live here)
-        semesters = list_existing_semesters()
-        for s in semesters:
-            alias = getattr(s, "alias", None)
-            if not alias:
-                continue
+      # iterate default DB users and classify by active role
+      for u in User.objects.all().only("email", "first_name", "last_name"):
+          if not u.email:
+              continue
+          email = u.email.strip().lower()
+          role = (u.get_active_role_name() or "").strip().lower()
+          if role in ("admin", "coordinator"):
+              exclude_emails.add(email)
+          elif role == "tutor":
+              tutor_emails.add(email)
 
-            # add any users that exist only in the alias DB
-            for u in User.objects.using(alias).all().only("email", "first_name", "last_name"):
-                if not u.email:
-                    continue
-                key = u.email.strip().lower()
-                obj = tutors.setdefault(key, {
-                    "email": key,
-                    "first_name": "",
-                    "last_name": "",
-                    "allocated_classes": 0,
-                })
-                # prefer to fill names if missing
-                if not obj["first_name"] and u.first_name:
-                    obj["first_name"] = u.first_name.strip()
-                if not obj["last_name"] and u.last_name:
-                    obj["last_name"] = u.last_name.strip()
+      # -------- 1) seed dict with DEFAULT DB tutors only (role = tutor) --------
+      tutors = {}
+      for u in User.objects.filter(email__in=tutor_emails).only("email", "first_name", "last_name"):
+          email = u.email.strip().lower()
+          tutors[email] = {
+              "email": email,
+              "first_name": (u.first_name or "").strip(),
+              "last_name": (u.last_name or "").strip(),
+              "allocated_classes": 0,
+          }
 
-        # 3) accumulate allocated class counts across ALL aliases
-        for s in semesters:
-            alias = getattr(s, "alias", None)
-            if not alias:
-                continue
+      # -------- 2) add users from EACH SEMESTER DB (EOI-imported etc.) --------
+      semesters = list_existing_semesters()
+      for s in semesters:
+          alias = getattr(s, "alias", None)
+          if not alias:
+              continue
 
-            # count Allocation (explicit allocations)
-            alloc_rows = (Allocation.objects.using(alias)
-                          .select_related("tutor")
-                          .values("tutor__email"))
-            for r in alloc_rows:
-                email = (r.get("tutor__email") or "").strip().lower()
-                if email:
-                    tutors.setdefault(email, {
-                        "email": email, "first_name": "", "last_name": "", "allocated_classes": 0
-                    })
-                    tutors[email]["allocated_classes"] += 1
+          # Anyone in alias User table counts as “EOI/tutor candidate”
+          for u in User.objects.using(alias).all().only("email", "first_name", "last_name"):
+              if not u.email:
+                  continue
+              email = u.email.strip().lower()
 
-            # count TimeTable (direct assigned classes)
-            tt_rows = (TimeTable.objects.using(alias)
-                       .select_related("tutor_user")
-                       .values("tutor_user__email"))
-            for r in tt_rows:
-                email = (r.get("tutor_user__email") or "").strip().lower()
-                if email:
-                    tutors.setdefault(email, {
-                        "email": email, "first_name": "", "last_name": "", "allocated_classes": 0
-                    })
-                    tutors[email]["allocated_classes"] += 1
+              # If this email is an admin/coordinator on the platform, skip
+              if email in exclude_emails:
+                  continue
 
-        # sort by email
-        data = sorted(tutors.values(), key=lambda x: x["email"])
-        return Response(data, status=status.HTTP_200_OK)
-    
+              obj = tutors.setdefault(email, {
+                  "email": email,
+                  "first_name": "",
+                  "last_name": "",
+                  "allocated_classes": 0,
+              })
+              # fill missing names from alias record
+              if not obj["first_name"] and u.first_name:
+                  obj["first_name"] = u.first_name.strip()
+              if not obj["last_name"] and u.last_name:
+                  obj["last_name"] = u.last_name.strip()
+
+      # -------- 3) aggregate allocated-class counts across ALL aliases --------
+      for s in semesters:
+          alias = getattr(s, "alias", None)
+          if not alias:
+              continue
+
+          # Allocation table
+          for r in (Allocation.objects.using(alias)
+                    .select_related("tutor")
+                    .values("tutor__email")):
+              email = (r.get("tutor__email") or "").strip().lower()
+              if not email or email in exclude_emails:
+                  continue
+              tutors.setdefault(email, {
+                  "email": email, "first_name": "", "last_name": "", "allocated_classes": 0
+              })
+              tutors[email]["allocated_classes"] += 1
+
+          # TimeTable direct assignments
+          for r in (TimeTable.objects.using(alias)
+                    .select_related("tutor_user")
+                    .values("tutor_user__email")):
+              email = (r.get("tutor_user__email") or "").strip().lower()
+              if not email or email in exclude_emails:
+                  continue
+              tutors.setdefault(email, {
+                  "email": email, "first_name": "", "last_name": "", "allocated_classes": 0
+              })
+              tutors[email]["allocated_classes"] += 1
+
+      # -------- 4) final sort by email --------
+      data = sorted(tutors.values(), key=lambda x: x["email"])
+      return Response(data, status=status.HTTP_200_OK)
+
 class AllocationListView(generics.ListAPIView):
     """
     List all allocations in a semester (optionally filter by ?year=&term=).

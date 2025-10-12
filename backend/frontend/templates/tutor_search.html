@@ -246,12 +246,6 @@
                 })();
             }
 
-            // optional: clicking "List all tutors" just refocuses the select (acts as 'view')
-            document.getElementById("btnListAll").addEventListener("click", (e) => {
-                e.preventDefault();
-                document.getElementById("emailSelect").focus();
-            });
-
             document.getElementById("searchForm").addEventListener("submit", async function (e) {
                 e.preventDefault();
                 const sel = document.getElementById("emailSelect");
