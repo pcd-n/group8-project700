@@ -268,7 +268,12 @@
         }
 
         if (firstClash) {
-          alert(`Clash detected for:\n${firstClash.activity} — ${firstClash.day} ${firstClash.start}\n\n${firstClash.msg}\n\nOther valid rows were saved.`);
+          const msg = String(firstClash.msg || "");
+          if (/^\s*clash detected/i.test(msg)) {
+            alert(`${msg}\n\nOther valid rows were saved.`);
+          } else {
+            alert(`Clash detected for:\n${firstClash.activity} — ${firstClash.day} ${firstClash.start}\n\n${msg}\n\nOther valid rows were saved.`);
+          }
         } else {
           alert(saved ? `Saved ${saved} row(s).` : `No changes to save.`);
         }
