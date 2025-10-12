@@ -701,6 +701,11 @@
       await maybeShowAdminTools();
       await maybeShowUsersMgmt();      // function for Users Management button
 
+      if (window.__isCoordinator && !window.__isAdmin) {
+        document.getElementById('eoiInfoRow')?.classList.add('d-none');
+        document.getElementById('allocInfoRow')?.classList.add('d-none');
+      }
+
       try {
         const alias = await getCurrentAlias();
         await loadUnitsFromServerForAlias(alias);
@@ -715,7 +720,7 @@
           btnUpload.disabled = true;
           btnUpload.classList.add("disabled");
           btnUpload.textContent = "EOI already loaded";
-          if (eoiInfoRow) {
+          if (eoiInfoRow && window.__isAdmin) {
             eoiInfoRow.innerHTML = `
               <div>
                 Database for <b>${alias}</b> already exists.
@@ -741,7 +746,7 @@
           };
           // (Optional) Show the overwrite note/button next to Proceed:
           const allocInfoRow = document.getElementById("allocInfoRow");
-          if (allocInfoRow) {
+          if (allocInfoRow && window.__isAdmin) {
             allocInfoRow.innerHTML = `
               <div>
                 Master Class List for <b>${alias}</b> is already loaded.
