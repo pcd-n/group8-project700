@@ -13,6 +13,7 @@ from .views import (
     SuggestTutorsView,
     RunAllocationView,
     TutorSearchView,
+    AllocatedTutorEmailsView,
 )
 
 urlpatterns = [
@@ -27,5 +28,6 @@ urlpatterns = [
     path("unit/<str:unit_code>/sessions/", UnitSessionsView.as_view()),   # GET ?alias=&campus=
     path("suggest_tutors/", SuggestTutorsView.as_view()),                 # GET ?alias=&unit_code=&campus=&q=
     path("assign/", AssignTutorView.as_view(), name="allocation-assign"),
+    path("tutor/allocated-emails/", AllocatedTutorEmailsView.as_view(), name="allocated_tutor_emails"),
     path("tutor/search/", TutorSearchView.as_view(), name="tutor_search"),
 ]

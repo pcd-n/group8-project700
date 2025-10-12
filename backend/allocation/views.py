@@ -2,6 +2,7 @@
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from django.db.models import Q, Min
+from django.db import connections
 from rest_framework import generics, status, serializers
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -25,7 +26,7 @@ from drf_spectacular.utils import (
     OpenApiExample,
 )
 from users.permissions import IsAdminOrCoordinator, TutorReadOnly
-
+from semesters.services import list_existing_semesters 
 User = get_user_model()
 
 def _get_alias(request):
@@ -629,139 +630,165 @@ class TutorSearchView(APIView):
         # ],
     )
     def get(self, request):
-        email = request.query_params.get("email", "").strip()
-
+        email = (request.query_params.get("email") or "").strip()
         if not email:
-            return Response(
-                {"detail": "Email parameter is required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "Email parameter is required"}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Try to get the platform account first (default DB); if missing, we'll still proceed.
         try:
-            # Find the tutor by email (case-insensitive)
-            tutor = User.objects.get(email__iexact=email)
+            platform_tutor = User.objects.get(email__iexact=email)
         except User.DoesNotExist:
-            return Response(
-                {"detail": "Tutor not found"}, status=status.HTTP_404_NOT_FOUND
-            )
+            platform_tutor = None
 
-        # Get tutor basic information
         tutor_data = {
-            "id": tutor.id,
-            "email": tutor.email,
-            "first_name": tutor.first_name,
-            "last_name": tutor.last_name,
-            "full_name": tutor.get_full_name(),
+            "id": getattr(platform_tutor, "id", None),
+            "email": email,
+            "first_name": getattr(platform_tutor, "first_name", "") or "",
+            "last_name": getattr(platform_tutor, "last_name", "") or "",
+            "full_name": (platform_tutor.get_full_name() if platform_tutor else "").strip(),
         }
 
-        # Get campus affiliations
-        campus_list = []
+        semesters_payload = []
+        any_found = False
 
-        # 1. From Supervisor model if the tutor is a supervisor
-        from users.models import Supervisor
+        # iterate every semester DB and gather this tutor's allocations
+        semesters = list_existing_semesters()  # provides the aliases we can use  :contentReference[oaicite:2]{index=2}
+        for s in semesters:
+            alias = getattr(s, "alias", None)
+            if not alias:
+                continue
 
-        try:
-            supervisor = Supervisor.objects.get(user=tutor)
-            if supervisor.campus:
-                campus_list.append(
-                    {
-                        "campus_name": supervisor.campus.campus_name,
-                        "campus_location": supervisor.campus.campus_location,
-                    }
-                )
-        except Supervisor.DoesNotExist:
-            pass
+            # resolve the tutor row inside this ALIAS DB (email match)
+            alias_tutor = User.objects.using(alias).filter(email__iexact=email).first()
+            if not alias_tutor:
+                continue
 
-        # 2. From timetable allocations (where tutor is assigned)
-        allocated_campuses = (
-            TimeTable.objects.filter(tutor_user=tutor)
-            .select_related("campus")
-            .values("campus__campus_name", "campus__campus_location")
-            .distinct()
-        )
+            # collect explicit allocations first
+            alloc_qs = (Allocation.objects.using(alias)
+                        .filter(tutor=alias_tutor)
+                        .select_related(
+                            "session",
+                            "session__unit_course",
+                            "session__unit_course__unit",
+                            "session__unit_course__campus",
+                        ))
 
-        for campus in allocated_campuses:
-            campus_info = {
-                "campus_name": campus["campus__campus_name"],
-                "campus_location": campus["campus__campus_location"],
-            }
-            # Avoid duplicates
-            if campus_info not in campus_list:
-                campus_list.append(campus_info)
-
-        # Get allocated units
-        # From Allocation model
-        allocations = (
-            Allocation.objects.filter(tutor=tutor)
-            .select_related(
-                "session__unit_course__unit", "session__unit_course__campus"
-            )
-            .values(
-                "session__unit_course__unit__unit_code",
-                "session__unit_course__unit__unit_name",
-                "session__unit_course__campus__campus_name",
-                "approved",
-            )
-        )
-
-        # From TimeTable model (direct assignments)
-        timetable_units = (
-            TimeTable.objects.filter(tutor_user=tutor)
-            .select_related("unit_course__unit", "campus")
-            .values(
-                "unit_course__unit__unit_code",
-                "unit_course__unit__unit_name",
-                "campus__campus_name",
-            )
-        )
-
-        # Process allocations
-        unit_stats = {}
-        for allocation in allocations:
-            unit_code = allocation["session__unit_course__unit__unit_code"]
-            unit_name = allocation["session__unit_course__unit__unit_name"]
-            campus_name = allocation["session__unit_course__campus__campus_name"]
-            is_approved = allocation["approved"]
-
-            key = f"{unit_code}_{campus_name}"
-            if key not in unit_stats:
-                unit_stats[key] = {
-                    "unit_code": unit_code,
-                    "unit_name": unit_name,
+            entries = []
+            for a in alloc_qs:
+                uc = getattr(a.session, "unit_course", None)
+                unit = getattr(uc, "unit", None)
+                campus_name = getattr(getattr(uc, "campus", None), "campus_name", "") or ""
+                entries.append({
+                    "source": "Allocation",
+                    "approved": bool(a.approved),
+                    "unit_code": getattr(unit, "unit_code", "") or "",
+                    "unit_name": getattr(unit, "unit_name", "") or "",
                     "campus": campus_name,
-                    "total_sessions": 0,
-                    "approved_sessions": 0,
-                }
+                    "day": getattr(a.session, "day_of_week", "") or "",
+                    "start_time": str(getattr(a.session, "start_time", "") or ""),
+                    "end_time": str(getattr(a.session, "end_time", "") or ""),
+                    "session_id": getattr(a.session, "pk", None),
+                })
 
-            unit_stats[key]["total_sessions"] += 1
-            if is_approved:
-                unit_stats[key]["approved_sessions"] += 1
+            # if nothing in Allocation, also consider timetable direct assignments
+            if not entries:
+                tt_qs = (TimeTable.objects.using(alias)
+                         .filter(tutor_user=alias_tutor)
+                         .select_related("unit_course__unit", "unit_course__campus"))
+                for tt in tt_qs:
+                    uc = getattr(tt, "unit_course", None)
+                    unit = getattr(uc, "unit", None)
+                    campus_name = getattr(getattr(uc, "campus", None), "campus_name", "") or ""
+                    entries.append({
+                        "source": "TimeTable",
+                        "approved": True,  # your previous page treated direct timetable as approved
+                        "unit_code": getattr(unit, "unit_code", "") or "",
+                        "unit_name": getattr(unit, "unit_name", "") or "",
+                        "campus": campus_name,
+                        "day": getattr(tt, "day_of_week", "") or "",
+                        "start_time": str(getattr(tt, "start_time", "") or ""),
+                        "end_time": str(getattr(tt, "end_time", "") or ""),
+                        "session_id": getattr(tt, "pk", None),
+                    })
 
-        # Process timetable direct assignments
-        for tt_unit in timetable_units:
-            unit_code = tt_unit["unit_course__unit__unit_code"]
-            unit_name = tt_unit["unit_course__unit__unit_name"]
-            campus_name = tt_unit["campus__campus_name"]
+            if entries:
+                any_found = True
+                # keep a tidy order for the UI
+                entries.sort(key=lambda r: (r["unit_code"], r["campus"], r["day"], r["start_time"]))
+                semesters_payload.append({
+                    "alias": alias,
+                    "allocations": entries,
+                })
 
-            key = f"{unit_code}_{campus_name}"
-            if key not in unit_stats:
-                unit_stats[key] = {
-                    "unit_code": unit_code,
-                    "unit_name": unit_name,
-                    "campus": campus_name,
-                    "total_sessions": 1,
-                    "approved_sessions": 1,  # Direct timetable assignments are considered approved
-                }
+        if not any_found:
+            return Response({"tutor": tutor_data, "semesters": []}, status=200)
 
-        allocation_units = list(unit_stats.values())
+        # update tutor name from first alias row if platform user lacked names
+        if not tutor_data["full_name"]:
+            for grp in semesters_payload:
+                # try to pull a name from the alias user row we fetched earlier
+                # (lightweight, safe second lookup)
+                alias = grp["alias"]
+                alias_tutor = User.objects.using(alias).filter(email__iexact=email).first()
+                if alias_tutor:
+                    tutor_data["first_name"] = tutor_data["first_name"] or (alias_tutor.first_name or "")
+                    tutor_data["last_name"] = tutor_data["last_name"] or (alias_tutor.last_name or "")
+                    tutor_data["full_name"] = (f"{tutor_data['first_name']} {tutor_data['last_name']}".strip())
+                    break
 
-        # Sort units by unit_code and campus
-        allocation_units.sort(key=lambda x: (x["unit_code"], x["campus"]))
-
-        response_data = {
+        return Response({
             "tutor": tutor_data,
-            "campus": campus_list,
-            "allocation_units": allocation_units,
-        }
+            "semesters": semesters_payload,  # grouped by semester alias
+        }, status=200)
 
-        return Response(response_data, status=status.HTTP_200_OK)
+class AllocatedTutorEmailsView(APIView):
+    """
+    Return a distinct list of tutors who are actually allocated to at least one class
+    in any semester DB. Shape: [{email, first_name, last_name}]
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        seen = set()
+        out = []
+
+        # iterate all known semester aliases
+        semesters = list_existing_semesters()  # returns Semester rows; we only need alias  :contentReference[oaicite:1]{index=1}
+        for s in semesters:
+            alias = getattr(s, "alias", None)
+            if not alias:
+                continue
+
+            # Prefer Allocation table (explicitly "allocated"); fall back to TimeTable if needed
+            rows = (Allocation.objects.using(alias)
+                    .select_related("tutor")
+                    .values("tutor__email", "tutor__first_name", "tutor__last_name")
+                    .distinct())
+
+            if not rows:
+                rows = (TimeTable.objects.using(alias)
+                        .select_related("tutor_user")
+                        .values("tutor_user__email", "tutor_user__first_name", "tutor_user__last_name")
+                        .distinct())
+
+                # normalise keys to the Allocation-like names
+                rows = [{
+                    "tutor__email": r["tutor_user__email"],
+                    "tutor__first_name": r["tutor_user__first_name"],
+                    "tutor__last_name": r["tutor_user__last_name"],
+                } for r in rows]
+
+            for r in rows:
+                email = (r.get("tutor__email") or "").strip().lower()
+                if not email or email in seen:
+                    continue
+                seen.add(email)
+                out.append({
+                    "email": email,
+                    "first_name": (r.get("tutor__first_name") or "").strip(),
+                    "last_name": (r.get("tutor__last_name") or "").strip(),
+                })
+
+        # nice deterministic order
+        out.sort(key=lambda x: (x["email"]))
+        return Response(out, status=200)

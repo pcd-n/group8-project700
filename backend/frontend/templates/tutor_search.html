@@ -124,6 +124,9 @@
                     <a href="/tutor-search/" class="btn btn-outline-primary btn-sm">
                         Search Tutors
                     </a>
+                    <a href="#" id="btnListAll" class="btn btn-outline-success btn-sm">
+                        List All Tutors
+                    </a>
                     <a href="/home/" class="btn btn-outline-secondary btn-sm">
                         Home
                     </a>
@@ -136,9 +139,12 @@
             <form id="searchForm">
                 <div class="row g-3 align-items-end">
                     <div class="col-md-8">
-                        <label for="emailInput" class="form-label fw-semibold">Tutor Email</label>
-                        <input type="email" class="form-control" id="emailInput"
-                            placeholder="Enter tutor email address..." required>
+                        <label for="emailSelect" class="form-label fw-semibold">Tutor</label>
+                        <select id="emailSelect" class="form-control" required>
+                            <option value="" selected disabled>Choose an allocated tutor…</option>
+                        </select>
+                        <small class="text-muted">Dropdown shows only tutors who are actually allocated to a class (any
+                            semester).</small>
                     </div>
                     <div class="col-md-4">
                         <button type="submit" class="btn btn-primary w-100">
@@ -170,12 +176,6 @@
                         <h3 class="h5 mb-1" id="tutorName">-</h3>
                         <p class="text-muted mb-0" id="tutorEmail">-</p>
                     </div>
-                </div>
-
-                <!-- Campus Information -->
-                <div class="mb-3">
-                    <h6 class="fw-semibold mb-2">Campus Affiliations</h6>
-                    <div id="campusList"></div>
                 </div>
             </div>
 
@@ -209,20 +209,23 @@
         };
 
         document.addEventListener("DOMContentLoaded", () => {
-            // If no token, redirect to the login page immediately.
-            if (!getAccessToken()) {
-                window.location.href = "/";
-                return;
-            }
+            if (!getAccessToken()) { window.location.href = "/"; return; }
 
-            // Attach the search form listener only if the user is authenticated.
+            // populate dropdown immediately
+            loadAllocatedTutors();
+
+            // optional: clicking "List all tutors" just refocuses the select (acts as 'view')
+            document.getElementById("btnListAll").addEventListener("click", (e) => {
+                e.preventDefault();
+                document.getElementById("emailSelect").focus();
+            });
+
             document.getElementById("searchForm").addEventListener("submit", async function (e) {
                 e.preventDefault();
-
-                const email = document.getElementById("emailInput").value.trim();
+                const sel = document.getElementById("emailSelect");
+                const email = (sel.value || "").trim();
                 if (!email) return;
 
-                // Show loading state
                 showLoading(true);
                 hideError();
                 hideResults();
@@ -237,10 +240,8 @@
                         const data = await response.json();
                         displayResults(data);
                     } else if (response.status === 401) {
-                        // If token is invalid/expired, redirect to login.
                         window.location.href = "/";
-                    }
-                    else {
+                    } else {
                         const errorData = await response.json();
                         showError(errorData.detail || "An error occurred while searching for the tutor.");
                     }
@@ -253,6 +254,26 @@
             });
         });
 
+        async function loadAllocatedTutors() {
+            try {
+                const resp = await fetch(`/api/allocation/tutor/allocated-emails/`, {
+                    headers: authHeaders({ "Content-Type": "application/json" }),
+                });
+                if (!resp.ok) return;
+                const items = await resp.json();
+                const sel = document.getElementById("emailSelect");
+                sel.innerHTML = `<option value="" selected disabled>Choose an allocated tutor…</option>`;
+                items.forEach(({ email, first_name, last_name }) => {
+                    const name = [first_name || "", last_name || ""].join(" ").trim();
+                    const opt = document.createElement("option");
+                    opt.value = email;
+                    opt.textContent = name ? `${email} — ${name}` : email;
+                    sel.appendChild(opt);
+                });
+            } catch (e) {
+                console.error("Load allocated tutors failed:", e);
+            }
+        }
 
         function showLoading(show) {
             const spinner = document.querySelector(".loading-spinner");
@@ -295,68 +316,67 @@
                 noResultsMessage.classList.remove('d-none');
                 return;
             }
-            // Display tutor info
-            document.getElementById("tutorName").textContent = data.tutor.full_name;
-            document.getElementById("tutorEmail").textContent = data.tutor.email;
 
-            // Display campus information
-            const campusList = document.getElementById("campusList");
-            campusList.innerHTML = "";
+            // Tutor header
+            document.getElementById("tutorName").textContent = data.tutor.full_name || (data.tutor.email || "-");
+            document.getElementById("tutorEmail").textContent = data.tutor.email || "-";
 
-            if (data.campus && data.campus.length > 0) {
-                data.campus.forEach((campus) => {
-                    const badge = document.createElement("span");
-                    badge.className = "badge campus-badge me-2 mb-2";
-                    badge.textContent = `${campus.campus_name} (${campus.campus_location})`;
-                    campusList.appendChild(badge);
-                });
+            // remove campus area completely (we already removed the HTML)
+
+            // Grouped allocations by semester
+            const host = document.getElementById("allocationsList");
+            host.innerHTML = "";
+
+            const groups = Array.isArray(data.semesters) ? data.semesters : [];
+            if (!groups.length) {
+                host.innerHTML = '<div class="text-muted text-center py-3">No allocations found in any semester</div>';
             } else {
-                campusList.innerHTML = '<span class="text-muted">No campus affiliations found</span>';
+                groups.forEach(group => {
+                    const alias = group.alias || "(unknown)";
+                    const entries = Array.isArray(group.allocations) ? group.allocations : [];
+
+                    const wrap = document.createElement("div");
+                    wrap.className = "border rounded p-3 mb-3";
+
+                    const header = document.createElement("div");
+                    header.className = "d-flex justify-content-between align-items-center mb-2";
+                    header.innerHTML = `<h6 class="mb-0">Semester: ${alias}</h6>
+                                <span class="badge unit-badge">${entries.length} class${entries.length === 1 ? "" : "es"}</span>`;
+                    wrap.appendChild(header);
+
+                    if (!entries.length) {
+                        const empty = document.createElement("div");
+                        empty.className = "text-muted";
+                        empty.textContent = "No classes in this semester.";
+                        wrap.appendChild(empty);
+                    } else {
+                        entries.forEach(row => {
+                            const line = document.createElement("div");
+                            line.className = "d-flex justify-content-between align-items-start py-1 border-top";
+                            line.innerHTML = `
+                    <div>
+                    <div><strong>${row.unit_code}</strong> — ${row.unit_name || ""}</div>
+                    <div class="session-info">
+                        ${row.campus ? `<span>${row.campus}</span> • ` : ""}
+                        <span>${row.day || ""}</span>
+                        <span>${row.start_time ? ` ${row.start_time}` : ""}${row.end_time ? `–${row.end_time}` : ""}</span>
+                        <span class="ms-2 text-uppercase">${row.source || ""}</span>
+                    </div>
+                    </div>
+                    <div class="text-muted">#${row.session_id ?? ""}</div>
+                `;
+                            wrap.appendChild(line);
+                        });
+                    }
+
+                    host.appendChild(wrap);
+                });
             }
 
-            // Display allocation units
-            const allocationsList = document.getElementById("allocationsList");
-            allocationsList.innerHTML = "";
-
-            if (data.allocation_units && data.allocation_units.length > 0) {
-                data.allocation_units.forEach((unit) => {
-                    const unitCard = document.createElement("div");
-                    unitCard.className = "border rounded p-3 mb-3";
-
-                    const approvedRatio =
-                        unit.total_sessions > 0
-                            ? Math.round((unit.approved_sessions / unit.total_sessions) * 100)
-                            : 0;
-
-                    unitCard.innerHTML = `
-                        <div class="d-flex justify-content-between align-items-start mb-2">
-                            <div>
-                                <h6 class="mb-1">${unit.unit_code}</h6>
-                                <p class="text-muted mb-0">${unit.unit_name}</p>
-                            </div>
-                            <span class="badge unit-badge">${unit.campus}</span>
-                        </div>
-                        <div class="session-info">
-                            <div class="row">
-                                <div class="col-sm-6">
-                                    <strong>Total Sessions:</strong> ${unit.total_sessions}
-                                </div>
-                                <div class="col-sm-6">
-                                    <strong>Approved:</strong> ${unit.approved_sessions} (${approvedRatio}%)
-                                </div>
-                            </div>
-                        </div>
-                    `;
-
-                    allocationsList.appendChild(unitCard);
-                });
-            } else {
-                allocationsList.innerHTML = '<div class="text-muted text-center py-3">No unit allocations found</div>';
-            }
-
-            // Show results
+            // show results
             document.querySelector(".results-section").style.display = "block";
         }
+
     </script>
 </body>
 
