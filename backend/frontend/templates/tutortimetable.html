@@ -76,15 +76,10 @@
                         <button class="btn btn-outline-primary btn-sm" id="btnDownloadPng">Download PNG</button>
                         <button class="btn btn-outline-primary btn-sm" id="btnDownloadXlsx">Download XLSX</button>
 
-                        <button class="btn btn-primary btn-sm dropdown-toggle" data-bs-toggle="dropdown"
+                        <button class="btn btn-primary btn-sm dropdown-toggle" href="#" id="btnShareviaEmail"
                             aria-expanded="false">
                             Share via email
                         </button>
-                        <ul class="dropdown-menu dropdown-menu-end">
-                            <li><a class="dropdown-item" href="#" id="btnSharePdf">Share PDF</a></li>
-                            <li><a class="dropdown-item" href="#" id="btnSharePng">Share PNG</a></li>
-                            <li><a class="dropdown-item" href="#" id="btnShareXlsx">Share XLSX</a></li>
-                        </ul>
                     </div>
                     <a id="backLink" href="/home/" class="btn btn-outline-secondary btn-sm">← Back</a>
                 </div>
@@ -204,20 +199,10 @@
                 triggerDownload(blob, filename);
             });
 
-            document.getElementById("btnSharePdf").addEventListener("click", async (e) => {
+            document.getElementById("btnShareviaEmail").addEventListener("click", async (e) => {
                 e.preventDefault();
                 const { blob, filename } = await captureAsPdf();
                 shareViaEmail({ blob, filename, mime: "application/pdf" });
-            });
-            document.getElementById("btnSharePng").addEventListener("click", async (e) => {
-                e.preventDefault();
-                const { blob, filename } = await captureAsPng();
-                shareViaEmail({ blob, filename, mime: "image/png" });
-            });
-            document.getElementById("btnShareXlsx").addEventListener("click", (e) => {
-                e.preventDefault();
-                const { blob, filename } = buildXlsx();
-                shareViaEmail({ blob, filename, mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
             });
         });
 
