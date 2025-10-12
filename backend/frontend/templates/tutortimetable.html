@@ -65,14 +65,19 @@
             </div>
 
             <!-- a compact header that will be included in the export -->
-            <div id="exportHeader" class="mb-2">
-                <div class="fw-semibold">
-                    Tutor: <span id="exName"></span> (<span id="exEmail"></span>)
+            <div id="ttCapture">
+                <div id="exportHeader" class="mb-2">
+                    <div class="fw-semibold">
+                        Tutor: <span id="exName"></span> (<span id="exEmail"></span>)
+                    </div>
+                    <div class="text-muted small">
+                        Semester: <span id="exAlias"></span> • Generated: <span id="exWhen"></span>
+                    </div>
                 </div>
-                <div class="text-muted small">
-                    Semester: <span id="exAlias"></span> • Generated: <span id="exWhen"></span>
-                </div>
+
+                <div id="gridWrap" class="table-responsive"></div>
             </div>
+
             <div class="btn-group">
                 <button class="btn btn-outline-primary btn-sm" id="btnDownloadPdf">Download PDF</button>
                 <button class="btn btn-outline-primary btn-sm" id="btnDownloadPng">Download PNG</button>
@@ -90,8 +95,6 @@
 
             <a id="backLink" href="/home/" class="btn btn-outline-secondary btn-sm">← Back</a>
         </div>
-
-        <div id="gridWrap" class="table-responsive"></div>
         <div id="empty" class="alert alert-warning d-none mt-3">No assigned classes for this tutor.</div>
     </div>
 
@@ -115,11 +118,6 @@
         } else {
             backLink.href = '/home/';
         }
-
-        document.getElementById("exName").textContent = tutorName || "";
-        document.getElementById("exEmail").textContent = tutorEmail || "";
-        document.getElementById("exAlias").textContent = useAlias || (alias || "");
-        document.getElementById("exWhen").textContent = new Date().toLocaleString();
 
         function setHeader(name, email) {
             titleEl.textContent = name ? `Timetable: ${name}` : "Timetable";
@@ -201,6 +199,11 @@
             } catch (e) {
                 alert(e.message || e);
             }
+
+            document.getElementById("exName").textContent = tutorName || "";
+            document.getElementById("exEmail").textContent = tutorEmail || "";
+            document.getElementById("exAlias").textContent = useAlias || (alias || "");
+            document.getElementById("exWhen").textContent = new Date().toLocaleString();
 
             // Hook up export & share
             document.getElementById("btnDownloadPdf").addEventListener("click", async () => {
