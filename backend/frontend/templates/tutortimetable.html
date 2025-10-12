@@ -357,7 +357,7 @@
                 form.append("subject", subject);
                 form.append("body", body);
                 form.append("attachment", new File([blob], filename, { type: mime }));
-                const res = await fetch(`${API_BASE}/utils/send-email/`, { method: "POST", headers: authHeaders(), body: form, credentials: "include" });
+                const res = await fetch(`${API_BASE}/timetable/utils/send-email/`, { method: "POST", headers: authHeaders(), body: form, credentials: "include" });
                 if (res.ok) { alert("Email sent."); return; }
                 // If 404 or not allowed, fall through to mailto
             } catch { }
