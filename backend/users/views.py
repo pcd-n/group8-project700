@@ -6,6 +6,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated, BasePermission
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.db import IntegrityError
+from django.conf import settings
 from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
 from rest_framework.decorators import api_view, permission_classes
@@ -26,7 +27,7 @@ from semesters.services import get_active_semester_alias
 from rich.console import Console
 import logging
 
-DEFAULT_DB = "default"
+DEFAULT_DB = getattr(settings, "DEFAULT_DB_ALIAS", "default")
 # Configure rich console
 console = Console()
 logger = logging.getLogger(__name__)
@@ -35,31 +36,80 @@ logger = logging.getLogger(__name__)
 @permission_classes([IsAdminRole])
 def eoi_tutor_emails(request):
     """
-    GET /api/tutors/eoi-emails/?alias=sem_2025_s2
-    Returns list of {email, first_name, last_name} from the alias DB (EOI upload).
+    GET /api/tutors/eoi-emails/?alias=<sem_xxxx_sY>
+    Returns [{email, first_name, last_name}] from the ALIAS users_user table
+    that was populated by the EOI upload.
     """
     alias = request.GET.get("alias") or get_active_semester_alias()
     if not alias:
         return Response({"detail": "No active semester alias."}, status=400)
 
-    # some old aliases might not have username column; safe to ignore
-    # only pick rows that have an email (uploaded EOI tutors)
+    # pull rows that have an email (EOI upload makes these)
     qs = User.objects.using(alias).filter(email__isnull=False).exclude(email="").values(
         "email", "first_name", "last_name"
     )
-    # de-dupe + normalise case
-    seen, data = set(), []
+
+    seen, out = set(), []
     for r in qs:
         email = (r["email"] or "").strip().lower()
         if not email or email in seen:
             continue
         seen.add(email)
-        data.append({
+        out.append({
             "email": email,
             "first_name": (r["first_name"] or "").strip(),
             "last_name":  (r["last_name"]  or "").strip(),
         })
-    return Response(data, status=200)
+    return Response(out, status=200)
+
+@api_view(["DELETE"])
+@permission_classes([IsAdminRole])
+def delete_user_and_clear_alias(request, user_id: int):
+    """
+    DELETE /api/accounts/users/{user_id}/?alias=<sem_xxxx_sY>
+    - Deletes the user in DEFAULT DB (platform account).
+    - If the user has Tutor role AND has an email, then in the alias DB
+      set users_user.username = '' (or NULL) where email = that email.
+    """
+    alias = request.GET.get("alias") or get_active_semester_alias()
+    if alias == DEFAULT_DB:
+        alias = None
+
+    # get platform user
+    try:
+        platform_user = User.objects.using(DEFAULT_DB).get(id=user_id)
+    except User.DoesNotExist:
+        return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    # safety: do not allow removing yourself or superusers (adjust to your policy)
+    if request.user.id == platform_user.id:
+        return Response({"detail": "You cannot remove your own account."}, status=400)
+    if getattr(platform_user, "is_superuser", False):
+        return Response({"detail": "Cannot remove a superuser."}, status=400)
+
+    # check role (assuming many-to-many Role relation via platform_user.roles)
+    has_tutor_role = False
+    try:
+        has_tutor_role = getattr(platform_user, "has_role", lambda _: False)("Tutor")
+    except Exception:
+        # if your role API differs, adapt accordingly
+        pass
+
+    email = (platform_user.email or "").strip().lower()
+
+    # remove from DEFAULT DB
+    with transaction.atomic(using=DEFAULT_DB):
+        platform_user.delete(using=DEFAULT_DB)
+
+    # if Tutor: clear alias username (if alias + email available)
+    if has_tutor_role and alias and email:
+        alias_user = User.objects.using(alias).filter(email__iexact=email).first()
+        if alias_user:
+            # set blank username; use NULL if your schema allows nullable
+            alias_user.username = ""
+            alias_user.save(using=alias, update_fields=["username"])
+
+    return Response(status=status.HTTP_204_NO_CONTENT)
 
 @api_view(["GET"])
 @permission_classes([IsAdminRole])
@@ -82,11 +132,13 @@ def _ensure_alias_username_column(alias: str):
         return
     with connections[alias].cursor() as c:
         c.execute("SHOW COLUMNS FROM `users_user` LIKE 'username'")
-        has = c.fetchone() is not None
-        if not has:
-            # Minimal compatible field spec with your current User model
+        has_col = c.fetchone() is not None
+        if not has_col:
             c.execute("ALTER TABLE `users_user` ADD COLUMN `username` varchar(150) DEFAULT ''")
-            c.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_user_username_uniq ON `users_user` (`username`)")
+        c.execute("SHOW INDEX FROM `users_user` WHERE Key_name = 'users_user_username_uniq'")
+        has_idx = c.fetchone() is not None
+        if not has_idx:
+            c.execute("CREATE UNIQUE INDEX users_user_username_uniq ON `users_user` (`username`)")
 
 class LoginSerializer(serializers.Serializer):
     username = serializers.CharField(help_text="User's username")
