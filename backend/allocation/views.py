@@ -775,6 +775,8 @@ class TutorSearchView(APIView):
                 uc = getattr(a.session, "unit_course", None)
                 unit = getattr(uc, "unit", None)
                 campus_name = getattr(getattr(uc, "campus", None), "campus_name", "") or ""
+                mc = getattr(a.session, "master_class", None)
+                activity = (getattr(mc, "activity_code", None) or getattr(a.session, "activity_code_ui", "") or "")
                 entries.append({
                     "source": "Allocation",
                     "approved": bool(a.approved),
@@ -785,7 +787,7 @@ class TutorSearchView(APIView):
                     "start_time": str(getattr(a.session, "start_time", "") or ""),
                     "end_time": str(getattr(a.session, "end_time", "") or ""),
                     "session_id": getattr(a.session, "pk", None),
-                    "activity_code": getattr(getattr(a.session, "activity_code", None), "activity_code", "") or "",
+                    "activity_code": activity,
                 })
 
             # if nothing in Allocation, also consider timetable direct assignments
@@ -797,6 +799,8 @@ class TutorSearchView(APIView):
                     uc = getattr(tt, "unit_course", None)
                     unit = getattr(uc, "unit", None)
                     campus_name = getattr(getattr(uc, "campus", None), "campus_name", "") or ""
+                    mc = getattr(tt, "master_class", None)
+                    activity = (getattr(mc, "activity_code", None) or getattr(tt, "activity_code_ui", "") or "")                    
                     entries.append({
                         "source": "TimeTable",
                         "approved": True,  # your previous page treated direct timetable as approved
@@ -807,7 +811,7 @@ class TutorSearchView(APIView):
                         "start_time": str(getattr(tt, "start_time", "") or ""),
                         "end_time": str(getattr(tt, "end_time", "") or ""),
                         "session_id": getattr(tt, "pk", None),
-                        "activity_code": getattr(getattr(tt, "activity_code", None), "activity_code", "") or "",
+                        "activity_code": activity,
                     })
 
             if entries:
