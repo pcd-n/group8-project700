@@ -174,7 +174,6 @@
             box.setAttribute('role', 'alert');
             box.innerHTML = `
             <div class="fw-semibold mb-1">${escapeHtml(msg)}</div>
-            <div class="small text-muted">Click anywhere outside to dismiss</div>
             `;
 
             modal.appendChild(box);
@@ -193,8 +192,8 @@
                 }, 200);
             };
 
-            // Auto-dismiss after 3s
-            const timer = setTimeout(closeAlert, 3000);
+            // Auto-dismiss after 4s
+            const timer = setTimeout(closeAlert, 4000);
 
             // Click outside to dismiss
             overlay.addEventListener('click', () => {
@@ -387,7 +386,7 @@
             <div class="small text-muted">Note: ${escapeHtml(previewShort)}</div>
             <div class="d-flex gap-2">
               <button class="btn btn-sm btn-outline-primary"
-                      data-action="edit-note" data-user="${r.user}">Edit note</button>
+                      data-action="edit-note" data-user="${r.user}">Edit</button>
               <button class="btn btn-sm btn-outline-secondary"
                       data-action="reset" data-user="${r.user}">Reset password</button>
               ${removeBtn}
@@ -473,12 +472,47 @@
             const userId = Number(btn.getAttribute('data-user'));
 
             if (btn.dataset.action === 'edit-note') {
-                const current = rows.find(x => x.user === userId)?.user_note || '';
-                const next = prompt('Edit note for this user:', current || '');
-                if (next === null) return;
-                try { await putJSON(API.updateUser(userId), { note: next }); showAlert('Note updated', 'success'); await loadAll(); }
-                catch (err) { showAlert(err.message || 'Note update failed'); }
+                const row = rows.find(x => x.user === userId) || {};
+                const full = (row.user_name || '').trim();
+
+                // Try to split existing display name into first/last (fallbacks if not available)
+                let firstDefault = '';
+                let lastDefault = '';
+                if (full) {
+                    const parts = full.split(/\s+/);
+                    if (parts.length === 1) {
+                        firstDefault = parts[0];
+                    } else if (parts.length > 1) {
+                        lastDefault = parts.pop();
+                        firstDefault = parts.join(' ');
+                    }
+                }
+
+                const currentNote = (row.user_note || '').trim();
+
+                // Simple prompts (keeps UI footprint tiny; cancel at any step aborts)
+                const newFirst = prompt('Edit FIRST name for this user:', firstDefault);
+                if (newFirst === null) return;
+
+                const newLast = prompt('Edit LAST name for this user:', lastDefault);
+                if (newLast === null) return;
+
+                const newNote = prompt('Edit NOTE for this user:', currentNote);
+                if (newNote === null) return;
+
+                try {
+                    await putJSON(API.updateUser(userId), {
+                        first_name: (newFirst || '').trim(),
+                        last_name: (newLast || '').trim(),
+                        note: newNote
+                    });
+                    showAlert('User details updated', 'success');
+                    await loadAll(); // re-fetch so the table shows the new name/note
+                } catch (err) {
+                    showAlert(err.message || 'Update failed');
+                }
             }
+
 
             if (btn.dataset.action === 'reset') {
                 const pwd = prompt('Enter a new password: (min 8 chars)');
