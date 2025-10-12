@@ -761,14 +761,17 @@ class TutorSearchView(APIView):
                 continue
 
             # collect explicit allocations first
-            alloc_qs = (Allocation.objects.using(alias)
-                        .filter(tutor=alias_tutor)
-                        .select_related(
-                            "session",
-                            "session__unit_course",
-                            "session__unit_course__unit",
-                            "session__unit_course__campus",
-                        ))
+            alloc_qs = (
+                Allocation.objects.using(alias)
+                .filter(tutor=alias_tutor)
+                .select_related(
+                    "session",
+                    "session__unit_course",
+                    "session__unit_course__unit",
+                    "session__unit_course__campus",
+                    "session__master_class", 
+                )
+            )
 
             entries = []
             for a in alloc_qs:
@@ -776,7 +779,7 @@ class TutorSearchView(APIView):
                 unit = getattr(uc, "unit", None)
                 campus_name = getattr(getattr(uc, "campus", None), "campus_name", "") or ""
                 mc = getattr(a.session, "master_class", None)
-                activity = (getattr(mc, "activity_code", None) or getattr(a.session, "activity_code_ui", "") or "")
+                activity = getattr(mc, "activity_code", "") or ""
                 entries.append({
                     "source": "Allocation",
                     "approved": bool(a.approved),
@@ -792,15 +795,21 @@ class TutorSearchView(APIView):
 
             # if nothing in Allocation, also consider timetable direct assignments
             if not entries:
-                tt_qs = (TimeTable.objects.using(alias)
-                         .filter(tutor_user=alias_tutor)
-                         .select_related("unit_course__unit", "unit_course__campus"))
+                tt_qs = (
+                    TimeTable.objects.using(alias)
+                    .filter(tutor_user=alias_tutor)
+                    .select_related(
+                        "unit_course__unit",
+                        "unit_course__campus",
+                        "master_class",
+                    )
+                )
                 for tt in tt_qs:
                     uc = getattr(tt, "unit_course", None)
                     unit = getattr(uc, "unit", None)
                     campus_name = getattr(getattr(uc, "campus", None), "campus_name", "") or ""
                     mc = getattr(tt, "master_class", None)
-                    activity = (getattr(mc, "activity_code", None) or getattr(tt, "activity_code_ui", "") or "")                    
+                    activity = getattr(mc, "activity_code", "") or ""  
                     entries.append({
                         "source": "TimeTable",
                         "approved": True,

@@ -78,15 +78,9 @@ def sessions_list(request):
             except Exception:
                 pass
 
-            try:
-                mc = getattr(t, "master_class", None)
-                activity_code_val = (getattr(mc, "activity_code", None) or getattr(t, "activity_code_ui", "") or "")
-            except Exception:
-                activity_code_val = getattr(t, "activity_code_ui", "") or ""
-                
             rows.append({
                 "session_id":   getattr(t, "timetable_id", t.pk),
-                "activity_code": activity_code_val,
+                "activity_code": (unit.unit_code if unit else "")[:6].upper(),
                 "unit_name":     unit.unit_name if unit else "",
                 "campus":        campus_name,
                 "day_of_week":   DAY_MAP.get(t.day_of_week, t.day_of_week),
