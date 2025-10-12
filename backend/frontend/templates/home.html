@@ -126,17 +126,22 @@
           View My Timetable
         </a>
 
-        <!-- Admin-only: Users Management -->
-        <div class="d-flex justify-content-center mt-3">
+        <!-- Admin-only: Users Management + Tutors Listing -->
+        <div class="d-flex justify-content-center gap-2 mt-3">
           <a id="btnUsersMgmt" href="/manage/users" class="btn btn-outline-dark btn-pill btn-wide d-none">
             Users Management
+          </a>
+          <a id="btnTutorsListing" href="/tutor-search/" class="btn btn-outline-dark btn-pill btn-wide d-none">
+            Tutors Listing
           </a>
         </div>
       </div>
     </div>
   </div>
 
-  <br>
+  <div class="container">
+    <hr class="my-4">
+  </div>
   <!-- EOI units (Code + Name only) -->
   <div id="unitsSection" class="container table-wrap hidden">
     <div class="mb-2">
@@ -697,6 +702,10 @@
         const isAdmin = !!data?.is_staff || roles.includes('Admin');
         if (isAdmin) {
           document.getElementById('btnUsersMgmt')?.classList.remove('d-none');
+          document.getElementById('btnTutorsListing')?.classList.remove('d-none');
+        }
+        if (isCoordinator) {
+          document.getElementById('btnTutorsListing')?.classList.remove('d-none');
         }
       } catch (e) {
         // ignore - server will still enforce perms
@@ -729,7 +738,11 @@
         const alias = await getCurrentAlias();
         // Update "ICT Units EOIs" title with current semester
         const eoiTitleEl = document.querySelector('#unitsSection .section-title');
-        if (eoiTitleEl) eoiTitleEl.textContent = `ICT Units EOIs for ${prettyFromAlias(alias)}`;
+        if (eoiTitleEl) {
+          eoiTitleEl.textContent = `ICT Units EOIs for ${prettyFromAlias(alias)}`;
+          eoiTitleEl.classList.add('display-6', 'text-center', 'mt-2', 'mb-3');
+        }
+
         await loadUnitsFromServerForAlias(alias);
 
         // === Toggle EOI upload state if DB already exists ===
