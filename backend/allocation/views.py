@@ -403,6 +403,7 @@ class SuggestTutorsView(APIView):
             return Response(results)
 
 
+# allocation/views.py  — in AssignTutorView.post(self, request)
 class AssignTutorView(APIView):
     permission_classes = [IsAdminOrCoordinator]
 
@@ -418,29 +419,53 @@ class AssignTutorView(APIView):
 
         with force_write_alias(alias):
             try:
-                tt = TimeTable.objects.using(alias).get(pk=session_id)     # <-- using(alias)
+                tt = TimeTable.objects.using(alias).get(pk=session_id)
             except TimeTable.DoesNotExist:
                 return Response({"detail": "Session not found"}, status=404)
 
             tutor = None
             if tutor_id:
                 try:
-                    tutor = User.objects.using(alias).get(pk=tutor_id)     # <-- using(alias)
+                    tutor = User.objects.using(alias).get(pk=tutor_id)
                 except User.DoesNotExist:
                     return Response({"detail": f"Tutor id {tutor_id} not found"}, status=404)
             elif tutor_email:
-                tutor = User.objects.using(alias).filter(email__iexact=tutor_email).first()  # <-- using(alias)
+                tutor = User.objects.using(alias).filter(email__iexact=tutor_email).first()
                 if not tutor:
                     return Response({"detail": f"Tutor email {tutor_email} not found"}, status=404)
 
+            # --- clash check that always returns JSON ---
             if tutor:
-                ok, msg = tt.can_assign_tutor(tutor)
-                if not ok:
-                    return Response({"detail": msg}, status=400)
-                tt.tutor_user = tutor
-            else:
-                tt.tutor_user = None  # unassign
+                conflict = (
+                    TimeTable.objects.using(alias)
+                    .filter(
+                        tutor_user=tutor,
+                        day_of_week=tt.day_of_week,
+                        start_time__lt=tt.end_time,
+                        end_time__gt=tt.start_time,
+                    )
+                    .exclude(pk=tt.pk)
+                    .select_related("unit_course__unit", "master_class")
+                    .first()
+                )
+                if conflict:
+                    def label(s):
+                        unit = getattr(getattr(s, "unit_course", None), "unit", None)
+                        unit_code = getattr(unit, "unit_code", "") or ""
+                        act = getattr(getattr(s, "master_class", None), "activity_code", "") or ""
+                        day = getattr(s, "day_of_week", "") or ""
+                        start = str(getattr(s, "start_time", "") or "")
+                        return f"{unit_code}-{act} - {day} {start}"
 
+                    detail = (
+                        f"Clash detected for {label(tt)}. "
+                        f"Tutor already had an allocated class '{label(conflict)}'."
+                    )
+                    # Always 400 with JSON so the frontend shows the pretty popup
+                    return Response({"detail": detail}, status=400)
+
+            # Proceed with save (assign or unassign + notes)
+            tt.tutor_user = tutor if tutor else None
             tt.notes = notes
             tt.save(using=alias)
 
@@ -452,7 +477,6 @@ class AssignTutorView(APIView):
                 "tutor_email": tt.tutor_user.email if tt.tutor_user else "",
                 "notes": tt.notes,
             })
-
 
 class RunAllocationView(APIView):
     """
@@ -516,7 +540,7 @@ class RunAllocationView(APIView):
                     )
                     created.append(alloc)
                     break  # next session after first valid tutor
-                
+
         return Response(
             {"created": len(created), "allocations": AllocationSerializer(created, many=True).data},
             status=status.HTTP_200_OK,
