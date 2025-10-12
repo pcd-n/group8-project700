@@ -785,6 +785,7 @@ class TutorSearchView(APIView):
                     "start_time": str(getattr(a.session, "start_time", "") or ""),
                     "end_time": str(getattr(a.session, "end_time", "") or ""),
                     "session_id": getattr(a.session, "pk", None),
+                    "activity_code": getattr(getattr(a.session, "activity_code", None), "activity_code", "") or "",
                 })
 
             # if nothing in Allocation, also consider timetable direct assignments
@@ -806,6 +807,7 @@ class TutorSearchView(APIView):
                         "start_time": str(getattr(tt, "start_time", "") or ""),
                         "end_time": str(getattr(tt, "end_time", "") or ""),
                         "session_id": getattr(tt, "pk", None),
+                        "activity_code": getattr(getattr(tt, "activity_code", None), "activity_code", "") or "",
                     })
 
             if entries:

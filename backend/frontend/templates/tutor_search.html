@@ -380,33 +380,24 @@
                             const line = document.createElement("div");
                             line.className = "d-flex justify-content-between align-items-start py-1 border-top";
 
-                            // --- New Formatting Logic ---
-
                             // Line 1: e.g., "KIT101 — Programming Fundamentals"
                             const firstLine = `<strong>${row.unit_code}</strong> — ${row.unit_name || ""}`;
 
-                            // Line 2: Build an array of parts to join together
                             const secondLineParts = [];
                             if (row.campus) {
                                 secondLineParts.push(`<span>${row.campus}</span>`);
                             }
                             if (row.activity_code) {
-                                // Use text-uppercase for consistency with activity codes
                                 secondLineParts.push(`<span class="text-uppercase">${row.activity_code}</span>`);
                             }
 
-                            // Combine day and time into one part
                             const timeString = `${row.day || ''} ${row.start_time || ''}${row.end_time ? `–${row.end_time}` : ''}`.trim();
                             if (timeString) {
                                 secondLineParts.push(`<span>${timeString}</span>`);
                             }
 
-                            // Join all the parts with a separator
                             const secondLine = secondLineParts.join(' <span class="text-muted mx-2">|</span> ');
 
-                            // --- End of Logic ---
-
-                            // Combine everything into the final HTML
                             line.innerHTML = `
                                 <div>
                                     <div>${firstLine}</div>
