@@ -14,6 +14,57 @@
         .mono {
             font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
         }
+
+        .alert-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.35);
+            z-index: 1055;
+        }
+
+        .alert-modal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            min-width: min(90vw, 420px);
+            z-index: 1056;
+            border-radius: 12px;
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+            pointer-events: auto;
+        }
+
+        .alert-modal .alert {
+            margin: 0;
+            border-radius: 12px;
+        }
+
+        .alert-enter {
+            animation: alertIn .15s ease-out;
+        }
+
+        .alert-leave {
+            animation: alertOut .2s ease-in forwards;
+        }
+
+        @keyframes alertIn {
+            from {
+                opacity: 0;
+                transform: translate(-50%, -46%);
+            }
+
+            to {
+                opacity: 1;
+                transform: translate(-50%, -50%);
+            }
+        }
+
+        @keyframes alertOut {
+            to {
+                opacity: 0;
+                transform: translate(-50%, -46%);
+            }
+        }
     </style>
 </head>
 
@@ -103,11 +154,65 @@
 
         // ---------- Alerts ----------
         function showAlert(msg, type = 'danger') {
-            const box = document.getElementById('alertBox');
-            box.className = `alert alert-${type}`;
-            box.textContent = msg;
-            box.classList.remove('d-none');
-            setTimeout(() => box.classList.add('d-none'), 5000);
+            // Remove any existing alert first (prevents stacking)
+            document.getElementById('alertOverlay')?.remove();
+            document.getElementById('alertModal')?.remove();
+
+            // Create overlay
+            const overlay = document.createElement('div');
+            overlay.id = 'alertOverlay';
+            overlay.className = 'alert-overlay';
+
+            // Create centered modal container
+            const modal = document.createElement('div');
+            modal.id = 'alertModal';
+            modal.className = 'alert-modal alert-enter';
+
+            // Build the alert box (Bootstrap classes preserved)
+            const box = document.createElement('div');
+            box.className = `alert alert-${type} text-center`;
+            box.setAttribute('role', 'alert');
+            box.innerHTML = `
+            <div class="fw-semibold mb-1">${escapeHtml(msg)}</div>
+            <div class="small text-muted">Click anywhere outside to dismiss</div>
+            `;
+
+            modal.appendChild(box);
+            document.body.appendChild(overlay);
+            document.body.appendChild(modal);
+
+            // Close logic
+            const closeAlert = () => {
+                modal.classList.remove('alert-enter');
+                modal.classList.add('alert-leave');
+                overlay.style.transition = 'opacity .15s ease';
+                overlay.style.opacity = '0';
+                setTimeout(() => {
+                    overlay.remove();
+                    modal.remove();
+                }, 200);
+            };
+
+            // Auto-dismiss after 3s
+            const timer = setTimeout(closeAlert, 3000);
+
+            // Click outside to dismiss
+            overlay.addEventListener('click', () => {
+                clearTimeout(timer);
+                closeAlert();
+            });
+
+            // Prevent clicks inside the alert from bubbling to overlay
+            modal.addEventListener('click', (e) => e.stopPropagation());
+
+            // Allow ESC to dismiss (doesn’t interfere with anything)
+            document.addEventListener('keydown', function escClose(ev) {
+                if (ev.key === 'Escape') {
+                    document.removeEventListener('keydown', escClose);
+                    clearTimeout(timer);
+                    closeAlert();
+                }
+            });
         }
 
         // ---------- Error helpers ----------
