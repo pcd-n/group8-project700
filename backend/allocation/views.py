@@ -803,7 +803,7 @@ class TutorSearchView(APIView):
                     activity = (getattr(mc, "activity_code", None) or getattr(tt, "activity_code_ui", "") or "")                    
                     entries.append({
                         "source": "TimeTable",
-                        "approved": True,  # your previous page treated direct timetable as approved
+                        "approved": True,
                         "unit_code": getattr(unit, "unit_code", "") or "",
                         "unit_name": getattr(unit, "unit_name", "") or "",
                         "campus": campus_name,
