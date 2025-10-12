@@ -95,7 +95,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
         is_supervisor = validated_data.pop('is_supervisor', False)
         campus_id = validated_data.pop('campus_id', None)
         password = validated_data.pop('password')
-
+        note = validated_data.pop("note", None)
         # Create the user on DEFAULT_DB (manager enforces that too)
         user = User.objects.create_user(
             password=password,
@@ -103,10 +103,18 @@ class UserCreateSerializer(serializers.ModelSerializer):
             **validated_data
         )
 
+        if note is not None:
+            user.note = note
+            user.save(using="default", update_fields=["note"])
+
         # Optionally create Supervisor record on DEFAULT_DB
-        if is_supervisor:
-            campus = Campus.objects.using(DEFAULT_DB).get(id=campus_id)
-            Supervisor.objects.using(DEFAULT_DB).create(user=user, campus=campus)
+        if is_supervisor and campus_id:
+            try:
+                campus = Campus.objects.using(DEFAULT_DB).get(id=campus_id)
+                Supervisor.objects.using(DEFAULT_DB).create(user=user, campus=campus)
+            except Campus.DoesNotExist:
+                # optional: raise a validation error instead if you prefer
+                pass
 
         return user
 
