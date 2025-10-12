@@ -206,6 +206,7 @@ class RegisterView(generics.CreateAPIView):
         first    = (data.get("first_name") or "").strip()
         last     = (data.get("last_name") or "").strip()
         role     = data.get("role_name") or "Tutor"
+        note    = (data.get("note") or "").strip()
 
         alias = get_active_semester_alias(request)
 
@@ -230,6 +231,8 @@ class RegisterView(generics.CreateAPIView):
             if last:  platform_user.last_name  = last
             if password: platform_user.set_password(password)
             platform_user.is_active = True
+            if note is not None:
+                platform_user.note = note
             platform_user.save(using=DEFAULT_DB)
             # Assign/refresh role on default
             platform_user.assign_role(role)
@@ -248,6 +251,9 @@ class RegisterView(generics.CreateAPIView):
                 last_name=last,
                 is_active=True,
             )
+            if note is not None:
+                platform_user.note = note
+                platform_user.save(using=DEFAULT_DB, update_fields=["note"])
             info_msg = "Created platform account and linked to EOI"
 
         # --- (Optional) also stamp a username into the alias user for consistency ---
