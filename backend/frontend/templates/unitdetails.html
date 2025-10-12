@@ -73,7 +73,7 @@
   <script>
     /* ---------------- Auth / API helpers ---------------- */
     const API = {
-      eoiApplicants: "/api/eoi/applicants/",   // DRF needs trailing slash
+      eoiApplicants: "/eoi/applicants",  // DRF needs trailing slash
       savePrefs: "/api/eoi/preferences/",
     };
 
@@ -97,6 +97,16 @@
       return data ?? {};
     }
 
+    async function resolveAlias() {
+      // prefer ?alias=... in URL, else /semesters/current/
+      const qs = new URLSearchParams(location.search);
+      const fromUrl = qs.get("alias");
+      if (fromUrl) return fromUrl;
+      const r = await fetch("/api/semesters/current/", { headers: authHeaders(), credentials: "include" });
+      if (!r.ok) return null;
+      const j = await r.json();
+      return j.alias || null;
+    }
     /* ----------- Derive unit code from pretty path or query string ---------- */
     const qs = new URLSearchParams(location.search);
     const codeFromQS = qs.get("code") || "";
@@ -111,7 +121,8 @@
       UNIT_NAME_DISPLAY ? `${UNIT_CODE} – ${UNIT_NAME_DISPLAY}` : (UNIT_CODE || "Unit");
 
     /* --------------------- State & elements --------------------- */
-    const PREF_KEY = "eoi_prefs"; // { "<unitCode>|<email>": "3", ... }
+    let PREF_KEY = "eoi_prefs_default"; // { "<unitCode>|<email>": "3", ... }
+    let CURRENT_ALIAS = null;
     const hobartBlock = document.getElementById("hobartBlock");
     const launcBlock = document.getElementById("launcBlock");
     const otherBlock = document.getElementById("otherBlock");
@@ -134,8 +145,16 @@
       if (!UNIT_CODE) { alertBox.classList.remove("d-none"); return; }
 
       try {
-        // fetch applicants (no alias needed if backend resolves current semester)
-        const data = await apiGet(`${API.eoiApplicants}?unit_code=${encodeURIComponent(UNIT_CODE)}`);
+        // 1) resolve alias and scope local cache by alias
+        const alias = await resolveAlias();
+        CURRENT_ALIAS = alias; // keep for later POST
+        PREF_KEY = `eoi_prefs_${alias || "default"}`;
+        // optional: clean up legacy global key once
+        try { localStorage.removeItem("eoi_prefs"); } catch { }
+
+        // 2) fetch applicants for THIS semester alias explicitly
+        const q = `${API.eoiApplicants}?unit_code=${encodeURIComponent(UNIT_CODE)}${alias ? `&alias=${encodeURIComponent(alias)}` : ""}`;
+        const data = await apiGet(q);
         const list = Array.isArray(data?.results) ? data.results : (Array.isArray(data) ? data : []);
         const apiUnitId = (list[0] && (list[0].unit || list[0].unit_id)) ? (list[0].unit || list[0].unit_id) : null;
 
@@ -278,12 +297,13 @@
         try {
           const canPost = Boolean(unitId && getAccessToken());
           if (canPost && bulk.length) {
-            await apiPostJSON(API.savePrefs, { unit_id: parseInt(unitId, 10), prefs: bulk });
+            const saveUrl = `${API.savePrefs}${CURRENT_ALIAS ? `?alias=${encodeURIComponent(CURRENT_ALIAS)}` : ""}`;
+            await apiPostJSON(saveUrl, { unit_id: parseInt(unitId, 10), prefs: bulk });
             localStorage.setItem(PREF_KEY, JSON.stringify(prefsNow));
             alert("Preferences saved to server.");
           } else {
             localStorage.setItem(PREF_KEY, JSON.stringify(prefsNow));
-            alert("Preferences saved locally.");
+            alert("ERROR: Saving preferences failed.");
           }
         } catch (e) {
           alert(e.message || "Failed to save preferences.");

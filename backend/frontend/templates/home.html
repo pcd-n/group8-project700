@@ -139,7 +139,7 @@
   <!-- EOI units (Code + Name only) -->
   <div id="unitsSection" class="container table-wrap hidden">
     <div class="mb-2">
-      <div class="section-title">Computing And Information Systems Units</div>
+      <div class="section-title">ICT Units EOIs</div>
     </div>
     <div class="table-responsive">
       <table class="table table-bordered align-middle units-table">
@@ -251,6 +251,16 @@
       } catch {
         return null;
       }
+    }
+
+    // Pretty-print semester from alias like "sem_2025_s2" -> "2025 S2"
+    function prettyFromAlias(alias) {
+      if (!alias) return "current semester";
+      const m = alias.match(/^sem_(\d{4})_([a-z0-9]+)$/i);
+      if (!m) return alias;
+      const year = m[1];
+      const term = labelForTerm(m[2]); // reuse existing helper below
+      return `${year} ${term}`;
     }
 
     // =========================
@@ -716,6 +726,9 @@
 
       try {
         const alias = await getCurrentAlias();
+        // Update "ICT Units EOIs" title with current semester
+        const eoiTitleEl = document.querySelector('#unitsSection .section-title');
+        if (eoiTitleEl) eoiTitleEl.textContent = `ICT Units EOIs for ${prettyFromAlias(alias)}`;
         await loadUnitsFromServerForAlias(alias);
 
         // === Toggle EOI upload state if DB already exists ===
