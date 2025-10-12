@@ -380,17 +380,16 @@
                             const line = document.createElement("div");
                             line.className = "d-flex justify-content-between align-items-start py-1 border-top";
                             line.innerHTML = `
-                    <div>
-                    <div><strong>${row.unit_code}</strong> — ${row.unit_name || ""}</div>
-                    <div class="session-info">
-                        ${row.campus ? `<span>${row.campus}</span> • ` : ""}
-                        <span>${row.day || ""}</span>
-                        <span>${row.start_time ? ` ${row.start_time}` : ""}${row.end_time ? `–${row.end_time}` : ""}</span>
-                        <span class="ms-2 text-uppercase">${row.source || ""}</span>
-                    </div>
-                    </div>
-                    <div class="text-muted">#${row.session_id ?? ""}</div>
-                `;
+                            <div>
+                                <div><strong>${row.unit_code}</strong> — ${row.unit_name || ""}</div>
+                                <div class="session-info">
+                                ${row.campus ? `<span>${row.campus}</span>` : ""}
+                                ${row.activity ? `<span> | ${row.activity}</span>` : ""}
+                                <span> | ${row.day || ""}${row.start_time ? ` ${row.start_time}` : ""}${row.end_time ? `–${row.end_time}` : ""}</span>
+                                </div>
+                            </div>
+                            <div class="text-muted"></div>
+                            `;
                             wrap.appendChild(line);
                         });
                     }

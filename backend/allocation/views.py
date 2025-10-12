@@ -785,6 +785,7 @@ class TutorSearchView(APIView):
                     "start_time": str(getattr(a.session, "start_time", "") or ""),
                     "end_time": str(getattr(a.session, "end_time", "") or ""),
                     "session_id": getattr(a.session, "pk", None),
+                    "activity": getattr(getattr(a.session, "master_class", None), "activity_code", "") or "",
                 })
 
             # if nothing in Allocation, also consider timetable direct assignments
@@ -798,7 +799,7 @@ class TutorSearchView(APIView):
                     campus_name = getattr(getattr(uc, "campus", None), "campus_name", "") or ""
                     entries.append({
                         "source": "TimeTable",
-                        "approved": True,  # your previous page treated direct timetable as approved
+                        "approved": True,
                         "unit_code": getattr(unit, "unit_code", "") or "",
                         "unit_name": getattr(unit, "unit_name", "") or "",
                         "campus": campus_name,
@@ -806,6 +807,7 @@ class TutorSearchView(APIView):
                         "start_time": str(getattr(tt, "start_time", "") or ""),
                         "end_time": str(getattr(tt, "end_time", "") or ""),
                         "session_id": getattr(tt, "pk", None),
+                        "activity": getattr(getattr(tt, "master_class", None), "activity_code", "") or "",
                     })
 
             if entries:
