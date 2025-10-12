@@ -140,11 +140,19 @@
                 <div class="row g-3 align-items-end">
                     <div class="col-md-8">
                         <label for="emailSelect" class="form-label fw-semibold">Tutor</label>
+
+                        <!-- quick filter input -->
+                        <input id="emailFilter" class="form-control mb-2" type="text"
+                            placeholder="Type to filter by email or name…">
+
+                        <!-- dropdown -->
                         <select id="emailSelect" class="form-control" required>
-                            <option value="" selected disabled>Choose an allocated tutor…</option>
+                            <option value="" selected disabled>Choose an allocated tutor</option>
                         </select>
-                        <small class="text-muted">Dropdown shows only tutors who are actually allocated to a class (any
-                            semester).</small>
+
+                        <small class="text-muted">
+                            Dropdown shows only tutors who are actually allocated to a class (any semester).
+                        </small>
                     </div>
                     <div class="col-md-4">
                         <button type="submit" class="btn btn-primary w-100">
@@ -214,6 +222,15 @@
             // populate dropdown immediately
             loadAllocatedTutors();
 
+            const filterBox = document.getElementById("emailFilter");
+            filterBox.addEventListener("input", () => {
+                const q = filterBox.value.trim().toLowerCase();
+                const filtered = !q ? ALL_TUTORS : ALL_TUTORS.filter(({ email, first_name, last_name }) => {
+                    const name = `${first_name || ""} ${last_name || ""}`.trim().toLowerCase();
+                    return (email || "").toLowerCase().includes(q) || name.includes(q);
+                });
+                renderTutorOptions(filtered);
+            });
             // If navigated from "List all tutors", auto-run the search by ?email=...
             const params = new URLSearchParams(location.search);
             const prefillEmail = (params.get("email") || "").trim();
@@ -286,19 +303,28 @@
                     headers: authHeaders({ "Content-Type": "application/json" }),
                 });
                 if (!resp.ok) return;
-                const items = await resp.json();
-                const sel = document.getElementById("emailSelect");
-                sel.innerHTML = `<option value="" selected disabled>Choose an allocated tutor…</option>`;
-                items.forEach(({ email, first_name, last_name }) => {
-                    const name = [first_name || "", last_name || ""].join(" ").trim();
-                    const opt = document.createElement("option");
-                    opt.value = email;
-                    opt.textContent = name ? `${email} — ${name}` : email;
-                    sel.appendChild(opt);
-                });
+                ALL_TUTORS = await resp.json();
+                renderTutorOptions(ALL_TUTORS);
             } catch (e) {
                 console.error("Load allocated tutors failed:", e);
             }
+        }
+
+        let ALL_TUTORS = [];
+
+        function renderTutorOptions(items) {
+            const sel = document.getElementById("emailSelect");
+            const current = sel.value; // try to preserve selection when filtering
+            sel.innerHTML = `<option value="" selected disabled>Choose an allocated tutor…</option>`;
+            items.forEach(({ email, first_name, last_name }) => {
+                const name = [first_name || "", last_name || ""].join(" ").trim();
+                const opt = document.createElement("option");
+                opt.value = email;
+                opt.textContent = name ? `${email} — ${name}` : email;
+                sel.appendChild(opt);
+            });
+            // restore selection if it still exists after filtering
+            if (current && items.some(i => i.email === current)) sel.value = current;
         }
 
         function showLoading(show) {
