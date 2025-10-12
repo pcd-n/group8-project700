@@ -65,6 +65,66 @@
                 transform: translate(-50%, -46%);
             }
         }
+
+        /* Small centered edit window + overlay (separate from alert styles) */
+        .edit-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, .35);
+            z-index: 1060;
+        }
+
+        .edit-modal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            min-width: min(92vw, 460px);
+            z-index: 1061;
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 14px 36px rgba(0, 0, 0, .28);
+            padding: 16px;
+            animation: editIn .18s ease-out;
+        }
+
+        .edit-modal h6 {
+            margin: 0 0 8px 0;
+        }
+
+        .edit-modal .form-label {
+            margin-bottom: 4px;
+        }
+
+        .edit-modal .actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+            margin-top: 8px;
+        }
+
+        .edit-leave {
+            animation: editOut .18s ease-in forwards;
+        }
+
+        @keyframes editIn {
+            from {
+                opacity: 0;
+                transform: translate(-50%, -46%);
+            }
+
+            to {
+                opacity: 1;
+                transform: translate(-50%, -50%);
+            }
+        }
+
+        @keyframes editOut {
+            to {
+                opacity: 0;
+                transform: translate(-50%, -46%);
+            }
+        }
     </style>
 </head>
 
@@ -428,6 +488,85 @@
             if (!sorted.length) container.innerHTML = `<div class="alert alert-secondary">No users found.</div>`;
         }
 
+        function openUserEditDialog(row) {
+            return new Promise(resolve => {
+                // Parse defaults from existing row
+                const full = (row?.user_name || '').trim();
+                let firstDefault = '', lastDefault = '';
+                if (full) {
+                    const parts = full.split(/\s+/);
+                    if (parts.length === 1) firstDefault = parts[0];
+                    else if (parts.length > 1) { lastDefault = parts.pop(); firstDefault = parts.join(' '); }
+                }
+                const noteDefault = (row?.user_note || '').trim();
+
+                // Build nodes
+                const overlay = document.createElement('div');
+                overlay.className = 'edit-overlay';
+                overlay.id = 'editOverlay';
+
+                const modal = document.createElement('div');
+                modal.className = 'edit-modal';
+                modal.id = 'editModal';
+
+                modal.innerHTML = `
+                <h6 class="fw-semibold">Edit user details</h6>
+                <form id="editUserForm">
+                <div class="mb-2">
+                    <label class="form-label" for="editFirstName">First name</label>
+                    <input type="text" class="form-control" id="editFirstName" maxlength="150" autocomplete="off" value="${(firstDefault || '').replace(/"/g, '&quot;')}">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label" for="editLastName">Last name</label>
+                    <input type="text" class="form-control" id="editLastName" maxlength="150" autocomplete="off" value="${(lastDefault || '').replace(/"/g, '&quot;')}">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label" for="editNote">Note</label>
+                    <input type="text" class="form-control" id="editNote" autocomplete="off" value="${(noteDefault || '').replace(/"/g, '&quot;')}">
+                </div>
+                <div class="actions">
+                    <button type="button" class="btn btn-light" id="btnCancelEdit">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="btnSaveEdit">Save</button>
+                </div>
+                </form>
+            `;
+
+                const cleanup = () => {
+                    modal.classList.add('edit-leave');
+                    overlay.style.transition = 'opacity .15s ease'; overlay.style.opacity = '0';
+                    setTimeout(() => { overlay.remove(); modal.remove(); }, 160);
+                    document.removeEventListener('keydown', onKey);
+                };
+
+                const onKey = (e) => {
+                    if (e.key === 'Escape') { cleanup(); resolve(null); }
+                };
+
+                document.body.appendChild(overlay);
+                document.body.appendChild(modal);
+                document.addEventListener('keydown', onKey);
+
+                // click outside closes (cancel)
+                overlay.addEventListener('click', () => { cleanup(); resolve(null); });
+
+                // form handlers
+                const form = modal.querySelector('#editUserForm');
+                const cancelBtn = modal.querySelector('#btnCancelEdit');
+                cancelBtn.addEventListener('click', () => { cleanup(); resolve(null); });
+
+                form.addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    const fn = modal.querySelector('#editFirstName').value.trim();
+                    const ln = modal.querySelector('#editLastName').value.trim();
+                    const nt = modal.querySelector('#editNote').value; // keep note as-is
+                    cleanup();
+                    resolve({ first_name: fn, last_name: ln, note: nt });
+                });
+
+                // focus first field
+                setTimeout(() => modal.querySelector('#editFirstName')?.focus(), 10);
+            });
+        }
         // ---------- Loaders ----------
         async function loadAll() {
             const [r, u] = await Promise.all([getJSON(API.roles), getJSON(API.listUserRoles)]);
@@ -473,46 +612,21 @@
 
             if (btn.dataset.action === 'edit-note') {
                 const row = rows.find(x => x.user === userId) || {};
-                const full = (row.user_name || '').trim();
-
-                // Try to split existing display name into first/last (fallbacks if not available)
-                let firstDefault = '';
-                let lastDefault = '';
-                if (full) {
-                    const parts = full.split(/\s+/);
-                    if (parts.length === 1) {
-                        firstDefault = parts[0];
-                    } else if (parts.length > 1) {
-                        lastDefault = parts.pop();
-                        firstDefault = parts.join(' ');
-                    }
-                }
-
-                const currentNote = (row.user_note || '').trim();
-
-                // Simple prompts (keeps UI footprint tiny; cancel at any step aborts)
-                const newFirst = prompt('Edit FIRST name for this user:', firstDefault);
-                if (newFirst === null) return;
-
-                const newLast = prompt('Edit LAST name for this user:', lastDefault);
-                if (newLast === null) return;
-
-                const newNote = prompt('Edit NOTE for this user:', currentNote);
-                if (newNote === null) return;
+                const result = await openUserEditDialog(row); // shows single small window
+                if (!result) return; // cancelled
 
                 try {
                     await putJSON(API.updateUser(userId), {
-                        first_name: (newFirst || '').trim(),
-                        last_name: (newLast || '').trim(),
-                        note: newNote
+                        first_name: result.first_name || '',
+                        last_name: result.last_name || '',
+                        note: result.note
                     });
                     showAlert('User details updated', 'success');
-                    await loadAll(); // re-fetch so the table shows the new name/note
+                    await loadAll(); // refresh table
                 } catch (err) {
                     showAlert(err.message || 'Update failed');
                 }
             }
-
 
             if (btn.dataset.action === 'reset') {
                 const pwd = prompt('Enter a new password: (min 8 chars)');
