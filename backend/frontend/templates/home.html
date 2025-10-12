@@ -697,20 +697,21 @@
         });
         if (!res.ok) return; // not logged in / unauthorized
         const data = await res.json();
-        // roles structure from your UserProfileView: roles: [{ id, name }]
         const roles = Array.isArray(data?.roles) ? data.roles.map(r => r.name) : [];
         const isAdmin = !!data?.is_staff || roles.includes('Admin');
+        const isCoordinator = roles.includes('Coordinator');
+
         if (isAdmin) {
           document.getElementById('btnUsersMgmt')?.classList.remove('d-none');
           document.getElementById('btnTutorsListing')?.classList.remove('d-none');
-        }
-        if (isCoordinator) {
+        } else if (isCoordinator) {
           document.getElementById('btnTutorsListing')?.classList.remove('d-none');
         }
+
       } catch (e) {
-        // ignore - server will still enforce perms
       }
     }
+
 
     // =========================
     // Init

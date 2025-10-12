@@ -1,4 +1,3 @@
-<!-- <!doctype html><html><head><meta charset='utf-8'><title>Tutor Allocation</title></head><body><h1>Tutor Allocation System</h1></body></html> -->
 <!DOCTYPE html>
 <html lang="en">
 
@@ -7,11 +6,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Web Based Tutor Allocation – Sign In</title>
 
-  <!-- Google Font (optional) -->
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
 
-  <!-- Bootstrap 5 -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
 
   <style>
     :root {
@@ -51,6 +50,11 @@
       padding: 0.75rem 0.9rem;
     }
 
+    /* ADD THIS: Add padding to password field to avoid text overlapping icon */
+    #password {
+      padding-right: 40px;
+    }
+
     .btn-brand {
       background: var(--brand);
       border-color: var(--brand);
@@ -72,12 +76,21 @@
       width: 100%;
       max-width: 480px;
     }
+
+    /* ADD THIS: Style for the show/hide password icon */
+    #togglePassword {
+      position: absolute;
+      right: 15px;
+      top: 50%;
+      transform: translateY(-50%);
+      cursor: pointer;
+      color: var(--muted);
+    }
   </style>
 </head>
 
 <body>
   <div class="container page-wrap d-flex flex-column justify-content-center">
-    <!-- Page heading -->
     <div class="text-center mb-4">
       <h1 class="title display-6 mb-3">
         Welcome to Web Based Tutor Allocation System
@@ -87,26 +100,26 @@
       </div>
     </div>
 
-    <!-- Sign-in card (centered & narrow) -->
     <div class="mx-auto auth-card">
       <form id="signinForm" novalidate>
         <div class="mb-3">
           <label for="username" class="form-label fw-semibold">Username</label>
-          <input type="text" class="form-control" id="username" placeholder="Enter your username" required />
+          <input type="text" class="form-control" id="username" placeholder="" required />
           <div class="invalid-feedback">Please enter a valid username.</div>
         </div>
 
         <div class="mb-2">
           <label for="password" class="form-label fw-semibold">Password</label>
-          <input type="password" class="form-control" id="password" placeholder="••••••••" minlength="6" required />
-          <div class="invalid-feedback">
-            Password must be at least 6 characters.
+          <div class="position-relative">
+            <input type="password" class="form-control" id="password" placeholder="" minlength="6" required />
+            <i class="bi bi-eye-slash" id="togglePassword"></i>
+            <div class="invalid-feedback">
+              Password must be at least 6 characters.
+            </div>
           </div>
         </div>
-
         <p class="form-hint mb-3">
-          Forgot password?
-          <a href="#" class="fw-bold text-decoration-none">Click here</a>
+          Forgot your password? Contact the ICT L&T Admin at LTAdmin.ICT@utas.edu.au to reset it.
         </p>
 
         <button class="btn btn-brand text-white w-100 py-2 fw-semibold" type="submit">
@@ -119,10 +132,22 @@
   <script>
     const API_BASE = "/api";
 
-    // Optional: if already logged in, skip the sign-in page
     document.addEventListener("DOMContentLoaded", () => {
       if (localStorage.getItem("access")) window.location.href = "/home.html";
     });
+
+    const togglePassword = document.querySelector("#togglePassword");
+    const password = document.querySelector("#password");
+
+    if (togglePassword) {
+      togglePassword.addEventListener("click", function () {
+        // toggle the type attribute
+        const type = password.getAttribute("type") === "password" ? "text" : "password";
+        password.setAttribute("type", type);
+        // toggle the icon
+        this.classList.toggle("bi-eye");
+      });
+    }
 
     const form = document.getElementById("signinForm");
     form.addEventListener("submit", async (e) => {
@@ -135,14 +160,14 @@
       }
 
       const username = document.getElementById("username").value.trim();
-      const password = document.getElementById("password").value;
+      const passwordValue = password.value;
 
       try {
         // Call the working token endpoint
         const res = await fetch(`${API_BASE}/accounts/login/`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Accept": "application/json" },
-          body: JSON.stringify({ username, password }),
+          body: JSON.stringify({ username, password: passwordValue }),
         });
 
         if (!res.ok) {
