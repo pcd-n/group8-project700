@@ -4,6 +4,10 @@ from django.views.decorators.http import require_GET
 from timetable.models import TimeTable
 from semesters.threadlocal import force_write_alias
 from semesters.router import get_current_semester_alias
+from django.core.mail import EmailMessage
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 
 DAY_MAP = {
     "MON": "Monday", "TUE": "Tuesday", "WED": "Wednesday",
@@ -89,3 +93,20 @@ def sessions_list(request):
             })
 
     return JsonResponse(rows, safe=False)
+
+class SendEmailWithAttachmentView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        to = request.POST.get("to", "").strip()
+        subject = request.POST.get("subject", "").strip() or "Timetable"
+        body = request.POST.get("body", "") or ""
+        f = request.FILES.get("attachment")
+
+        if not to or not f:
+            return Response({"detail": "Missing recipient or attachment"}, status=400)
+
+        msg = EmailMessage(subject=subject, body=body, to=[to])
+        msg.attach(f.name, f.read(), f.content_type or "application/octet-stream")
+        msg.send(fail_silently=False)
+        return Response({"ok": True}, status=200)

@@ -7,6 +7,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
 from users.views import roles_list
+from timetable.views import SendEmailWithAttachmentView
 
 def health_view(request):
     return JsonResponse({"status": "ok"})
@@ -28,7 +29,7 @@ urlpatterns = [
     path("unitdetails/", TemplateView.as_view(template_name="unitdetails.html")),          # legacy querystring version
     path("allocations/", TemplateView.as_view(template_name="allocationunits.html"), name="allocation_units"),
     path("allocationdetails/", TemplateView.as_view(template_name="allocationdetails.html"), name="allocation_details"),  # querystring style
-
+    path("api/utils/send-email/", SendEmailWithAttachmentView.as_view(), name="send_email_with_attachment"),
     path("tutors/timetable/", TemplateView.as_view(template_name="tutortimetable.html"), name="tutor_timetable"),
 
     # HEALTH

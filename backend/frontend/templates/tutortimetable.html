@@ -49,14 +49,39 @@
             font-weight: 600
         }
     </style>
+
+    <!-- Export libs (lightweight CDNs) -->
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 
 <body>
     <div class="container py-4">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <h1 id="ttTitle" class="h5 m-0">Timetable</h1>
-            <a id="backLink" href="/home/" class="btn btn-outline-secondary">← Back</a>
+        <div class="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
+            <div class="d-flex align-items-center gap-2">
+                <h1 id="ttTitle" class="h5 m-0">Timetable</h1>
+                <span id="ttEmail" class="badge text-bg-light d-none"></span>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn btn-outline-primary btn-sm" id="btnDownloadPdf">Download PDF</button>
+                <button class="btn btn-outline-primary btn-sm" id="btnDownloadPng">Download PNG</button>
+                <button class="btn btn-outline-primary btn-sm" id="btnDownloadXlsx">Download XLSX</button>
+
+                <button class="btn btn-primary btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                    Share via email
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                    <li><a class="dropdown-item" href="#" id="btnSharePdf">Share PDF</a></li>
+                    <li><a class="dropdown-item" href="#" id="btnSharePng">Share PNG</a></li>
+                    <li><a class="dropdown-item" href="#" id="btnShareXlsx">Share XLSX</a></li>
+                </ul>
+            </div>
+
+            <a id="backLink" href="/home/" class="btn btn-outline-secondary btn-sm">← Back</a>
         </div>
+
         <div id="gridWrap" class="table-responsive"></div>
         <div id="empty" class="alert alert-warning d-none mt-3">No assigned classes for this tutor.</div>
     </div>
@@ -67,12 +92,30 @@
         const authHeaders = (extra = {}) => token() ? ({ ...extra, Authorization: `Bearer ${token()}` }) : extra;
 
         const qs = new URLSearchParams(location.search);
-        const alias = qs.get("alias") || "";
+        const aliasParam = qs.get("alias") || "";
         let tutorName = qs.get("name") || "";
         let tutorEmail = (qs.get("email") || "").toLowerCase();
 
-        document.getElementById("ttTitle").textContent = tutorName ? `Timetable: ${tutorName}` : "Timetable";
-        document.getElementById("backLink").href = `/allocations/?alias=${encodeURIComponent(alias)}`;
+        const titleEl = document.getElementById("ttTitle");
+        const emailBadge = document.getElementById("ttEmail");
+        const backLink = document.getElementById("backLink");
+
+        // preserve allocations back link if present
+        if (document.referrer && document.referrer.includes('/allocations/')) {
+            backLink.href = document.referrer;
+        } else {
+            backLink.href = '/home/';
+        }
+
+        function setHeader(name, email) {
+            titleEl.textContent = name ? `Timetable: ${name}` : "Timetable";
+            if (email) {
+                emailBadge.textContent = email;
+                emailBadge.classList.remove("d-none");
+            } else {
+                emailBadge.classList.add("d-none");
+            }
+        }
 
         async function apiGet(path) {
             const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders(), credentials: "include" });
@@ -82,17 +125,7 @@
             return data || [];
         }
 
-        async function getProfile() {
-            return apiGet('/accounts/profile/');
-        }
-
-        const backLink = document.getElementById("backLink");
-        // If they arrived from allocations, keep that experience for admins/coordinators
-        if (document.referrer && document.referrer.includes('/allocations/')) {
-            backLink.href = document.referrer;
-        } else {
-            backLink.href = '/home/';
-        }
+        async function getProfile() { return apiGet('/accounts/profile/'); }
 
         async function getCurrentAlias() {
             try {
@@ -100,51 +133,16 @@
                 if (!res.ok) throw new Error();
                 const { alias } = await res.json();
                 return alias || "";
-            } catch {
-                return "";
-            }
+            } catch { return ""; }
         }
 
-        async function resolveTutorIdentity() {
-            if (!tutorEmail) {
-                const me = await apiGet('/accounts/profile/');
-                tutorEmail = (me?.email || '').toLowerCase();
-                if (!tutorName) {
-                    tutorName = `${me?.first_name || ''} ${me?.last_name || ''}`.trim() || me?.username || '';
-                }
-                document.getElementById("ttTitle").textContent = tutorName ? `Timetable: ${tutorName}` : "Timetable";
-
-                // If still no email, try to infer from sessions by name (only if unique)
-                if (!tutorEmail) {
-                    const curr = await apiGet(API.current()).catch(() => ({ alias: alias || '' }));
-                    const useAlias = alias || curr.alias || '';
-                    if (useAlias) {
-                        const all = await apiGet(`/timetable/sessions/?alias=${encodeURIComponent(useAlias)}`);
-                        const emails = new Set(
-                            all
-                                .filter(s => (s.tutor || '').toLowerCase() === tutorName.toLowerCase())
-                                .map(s => (s.tutor_email || '').toLowerCase())
-                                .filter(Boolean)
-                        );
-                        if (emails.size === 1) {
-                            tutorEmail = [...emails][0];
-                        }
-                    }
-                }
-
-                // reflect in URL (no reload)
-                const url = new URL(location.href);
-                if (tutorName) url.searchParams.set('name', tutorName);
-                if (tutorEmail) url.searchParams.set('email', tutorEmail);
-                if (alias) url.searchParams.set('alias', alias);
-                history.replaceState(null, '', url);
-            }
-        }
+        // Keep a copy of the filtered sessions for exporting to XLSX
+        let _mineRows = [];
 
         document.addEventListener("DOMContentLoaded", async () => {
             if (!token()) { location.href = "/"; return; }
 
-            // Determine role and lock down identity for Tutors
+            // Establish identity/role and lock for Tutors
             let me = null, roles = [];
             try {
                 me = await getProfile();
@@ -156,39 +154,69 @@
             const isTutor = roles.includes('Tutor') && !isAdmin && !isCoord;
 
             if (isTutor) {
-                // Force to the authenticated identity
                 tutorEmail = (me?.user?.email || me?.email || '').toLowerCase();
-                tutorName = `${me?.user?.first_name || me?.first_name || ''} ${me?.user?.last_name || me?.last_name || ''}`.trim() || (me?.user?.username || me?.username || '');
-                // Reflect in title and URL (without reload)
-                document.getElementById("ttTitle").textContent = tutorName ? `Timetable: ${tutorName}` : "Timetable";
-                const url = new URL(location.href);
-                if (alias) url.searchParams.set('alias', alias);
-                if (tutorName) url.searchParams.set('name', tutorName);
-                if (tutorEmail) url.searchParams.set('email', tutorEmail);
-                history.replaceState(null, '', url);
+                tutorName = `${me?.user?.first_name || me?.first_name || ''} ${me?.user?.last_name || me?.last_name || ''}`.trim()
+                    || (me?.user?.username || me?.username || '');
             }
+            setHeader(tutorName, tutorEmail);
 
-            let useAlias = alias || await getCurrentAlias();
+            // reflect in URL (without reload)
+            const url = new URL(location.href);
+            const alias = aliasParam || await getCurrentAlias();
+            if (alias) url.searchParams.set('alias', alias);
+            if (tutorName) url.searchParams.set('name', tutorName);
+            if (tutorEmail) url.searchParams.set('email', tutorEmail);
+            history.replaceState(null, '', url);
 
+            // Fetch sessions for this alias and filter by this tutor
+            let useAlias = aliasParam || await getCurrentAlias();
             try {
-                // DRF endpoint requires trailing slash
                 const all = await apiGet(`/timetable/sessions/?alias=${encodeURIComponent(useAlias)}`);
-
                 const mine = all.filter(s => {
                     if (tutorEmail) return ((s.tutor_email || '').toLowerCase() === tutorEmail);
-                    if (tutorName) return ((s.tutor || '').toLowerCase() === tutorName.toLowerCase());
+                    if (tutorName) return ((s.tutor || '').toLowerCase() === (tutorName || '').toLowerCase());
                     return false;
                 });
 
+                _mineRows = mine; // store for export
                 if (!mine.length) {
                     document.getElementById("empty").classList.remove("d-none");
                     return;
                 }
-
                 renderWeekGrid(mine);
             } catch (e) {
                 alert(e.message || e);
             }
+
+            // Hook up export & share
+            document.getElementById("btnDownloadPdf").addEventListener("click", async () => {
+                const { blob, filename } = await captureAsPdf();
+                triggerDownload(blob, filename);
+            });
+            document.getElementById("btnDownloadPng").addEventListener("click", async () => {
+                const { blob, filename } = await captureAsPng();
+                triggerDownload(blob, filename);
+            });
+            document.getElementById("btnDownloadXlsx").addEventListener("click", () => {
+                const { blob, filename } = buildXlsx();
+                triggerDownload(blob, filename);
+            });
+
+            document.getElementById("btnSharePdf").addEventListener("click", async (e) => {
+                e.preventDefault();
+                const { blob, filename } = await captureAsPdf();
+                shareViaEmail({ blob, filename, mime: "application/pdf" });
+            });
+            document.getElementById("btnSharePng").addEventListener("click", async (e) => {
+                e.preventDefault();
+                const { blob, filename } = await captureAsPng();
+                shareViaEmail({ blob, filename, mime: "image/png" });
+            });
+            document.getElementById("btnShareXlsx").addEventListener("click", (e) => {
+                e.preventDefault();
+                const { blob, filename } = buildXlsx();
+                shareViaEmail({ blob, filename, mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+            });
         });
 
         const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
@@ -198,7 +226,7 @@
             const byDay = new Map(DAYS.map(d => [d, []]));
             rows.forEach(r => byDay.get(r.day_of_week || "")?.push(r));
 
-            let html = `<table class="grid"><thead><tr><th class="timecol">Time</th>`;
+            let html = `<table id="ttTable" class="grid"><thead><tr><th class="timecol">Time</th>`;
             DAYS.forEach(d => html += `<th>${d}</th>`);
             html += `</tr></thead><tbody>`;
 
@@ -224,7 +252,121 @@
             html += `</tbody></table>`;
             document.getElementById("gridWrap").innerHTML = html;
         }
+
+        // ---------- Export helpers ----------
+        function triggerDownload(blob, filename) {
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+        }
+
+        async function captureCanvasFromTable() {
+            const node = document.getElementById("ttTable") || document.getElementById("gridWrap");
+            // use a slightly higher scale for crispness
+            const canvas = await html2canvas(node, { scale: 2, backgroundColor: "#ffffff" });
+            return canvas;
+        }
+
+        async function captureAsPng() {
+            const canvas = await captureCanvasFromTable();
+            const dataUrl = canvas.toDataURL("image/png");
+            const blob = dataURLToBlob(dataUrl);
+            const safeName = (tutorName || tutorEmail || "tutor").replace(/\s+/g, "_");
+            return { blob, filename: `${safeName}_timetable.png` };
+        }
+
+        async function captureAsPdf() {
+            const canvas = await captureCanvasFromTable();
+            const { jsPDF } = window.jspdf;
+            const pdf = new jsPDF({ orientation: "l", unit: "pt", format: "a4" });
+            const pageW = pdf.internal.pageSize.getWidth();
+            const pageH = pdf.internal.pageSize.getHeight();
+            const imgW = pageW - 40; // margins
+            const imgH = canvas.height * (imgW / canvas.width);
+
+            let y = 20;
+            pdf.addImage(canvas, "PNG", 20, y, imgW, imgH, "", "FAST");
+
+            // If content overflows, split across pages
+            let remaining = imgH - (pageH - 40);
+            while (remaining > 0) {
+                pdf.addPage();
+                y = 20 - (imgH - remaining);
+                pdf.addImage(canvas, "PNG", 20, y, imgW, imgH, "", "FAST");
+                remaining -= (pageH - 40);
+            }
+
+            const blob = pdf.output("blob");
+            const safeName = (tutorName || tutorEmail || "tutor").replace(/\s+/g, "_");
+            return { blob, filename: `${safeName}_timetable.pdf` };
+        }
+
+        function buildXlsx() {
+            // Flatten rows to a tidy table for Excel
+            const data = [
+                ["Tutor", tutorName || "", "Email", tutorEmail || ""],
+                [],
+                ["Day", "Start", "End", "Activity", "Unit Name", "Location", "Weeks", "Campus"]
+            ];
+
+            (_mineRows || []).forEach(r => {
+                data.push([
+                    r.day_of_week || "",
+                    r.start_time || "",
+                    r.end_time || "",
+                    (r.activity_code || "").toUpperCase(),
+                    r.unit_name || "",
+                    r.location || "",
+                    r.weeks || "",
+                    r.campus || ""
+                ]);
+            });
+
+            const ws = XLSX.utils.aoa_to_sheet(data);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Timetable");
+
+            const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+            const blob = new Blob([wbout], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+            const safeName = (tutorName || tutorEmail || "tutor").replace(/\s+/g, "_");
+            return { blob, filename: `${safeName}_timetable.xlsx` };
+        }
+
+        function dataURLToBlob(dataUrl) {
+            const arr = dataUrl.split(','), mime = arr[0].match(/:(.*?);/)[1];
+            const bstr = atob(arr[1]); let n = bstr.length; const u8arr = new Uint8Array(n);
+            while (n--) u8arr[n] = bstr.charCodeAt(n);
+            return new Blob([u8arr], { type: mime });
+        }
+
+        // ---------- Share via email ----------
+        async function shareViaEmail({ blob, filename, mime }) {
+            const to = tutorEmail || "";
+            const subject = `Timetable - ${tutorName || tutorEmail || 'Tutor'}`;
+            const body = `Hi,\n\nPlease find attached the timetable.\n\nRegards,\nTutor Allocation System`;
+
+            // Try backend API first (if you add it; see snippet below)
+            try {
+                const form = new FormData();
+                form.append("to", to);
+                form.append("subject", subject);
+                form.append("body", body);
+                form.append("attachment", new File([blob], filename, { type: mime }));
+                const res = await fetch(`${API_BASE}/utils/send-email/`, { method: "POST", headers: authHeaders(), body: form, credentials: "include" });
+                if (res.ok) { alert("Email sent."); return; }
+                // If 404 or not allowed, fall through to mailto
+            } catch { }
+
+            // Fallback: mailto (cannot auto-attach files by browser limitations)
+            const mailto = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+            window.location.href = mailto;
+        }
     </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 
 </html>
