@@ -144,7 +144,7 @@
             a.applicant_name ||
             [a.first_name, a.last_name].filter(Boolean).join(" ") ||
             a.tutor_name || "";
-          const email = a.tutor_email || a.applicant_email || a.email || "";
+          const email = a.tutor_email || a.user_email || a.applicant_email || a.email || "";
           const you_are = a.tutor_current || a.status || "";
           const location = a.location_text || a.campus_name || (a.campus?.campus_name || a.campus || "");
           if (email) EOI_BY_EMAIL.set(email.toLowerCase(), a);
