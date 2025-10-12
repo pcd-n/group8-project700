@@ -17,6 +17,7 @@ urlpatterns = [
     path("home/", TemplateView.as_view(template_name="home.html")),
 
     path("tutor-search/", TemplateView.as_view(template_name="tutor_search.html"), name="tutor_search"),
+    path("tutor-list/", TemplateView.as_view(template_name="tutor_list.html"), name="tutor_list"),
     # Pretty Unit + Allocation pages
     # e.g. /units/KIT101/ or /units/KIT101/?name=Programming%20Fundamentals
     path("api/accounts/roles/", roles_list, name="roles_list"),

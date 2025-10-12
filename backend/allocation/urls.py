@@ -14,6 +14,7 @@ from .views import (
     RunAllocationView,
     TutorSearchView,
     AllocatedTutorEmailsView,
+    ListAllTutorsView,
 )
 
 urlpatterns = [
@@ -30,4 +31,5 @@ urlpatterns = [
     path("assign/", AssignTutorView.as_view(), name="allocation-assign"),
     path("tutor/allocated-emails/", AllocatedTutorEmailsView.as_view(), name="allocated_tutor_emails"),
     path("tutor/search/", TutorSearchView.as_view(), name="tutor_search"),
+    path("tutor/list-all/", ListAllTutorsView.as_view(), name="list_all_tutors"),
 ]

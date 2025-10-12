@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>List All Tutors - Web Based Tutor Allocation</title>
+
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+
+  <style>
+    :root {
+      --heading-color: #101828;
+      --muted: #475467;
+      --brand: #3c5825;
+      --brand-hover: #324a1f;
+      --field-radius: 12px;
+      --btn-radius: 12px;
+    }
+
+    body {
+      font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
+      background: #f8f9fa;
+    }
+
+    .container {
+      max-width: 1000px;
+    }
+
+    .search-card,
+    .result-card {
+      background: #fff;
+      border-radius: 16px;
+      border: 1px solid #e5e7eb;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, .1);
+    }
+
+    .btn-outline-primary,
+    .btn-outline-success,
+    .btn-outline-secondary {
+      border-radius: 12px;
+    }
+
+    .alpha-header {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+      border-left: 0;
+      border-right: 0;
+      padding: .5rem .75rem;
+      font-weight: 700;
+      color: #334155;
+    }
+
+    .table thead th {
+      background: #fafafa;
+      color: #475467;
+      font-weight: 600;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    .table tbody tr+tr {
+      border-top: 1px solid #f1f5f9;
+    }
+
+    .count-link {
+      text-decoration: none;
+      font-weight: 700;
+    }
+
+    .count-link:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container py-5">
+    <!-- Header -->
+    <div class="text-center mb-4">
+      <h1 class="h2 mb-2" style="color: var(--heading-color); font-weight: 700;">List All Tutors</h1>
+      <p class="text-muted">All tutors (including those with EOIs but no allocations), grouped by email letter</p>
+
+      <div class="mt-3">
+        <div class="d-flex gap-2 justify-content-center flex-wrap">
+          <a href="/tutor-search/" class="btn btn-outline-primary btn-sm">Search Tutors</a>
+          <a href="/home/" class="btn btn-outline-secondary btn-sm">Home</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Table -->
+    <div class="result-card p-0">
+      <div id="listHost">
+        <!-- JS injects grouped tables here -->
+      </div>
+    </div>
+
+    <!-- Loading + error -->
+    <div class="text-center mt-3" id="loadingRow" style="display:none;">
+      <div class="spinner-border" role="status" aria-hidden="true"></div>
+      <div class="mt-2 text-muted">Loading tutors…</div>
+    </div>
+    <div class="alert alert-danger mt-3" id="errorRow" style="display:none;"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    const getAccessToken = () => localStorage.getItem("access");
+    const authHeaders = (extra = {}) => {
+      const token = getAccessToken();
+      return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
+    };
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      if (!getAccessToken()) { window.location.href = "/"; return; }
+      showLoading(true);
+      try {
+        const resp = await fetch("/api/allocation/tutor/list-all/", { headers: authHeaders({ "Content-Type": "application/json" }) });
+        if (!resp.ok) {
+          const t = await resp.text();
+          throw new Error(t || "Failed to load tutors");
+        }
+        const rows = await resp.json();
+        renderGrouped(rows);
+      } catch (e) {
+        showError(e.message || "An error occurred");
+      } finally {
+        showLoading(false);
+      }
+    });
+
+    function showLoading(b) {
+      document.getElementById("loadingRow").style.display = b ? "block" : "none";
+    }
+    function showError(msg) {
+      const el = document.getElementById("errorRow");
+      el.textContent = msg;
+      el.style.display = "block";
+    }
+
+    function renderGrouped(rows) {
+      // rows already sorted by email from the API; ensure
+      rows = (rows || []).slice().sort((a, b) => (a.email || "").localeCompare(b.email || ""));
+
+      // group by first letter of email
+      const groups = {};
+      for (const r of rows) {
+        const email = (r.email || "").trim();
+        if (!email) continue;
+        const key = email[0].toUpperCase();
+        (groups[key] ||= []).push(r);
+      }
+
+      const host = document.getElementById("listHost");
+      host.innerHTML = "";
+
+      const letters = Object.keys(groups).sort();
+      if (!letters.length) {
+        host.innerHTML = '<div class="p-4 text-center text-muted">No tutors found.</div>';
+        return;
+      }
+
+      letters.forEach(letter => {
+        const box = document.createElement("div");
+
+        // Letter header
+        const header = document.createElement("div");
+        header.className = "alpha-header";
+        header.textContent = letter;
+        box.appendChild(header);
+
+        // Table
+        const table = document.createElement("table");
+        table.className = "table table-hover mb-0";
+        table.innerHTML = `
+          <thead>
+            <tr>
+              <th style="width:35%;">Email</th>
+              <th style="width:20%;">First name</th>
+              <th style="width:20%;">Last name</th>
+              <th style="width:25%;">Allocated classes (all semesters)</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        `;
+        const tbody = table.querySelector("tbody");
+
+        groups[letter].forEach(r => {
+          const tr = document.createElement("tr");
+          const email = r.email || "";
+          const first = r.first_name || "";
+          const last = r.last_name || "";
+          const count = Number(r.allocated_classes || 0);
+
+          // link redirects to tutor-search and immediately shows results for that email
+          const href = `/tutor-search/?email=${encodeURIComponent(email)}`;
+
+          tr.innerHTML = `
+            <td><span class="text-break">${email}</span></td>
+            <td>${first}</td>
+            <td>${last}</td>
+            <td>
+              <a class="count-link" href="${href}" title="View allocations for ${email}">
+                ${count}
+              </a>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+
+        box.appendChild(table);
+        host.appendChild(box);
+      });
+    }
+  </script>
+</body>
+
+</html>

@@ -124,7 +124,7 @@
                     <a href="/tutor-search/" class="btn btn-outline-primary btn-sm">
                         Search Tutors
                     </a>
-                    <a href="#" id="btnListAll" class="btn btn-outline-success btn-sm">
+                    <a href="/tutor-list/" id="btnListAll" class="btn btn-outline-success btn-sm">
                         List All Tutors
                     </a>
                     <a href="/home/" class="btn btn-outline-secondary btn-sm">
@@ -213,6 +213,38 @@
 
             // populate dropdown immediately
             loadAllocatedTutors();
+
+            // If navigated from "List all tutors", auto-run the search by ?email=...
+            const params = new URLSearchParams(location.search);
+            const prefillEmail = (params.get("email") || "").trim();
+            if (prefillEmail) {
+                // Run the search immediately without requiring the dropdown value
+                (async () => {
+                    showLoading(true);
+                    hideError();
+                    hideResults();
+                    try {
+                        const response = await fetch(`/api/allocation/tutor/search/?email=${encodeURIComponent(prefillEmail)}`, {
+                            method: "GET",
+                            headers: authHeaders({ "Content-Type": "application/json" }),
+                        });
+                        if (response.ok) {
+                            const data = await response.json();
+                            displayResults(data);
+                        } else if (response.status === 401) {
+                            window.location.href = "/";
+                        } else {
+                            const errorData = await response.json();
+                            showError(errorData.detail || "An error occurred while searching for the tutor.");
+                        }
+                    } catch (error) {
+                        console.error("Search error:", error);
+                        showError("A network error occurred. Please check your connection and try again.");
+                    } finally {
+                        showLoading(false);
+                    }
+                })();
+            }
 
             // optional: clicking "List all tutors" just refocuses the select (acts as 'view')
             document.getElementById("btnListAll").addEventListener("click", (e) => {

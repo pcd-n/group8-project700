@@ -39,6 +39,85 @@ class AssignSer(serializers.Serializer):
     preference = serializers.IntegerField(required=False, default=0)
 
 
+class ListAllTutorsView(APIView):
+    """
+    List all tutors (platform + semester DBs) with allocation count aggregated
+    across ALL semester aliases.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        # 1) seed with platform tutors (default DB) if any
+        tutors = {}
+        for u in User.objects.all().only("email", "first_name", "last_name"):
+            if not u.email:
+                continue
+            key = u.email.strip().lower()
+            tutors.setdefault(key, {
+                "email": key,
+                "first_name": (u.first_name or "").strip(),
+                "last_name": (u.last_name or "").strip(),
+                "allocated_classes": 0,
+            })
+
+        # 2) collect tutors present in EACH semester DB (EOI-imported tutors live here)
+        semesters = list_existing_semesters()
+        for s in semesters:
+            alias = getattr(s, "alias", None)
+            if not alias:
+                continue
+
+            # add any users that exist only in the alias DB
+            for u in User.objects.using(alias).all().only("email", "first_name", "last_name"):
+                if not u.email:
+                    continue
+                key = u.email.strip().lower()
+                obj = tutors.setdefault(key, {
+                    "email": key,
+                    "first_name": "",
+                    "last_name": "",
+                    "allocated_classes": 0,
+                })
+                # prefer to fill names if missing
+                if not obj["first_name"] and u.first_name:
+                    obj["first_name"] = u.first_name.strip()
+                if not obj["last_name"] and u.last_name:
+                    obj["last_name"] = u.last_name.strip()
+
+        # 3) accumulate allocated class counts across ALL aliases
+        for s in semesters:
+            alias = getattr(s, "alias", None)
+            if not alias:
+                continue
+
+            # count Allocation (explicit allocations)
+            alloc_rows = (Allocation.objects.using(alias)
+                          .select_related("tutor")
+                          .values("tutor__email"))
+            for r in alloc_rows:
+                email = (r.get("tutor__email") or "").strip().lower()
+                if email:
+                    tutors.setdefault(email, {
+                        "email": email, "first_name": "", "last_name": "", "allocated_classes": 0
+                    })
+                    tutors[email]["allocated_classes"] += 1
+
+            # count TimeTable (direct assigned classes)
+            tt_rows = (TimeTable.objects.using(alias)
+                       .select_related("tutor_user")
+                       .values("tutor_user__email"))
+            for r in tt_rows:
+                email = (r.get("tutor_user__email") or "").strip().lower()
+                if email:
+                    tutors.setdefault(email, {
+                        "email": email, "first_name": "", "last_name": "", "allocated_classes": 0
+                    })
+                    tutors[email]["allocated_classes"] += 1
+
+        # sort by email
+        data = sorted(tutors.values(), key=lambda x: x["email"])
+        return Response(data, status=status.HTTP_200_OK)
+    
 class AllocationListView(generics.ListAPIView):
     """
     List all allocations in a semester (optionally filter by ?year=&term=).
