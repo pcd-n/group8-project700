@@ -117,7 +117,7 @@
         <div class="text-center mb-5">
             <h1 class="h2 mb-3" style="color: var(--heading-color); font-weight: 700;">Tutor Search</h1>
             <p class="text-muted">Search for tutors by their email address to view their details and allocations</p>
-            
+
             <!-- Quick Navigation -->
             <div class="mt-3">
                 <div class="d-flex gap-2 justify-content-center flex-wrap">
@@ -137,8 +137,8 @@
                 <div class="row g-3 align-items-end">
                     <div class="col-md-8">
                         <label for="emailInput" class="form-label fw-semibold">Tutor Email</label>
-                        <input type="email" class="form-control" id="emailInput" 
-                               placeholder="Enter tutor email address..." required>
+                        <input type="email" class="form-control" id="emailInput"
+                            placeholder="Enter tutor email address..." required>
                     </div>
                     <div class="col-md-4">
                         <button type="submit" class="btn btn-primary w-100">
@@ -162,8 +162,8 @@
             <!-- Tutor Info -->
             <div class="result-card p-4 mb-4">
                 <div class="d-flex align-items-center mb-3">
-                    <div class="bg-primary rounded-circle d-flex align-items-center justify-content-center me-3" 
-                         style="width: 50px; height: 50px;">
+                    <div class="bg-primary rounded-circle d-flex align-items-center justify-content-center me-3"
+                        style="width: 50px; height: 50px;">
                         <i class="text-white">👤</i>
                     </div>
                     <div>
@@ -171,7 +171,7 @@
                         <p class="text-muted mb-0" id="tutorEmail">-</p>
                     </div>
                 </div>
-                
+
                 <!-- Campus Information -->
                 <div class="mb-3">
                     <h6 class="fw-semibold mb-2">Campus Affiliations</h6>
@@ -199,100 +199,114 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
     <script>
-        // Simple token management (in a real app, this would be more sophisticated)
-        let authToken = localStorage.getItem('authToken');
-        
-        // If no token in localStorage, you might want to redirect to login or show login form
-        if (!authToken) {
-            // For demo purposes, we'll show an alert
-            console.warn('No authentication token found. Please log in first.');
-            // You could redirect to login page here
-            // window.location.href = '/';
-        }
+        // =========================
+        // Auth + request helpers
+        // =========================
+        const getAccessToken = () => localStorage.getItem("access");
+        const authHeaders = (extra = {}) => {
+            const token = getAccessToken();
+            return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
+        };
 
-        document.getElementById('searchForm').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            
-            const email = document.getElementById('emailInput').value.trim();
-            if (!email) return;
-
-            // Show loading state
-            showLoading(true);
-            hideError();
-            hideResults();
-
-            try {
-                const response = await fetch(`/api/allocation/tutor/search/?email=${encodeURIComponent(email)}`, {
-                    method: 'GET',
-                    headers: {
-                        'Authorization': `Bearer ${authToken}`,
-                        'Content-Type': 'application/json',
-                    }
-                });
-
-                if (response.ok) {
-                    const data = await response.json();
-                    displayResults(data);
-                } else {
-                    const errorData = await response.json();
-                    showError(errorData.detail || 'An error occurred while searching');
-                }
-            } catch (error) {
-                console.error('Search error:', error);
-                showError('Network error. Please check your connection and try again.');
-            } finally {
-                showLoading(false);
+        document.addEventListener("DOMContentLoaded", () => {
+            // If no token, redirect to the login page immediately.
+            if (!getAccessToken()) {
+                window.location.href = "/";
+                return;
             }
+
+            // Attach the search form listener only if the user is authenticated.
+            document.getElementById("searchForm").addEventListener("submit", async function (e) {
+                e.preventDefault();
+
+                const email = document.getElementById("emailInput").value.trim();
+                if (!email) return;
+
+                // Show loading state
+                showLoading(true);
+                hideError();
+                hideResults();
+
+                try {
+                    const response = await fetch(`/api/allocation/tutor/search/?email=${encodeURIComponent(email)}`, {
+                        method: "GET",
+                        headers: authHeaders({ "Content-Type": "application/json" }),
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        displayResults(data);
+                    } else if (response.status === 401) {
+                        // If token is invalid/expired, redirect to login.
+                        window.location.href = "/";
+                    }
+                    else {
+                        const errorData = await response.json();
+                        showError(errorData.detail || "An error occurred while searching for the tutor.");
+                    }
+                } catch (error) {
+                    console.error("Search error:", error);
+                    showError("A network error occurred. Please check your connection and try again.");
+                } finally {
+                    showLoading(false);
+                }
+            });
         });
 
+
         function showLoading(show) {
-            const spinner = document.querySelector('.loading-spinner');
-            const btnText = document.querySelector('.btn-text');
+            const spinner = document.querySelector(".loading-spinner");
+            const btnText = document.querySelector(".btn-text");
             const submitBtn = document.querySelector('button[type="submit"]');
-            
+
             if (show) {
-                spinner.style.display = 'inline-block';
-                btnText.textContent = 'Searching...';
+                spinner.style.display = "inline-block";
+                btnText.textContent = "Searching...";
                 submitBtn.disabled = true;
             } else {
-                spinner.style.display = 'none';
-                btnText.textContent = 'Search Tutor';
+                spinner.style.display = "none";
+                btnText.textContent = "Search Tutor";
                 submitBtn.disabled = false;
             }
         }
 
         function showError(message) {
-            const errorAlert = document.querySelector('.error-alert');
-            const errorMessage = document.getElementById('errorMessage');
+            const errorAlert = document.querySelector(".error-alert");
+            const errorMessage = document.getElementById("errorMessage");
             errorMessage.textContent = message;
-            errorAlert.style.display = 'block';
+            errorAlert.style.display = "block";
         }
 
         function hideError() {
-            const errorAlert = document.querySelector('.error-alert');
-            errorAlert.style.display = 'none';
+            const errorAlert = document.querySelector(".error-alert");
+            errorAlert.style.display = "none";
         }
 
         function hideResults() {
-            const resultsSection = document.querySelector('.results-section');
-            const noResultsMessage = document.getElementById('noResultsMessage');
-            resultsSection.style.display = 'none';
-            noResultsMessage.classList.add('d-none');
+            const resultsSection = document.querySelector(".results-section");
+            const noResultsMessage = document.getElementById("noResultsMessage");
+            resultsSection.style.display = "none";
+            noResultsMessage.classList.add("d-none");
         }
 
         function displayResults(data) {
+            if (!data || !data.tutor) {
+                const noResultsMessage = document.getElementById('noResultsMessage');
+                noResultsMessage.classList.remove('d-none');
+                return;
+            }
             // Display tutor info
-            document.getElementById('tutorName').textContent = data.tutor.full_name;
-            document.getElementById('tutorEmail').textContent = data.tutor.email;
+            document.getElementById("tutorName").textContent = data.tutor.full_name;
+            document.getElementById("tutorEmail").textContent = data.tutor.email;
 
             // Display campus information
-            const campusList = document.getElementById('campusList');
-            campusList.innerHTML = '';
-            
+            const campusList = document.getElementById("campusList");
+            campusList.innerHTML = "";
+
             if (data.campus && data.campus.length > 0) {
-                data.campus.forEach(campus => {
-                    const badge = document.createElement('span');
-                    badge.className = 'badge campus-badge me-2 mb-2';
+                data.campus.forEach((campus) => {
+                    const badge = document.createElement("span");
+                    badge.className = "badge campus-badge me-2 mb-2";
                     badge.textContent = `${campus.campus_name} (${campus.campus_location})`;
                     campusList.appendChild(badge);
                 });
@@ -301,18 +315,19 @@
             }
 
             // Display allocation units
-            const allocationsList = document.getElementById('allocationsList');
-            allocationsList.innerHTML = '';
+            const allocationsList = document.getElementById("allocationsList");
+            allocationsList.innerHTML = "";
 
             if (data.allocation_units && data.allocation_units.length > 0) {
-                data.allocation_units.forEach(unit => {
-                    const unitCard = document.createElement('div');
-                    unitCard.className = 'border rounded p-3 mb-3';
-                    
-                    const approvedRatio = unit.total_sessions > 0 
-                        ? Math.round((unit.approved_sessions / unit.total_sessions) * 100) 
-                        : 0;
-                    
+                data.allocation_units.forEach((unit) => {
+                    const unitCard = document.createElement("div");
+                    unitCard.className = "border rounded p-3 mb-3";
+
+                    const approvedRatio =
+                        unit.total_sessions > 0
+                            ? Math.round((unit.approved_sessions / unit.total_sessions) * 100)
+                            : 0;
+
                     unitCard.innerHTML = `
                         <div class="d-flex justify-content-between align-items-start mb-2">
                             <div>
@@ -332,7 +347,7 @@
                             </div>
                         </div>
                     `;
-                    
+
                     allocationsList.appendChild(unitCard);
                 });
             } else {
@@ -340,27 +355,9 @@
             }
 
             // Show results
-            document.querySelector('.results-section').style.display = 'block';
-        }
-
-        // Simple login function for demo (you would integrate with your actual auth system)
-        function showLoginPrompt() {
-            const token = prompt('Please enter your JWT token (for demo purposes):');
-            if (token) {
-                localStorage.setItem('authToken', token);
-                authToken = token;
-                location.reload();
-            }
-        }
-
-        // If no token, show login prompt when page loads
-        if (!authToken) {
-            setTimeout(() => {
-                if (confirm('No authentication token found. Would you like to enter one for testing?')) {
-                    showLoginPrompt();
-                }
-            }, 1000);
+            document.querySelector(".results-section").style.display = "block";
         }
     </script>
 </body>
+
 </html>
