@@ -61,9 +61,18 @@
         <div class="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
             <div class="d-flex align-items-center gap-2">
                 <h1 id="ttTitle" class="h5 m-0">Timetable</h1>
-                <span id="ttEmail" class="badge text-bg-light d-none"></span>
+                <span id="ttEmail" class="ms-2 fs-5 fw-semibold d-none"></span>
             </div>
 
+            <!-- a compact header that will be included in the export -->
+            <div id="exportHeader" class="mb-2">
+                <div class="fw-semibold">
+                    Tutor: <span id="exName"></span> (<span id="exEmail"></span>)
+                </div>
+                <div class="text-muted small">
+                    Semester: <span id="exAlias"></span> • Generated: <span id="exWhen"></span>
+                </div>
+            </div>
             <div class="btn-group">
                 <button class="btn btn-outline-primary btn-sm" id="btnDownloadPdf">Download PDF</button>
                 <button class="btn btn-outline-primary btn-sm" id="btnDownloadPng">Download PNG</button>
@@ -107,10 +116,15 @@
             backLink.href = '/home/';
         }
 
+        document.getElementById("exName").textContent = tutorName || "";
+        document.getElementById("exEmail").textContent = tutorEmail || "";
+        document.getElementById("exAlias").textContent = useAlias || (alias || "");
+        document.getElementById("exWhen").textContent = new Date().toLocaleString();
+
         function setHeader(name, email) {
             titleEl.textContent = name ? `Timetable: ${name}` : "Timetable";
             if (email) {
-                emailBadge.textContent = email;
+                emailBadge.textContent = ` | ${email}`;
                 emailBadge.classList.remove("d-none");
             } else {
                 emailBadge.classList.add("d-none");
@@ -264,7 +278,7 @@
         }
 
         async function captureCanvasFromTable() {
-            const node = document.getElementById("ttTable") || document.getElementById("gridWrap");
+            const node = document.getElementById("ttCapture") || document.getElementById("ttTable") || document.getElementById("gridWrap");
             // use a slightly higher scale for crispness
             const canvas = await html2canvas(node, { scale: 2, backgroundColor: "#ffffff" });
             return canvas;
