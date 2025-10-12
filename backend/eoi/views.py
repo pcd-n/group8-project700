@@ -1,5 +1,4 @@
 #eoi/views.py
-from semesters.router import get_current_semester_alias
 from django.shortcuts import render
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -15,8 +14,7 @@ from .models import EoiApp
 from units.models import Unit
 from django.contrib.auth import get_user_model
 from .serializers import EoiAppSerializer
-from semesters.router import get_current_semester_alias
-from semesters.services import ensure_migrated
+from semesters.services import get_active_semester_alias, ensure_migrated
 import logging
 from users.permissions import IsAdminOrCoordinator
 logger = logging.getLogger(__name__)
@@ -36,7 +34,7 @@ class EOIUploadView(APIView):
         except Exception as e:
             return Response({"detail": f"Error reading Excel: {e}"}, status=status.HTTP_400_BAD_REQUEST)
 
-        alias = get_current_semester_alias() or "default"
+        alias = get_active_semester_alias() or "default"
         ensure_migrated(alias)  # idempotent safety
         db = connections[alias].settings_dict.get("NAME")
 
@@ -83,9 +81,11 @@ class ApplicantsByUnit(APIView):
             return Response({"detail": "unit_code is required"}, status=400)
 
         # allow overriding alias via ?alias=… but default to current
-        alias = (request.query_params.get("alias")
-                 or get_current_semester_alias()
-                 or "default")
+        alias = (
+            request.query_params.get("alias")
+            or get_active_semester_alias(request)
+            or "default"
+        )
 
         ensure_migrated(alias)
         db = connections[alias].settings_dict.get("NAME")
@@ -107,7 +107,7 @@ class ApplicantsByUnit(APIView):
 
 def _column_exists(using: str, table: str, column: str) -> bool:
     with connections[using].cursor() as c:
-        c.execute(f"SHOW COLUMNS FROM `{table}` LIKE %s", [column])
+        c.execute("SHOW COLUMNS FROM `{}` LIKE %s".format(table), [column])
         return c.fetchone() is not None
 
 class PreferenceItemSer(serializers.Serializer):
@@ -131,7 +131,7 @@ class SavePreferences(APIView):
         ser = self.BodySer(data=request.data)
         ser.is_valid(raise_exception=True)
 
-        alias = get_current_semester_alias() or "default"
+        alias = get_active_semester_alias(request)  or "default"
         ensure_migrated(alias)
 
         # Resolve unit_id if only unit_code provided
@@ -144,23 +144,25 @@ class SavePreferences(APIView):
             except Unit.DoesNotExist:
                 return Response({"detail": "Unknown unit."}, status=400)
 
-        updated = 0
-        for row in ser.validated_data["prefs"]:
-            email = (row.get("email") or "").strip().lower()
-            try:
-                pref = int(row.get("preference") or 0)
-            except (TypeError, ValueError):
-                pref = 0
-            if not email or pref <= 0:
-                continue
+        with transaction.atomic(using=alias):
+            updated = 0
+            for row in ser.validated_data["prefs"]:
+                email = (row.get("email") or "").strip().lower()
+                try:
+                    pref = int(row.get("preference") or 0)
+                except (TypeError, ValueError):
+                    pref = 0
+                if not email or pref <= 0:
+                    continue
 
-            qs = EoiApp.objects.using(alias).filter(unit_id=unit_id, is_current=True)
+                qs = EoiApp.objects.using(alias).filter(unit_id=unit_id, is_current=True)
 
-            if _column_exists(alias, "eoi_app", "tutor_email"):
-                qs = qs.filter(Q(tutor_email__iexact=email) | Q(applicant_user__email__iexact=email))
-            else:
-                qs = qs.filter(applicant_user__email__iexact=email)
+                table = EoiApp._meta.db_table
+                if _column_exists(alias, table, "tutor_email"):
+                    qs = qs.filter(Q(tutor_email__iexact=email) | Q(applicant_user__email__iexact=email))
+                else:
+                    qs = qs.filter(applicant_user__email__iexact=email)
 
-            updated += qs.update(preference=pref)
+                updated += qs.update(preference=pref)
 
         return Response({"updated": updated, "alias": alias}, status=200)
