@@ -58,43 +58,42 @@
 
 <body>
     <div class="container py-4">
-        <div class="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
-            <div class="d-flex align-items-center gap-2">
-                <h1 id="ttTitle" class="h5 m-0">Timetable</h1>
-                <span id="ttEmail" class="ms-2 fs-5 fw-semibold d-none"></span>
-            </div>
-
-            <!-- a compact header that will be included in the export -->
-            <div id="ttCapture">
+        <div class="d-flex justify-content-between align-items-start mb-3 gap-2 flex-wrap">
+            <div id="ttCapture" class="flex-grow-1">
                 <div id="exportHeader" class="mb-2">
                     <div class="fw-semibold">
                         Tutor: <span id="exName"></span> (<span id="exEmail"></span>)
                     </div>
                     <div class="text-muted small">
-                        Semester: <span id="exAlias"></span> • Generated: <span id="exWhen"></span>
+                        Semester: <span id="exAlias"></span> | Updated on: <span id="exWhen"></span>
                     </div>
                 </div>
 
                 <div id="gridWrap" class="table-responsive"></div>
             </div>
 
-            <div class="btn-group">
-                <button class="btn btn-outline-primary btn-sm" id="btnDownloadPdf">Download PDF</button>
-                <button class="btn btn-outline-primary btn-sm" id="btnDownloadPng">Download PNG</button>
-                <button class="btn btn-outline-primary btn-sm" id="btnDownloadXlsx">Download XLSX</button>
+            <!-- export options + Back on same row -->
+            <div class="d-flex align-items-start gap-2">
+                <div class="btn-group">
+                    <button class="btn btn-outline-primary btn-sm" id="btnDownloadPdf">Download PDF</button>
+                    <button class="btn btn-outline-primary btn-sm" id="btnDownloadPng">Download PNG</button>
+                    <button class="btn btn-outline-primary btn-sm" id="btnDownloadXlsx">Download XLSX</button>
 
-                <button class="btn btn-primary btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
-                    Share via email
-                </button>
-                <ul class="dropdown-menu dropdown-menu-end">
-                    <li><a class="dropdown-item" href="#" id="btnSharePdf">Share PDF</a></li>
-                    <li><a class="dropdown-item" href="#" id="btnSharePng">Share PNG</a></li>
-                    <li><a class="dropdown-item" href="#" id="btnShareXlsx">Share XLSX</a></li>
-                </ul>
+                    <button class="btn btn-primary btn-sm dropdown-toggle" data-bs-toggle="dropdown"
+                        aria-expanded="false">
+                        Share via email
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        <li><a class="dropdown-item" href="#" id="btnSharePdf">Share PDF</a></li>
+                        <li><a class="dropdown-item" href="#" id="btnSharePng">Share PNG</a></li>
+                        <li><a class="dropdown-item" href="#" id="btnShareXlsx">Share XLSX</a></li>
+                    </ul>
+                </div>
+
+                <a id="backLink" href="/home/" class="btn btn-outline-secondary btn-sm">← Back</a>
             </div>
-
-            <a id="backLink" href="/home/" class="btn btn-outline-secondary btn-sm">← Back</a>
         </div>
+
         <div id="empty" class="alert alert-warning d-none mt-3">No assigned classes for this tutor.</div>
     </div>
 
