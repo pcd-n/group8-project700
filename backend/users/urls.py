@@ -34,7 +34,7 @@ urlpatterns = [
     path('users/update/<int:user_id>/', views.UserUpdateView.as_view(), name='user_update_specific'),
     path('users/reset-password/', views.ResetPasswordView.as_view(), name='reset_password'),
     path("tutors/eoi-emails/", eoi_tutor_emails, name="eoi-tutor-emails"),
-    path("accounts/users/<int:user_id>/", delete_user_and_clear_alias, name="delete-user"),
+    path("users/<int:user_id>/", delete_user_and_clear_alias, name="delete-user"),
     # =====================================================
     # RBAC - ROLE MANAGEMENT ENDPOINTS (Admin only)
     # =====================================================
