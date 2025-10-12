@@ -281,6 +281,7 @@
         });
         if (!res.ok) return;
         const me = await res.json();
+        const meUser = me?.user || {};
         const roles = Array.isArray(me?.roles) ? me.roles.map(r => r.name) : [];
         const isAdmin = !!me?.is_staff || roles.includes("Admin");
         const isCoordinator = roles.includes("Coordinator");
@@ -293,7 +294,7 @@
         if (isAdmin) adminCard.classList.remove("d-none");
         else adminCard.classList.add("d-none");
 
-        await initRoleUI({ me, isAdmin, isCoordinator, isTutor });
+        await initRoleUI({ me, meUser, isAdmin, isCoordinator, isTutor });
       }
       catch (_) {
         // If profile failed, default to safest: hide admin tools
@@ -301,7 +302,7 @@
       }
     }
 
-    async function initRoleUI({ me, isAdmin, isCoordinator, isTutor }) {
+    async function initRoleUI({ me, meUser, isAdmin, isCoordinator, isTutor }) {
       const btnUpload = document.getElementById("btnUpload");
       const btnProceed = document.getElementById("btnProceedAlloc");
       const btnUsers = document.getElementById("btnUsersMgmt");
@@ -312,10 +313,10 @@
         btnProceed?.classList.add("d-none");
         btnUsers?.classList.add("d-none");
 
-        const email = (me?.email || "").toLowerCase();
+        const email = (meUser?.email || "").toLowerCase();
         const name =
-          `${me?.first_name || ""} ${me?.last_name || ""}`.trim() ||
-          me?.username || "Tutor";
+          `${meUser?.first_name || ""} ${meUser?.last_name || ""}`.trim() ||
+          meUser?.username || "Tutor";
 
         try {
           const { alias } = await apiGet(API.current());
@@ -355,18 +356,18 @@
         });
         if (!res.ok) return;
         const me = await res.json();
-
+        const u = me?.user || {};
+        const roles = Array.isArray(me?.roles) ? me.roles.map(r => r.name) : [];
         // Name
         const name =
-          (me.first_name || me.last_name) ? `${me.first_name || ''} ${me.last_name || ''}`.trim()
-            : (me.username || me.email || 'User');
+          (u.first_name || u.last_name) ? `${u.first_name || ''} ${u.last_name || ''}`.trim()
+            : (u.username || u.email || 'User');
 
         // Role(s) – your profile returns roles: [{ id, name }]
-        const roles = Array.isArray(me?.roles) ? me.roles.map(r => r.name) : [];
-        const mainRole = roles[0] || (me.is_staff ? 'Admin' : 'User');
+        const mainRole = roles[0] || (u.is_staff ? 'Admin' : 'User');
 
         document.getElementById('welcomeBox').textContent =
-          `Welcome back, ${name} (${mainRole}),`;
+          `Welcome back, ${name} - ${mainRole},`;
       } catch (_) { /* ignore */ }
     }
 
