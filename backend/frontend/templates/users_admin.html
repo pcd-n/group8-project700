@@ -6,6 +6,7 @@
     <title>Users Management</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <style>
         .card-role {
             border-radius: 16px;
@@ -125,6 +126,22 @@
                 transform: translate(-50%, -46%);
             }
         }
+
+        #cuPassword,
+        #cuPassword2,
+        #rpNew,
+        #rpConfirm {
+            padding-right: 40px;
+        }
+
+        .toggle-pass {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            cursor: pointer;
+            color: #475467;
+        }
     </style>
 </head>
 
@@ -151,7 +168,18 @@
                     </div>
                     <div class="col-md-3">
                         <label class="form-label">Password</label>
-                        <input id="cuPassword" type="password" minlength="8" class="form-control" required />
+                        <div class="position-relative">
+                            <input id="cuPassword" type="password" minlength="8" class="form-control" required />
+                            <i class="bi bi-eye-slash toggle-pass" id="toggleCuPassword" title="Show/Hide"></i>
+                        </div>
+                        <div class="form-text">Min 8 characters</div>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Confirm Password</label>
+                        <div class="position-relative">
+                            <input id="cuPassword2" type="password" minlength="8" class="form-control" required />
+                            <i class="bi bi-eye-slash toggle-pass" id="toggleCuPassword2" title="Show/Hide"></i>
+                        </div>
                     </div>
                     <div class="col-md-3">
                         <label class="form-label">Role</label>
@@ -488,6 +516,87 @@
             if (!sorted.length) container.innerHTML = `<div class="alert alert-secondary">No users found.</div>`;
         }
 
+        function openPasswordResetDialog() {
+            return new Promise((resolve) => {
+                const overlay = document.createElement('div');
+                overlay.className = 'edit-overlay';
+                overlay.id = 'rpOverlay';
+
+                const modal = document.createElement('div');
+                modal.className = 'edit-modal';
+                modal.id = 'rpModal';
+
+                modal.innerHTML = `
+                <h6 class="fw-semibold">Reset password</h6>
+                <form id="rpForm">
+                <div class="mb-2">
+                    <label class="form-label" for="rpNew">New password</label>
+                    <div class="position-relative">
+                    <input type="password" class="form-control" id="rpNew" minlength="8" required>
+                    <i class="bi bi-eye-slash toggle-pass" id="toggleRpNew" title="Show/Hide"></i>
+                    </div>
+                    <div class="form-text">Min 8 characters</div>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label" for="rpConfirm">Confirm password</label>
+                    <div class="position-relative">
+                    <input type="password" class="form-control" id="rpConfirm" minlength="8" required>
+                    <i class="bi bi-eye-slash toggle-pass" id="toggleRpConfirm" title="Show/Hide"></i>
+                    </div>
+                </div>
+                <div class="actions">
+                    <button type="button" class="btn btn-light" id="rpCancel">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+                </form>
+            `;
+
+                const cleanup = () => {
+                    modal.classList.add('edit-leave');
+                    overlay.style.transition = 'opacity .15s ease';
+                    overlay.style.opacity = '0';
+                    setTimeout(() => { overlay.remove(); modal.remove(); }, 160);
+                    document.removeEventListener('keydown', onKey);
+                };
+                const onKey = (e) => { if (e.key === 'Escape') { cleanup(); resolve(null); } };
+
+                document.body.appendChild(overlay);
+                document.body.appendChild(modal);
+                document.addEventListener('keydown', onKey);
+
+                // click-outside = cancel
+                overlay.addEventListener('click', () => { cleanup(); resolve(null); });
+
+                // toggles (same as index.html behaviour)
+                const newPwd = modal.querySelector('#rpNew');
+                const cfmPwd = modal.querySelector('#rpConfirm');
+                modal.querySelector('#toggleRpNew').addEventListener('click', function () {
+                    const type = newPwd.getAttribute('type') === 'password' ? 'text' : 'password';
+                    newPwd.setAttribute('type', type);
+                    this.classList.toggle('bi-eye');
+                });
+                modal.querySelector('#toggleRpConfirm').addEventListener('click', function () {
+                    const type = cfmPwd.getAttribute('type') === 'password' ? 'text' : 'password';
+                    cfmPwd.setAttribute('type', type);
+                    this.classList.toggle('bi-eye');
+                });
+
+                modal.querySelector('#rpCancel').addEventListener('click', () => { cleanup(); resolve(null); });
+
+                modal.querySelector('#rpForm').addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    const p1 = newPwd.value;
+                    const p2 = cfmPwd.value;
+                    if (p1.length < 8) { showAlert('Password must be at least 8 characters.', 'warning'); return; }
+                    if (p1 !== p2) { showAlert('Passwords do not match.', 'warning'); return; }
+                    cleanup();
+                    resolve(p1);
+                });
+
+                setTimeout(() => newPwd?.focus(), 10);
+            });
+        }
+
         function openUserEditDialog(row) {
             return new Promise(resolve => {
                 // Parse defaults from existing row
@@ -629,10 +738,14 @@
             }
 
             if (btn.dataset.action === 'reset') {
-                const pwd = prompt('Enter a new password: (min 8 chars)');
-                if (!pwd) return;
-                try { await postJSON(API.resetPassword, { user_id: userId, new_password: pwd }); showAlert('Password updated', 'success'); }
-                catch (err) { showAlert(err.message || 'Password reset failed'); }
+                const newPwd = await openPasswordResetDialog();
+                if (!newPwd) return; // cancelled
+                try {
+                    await postJSON(API.resetPassword, { user_id: userId, new_password: newPwd });
+                    showAlert('Password updated', 'success');
+                } catch (err) {
+                    showAlert(err.message || 'Password reset failed');
+                }
             }
 
             if (btn.dataset.action === 'remove') {
@@ -659,6 +772,12 @@
             e.preventDefault();
             const role = roleSelect.value;
             let email = (emailInput.value || '').trim();
+
+            // Confirm password match
+            if (document.getElementById('cuPassword').value !== document.getElementById('cuPassword2').value) {
+                showAlert('Passwords do not match.', 'warning');
+                return;
+            }
 
             if (role === 'Tutor') {
                 if (!email) { showAlert('Email is required for Tutor accounts.', 'warning'); return; }
@@ -692,6 +811,28 @@
                 console.warn('Create user error:', err);
             }
         });
+
+        (function () {
+            const p1 = document.getElementById('cuPassword');
+            const p2 = document.getElementById('cuPassword2');
+            const t1 = document.getElementById('toggleCuPassword');
+            const t2 = document.getElementById('toggleCuPassword2');
+
+            if (t1 && p1) {
+                t1.addEventListener('click', function () {
+                    const type = p1.getAttribute('type') === 'password' ? 'text' : 'password';
+                    p1.setAttribute('type', type);
+                    this.classList.toggle('bi-eye');      // mirror index.html behaviour
+                });
+            }
+            if (t2 && p2) {
+                t2.addEventListener('click', function () {
+                    const type = p2.getAttribute('type') === 'password' ? 'text' : 'password';
+                    p2.setAttribute('type', type);
+                    this.classList.toggle('bi-eye');
+                });
+            }
+        })();
 
         // ---------- Init (Admin gate fixed) ----------
         (async function init() {

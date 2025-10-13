@@ -363,7 +363,6 @@
           (u.first_name || u.last_name) ? `${u.first_name || ''} ${u.last_name || ''}`.trim()
             : (u.username || u.email || 'User');
 
-        // Role(s) – your profile returns roles: [{ id, name }]
         const mainRole = roles[0] || (u.is_staff ? 'Admin' : 'User');
 
         document.getElementById('welcomeBox').textContent =
