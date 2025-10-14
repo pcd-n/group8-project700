@@ -49,23 +49,23 @@
                         <th>Unit Name</th>
                         <th style="width:100px">Campus</th>
                         <th style="width:140px" class="text-end"># Sessions</th>
-                        <th style="width:160px">
-                            <div class="d-flex align-items-center justify-content-between gap-2">
+                        <th style="width:160px; vertical-align:middle;">
+                            <div class="d-flex flex-column align-items-start">
                                 <span>Allocation Status</span>
-                                <div class="dropdown">
+                                <div class="dropdown mt-1">
                                     <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button"
                                         data-bs-toggle="dropdown" aria-expanded="false">
                                         Filter
                                     </button>
-                                    <ul class="dropdown-menu dropdown-menu-end" id="statusFilterMenu">
+                                    <ul class="dropdown-menu" id="statusFilterMenu">
                                         <li><a class="dropdown-item active" href="#" data-value="all">All</a></li>
-                                        <li><a class="dropdown-item" href="#" data-value="pending">Pending only</a></li>
-                                        <li><a class="dropdown-item" href="#" data-value="completed">Completed only</a>
-                                        </li>
+                                        <li><a class="dropdown-item" href="#" data-value="pending">Pending</a></li>
+                                        <li><a class="dropdown-item" href="#" data-value="completed">Completed</a></li>
                                     </ul>
                                 </div>
                             </div>
                         </th>
+
                         <th style="width:220px">Allocated Tutors</th>
                     </tr>
                 </thead>
