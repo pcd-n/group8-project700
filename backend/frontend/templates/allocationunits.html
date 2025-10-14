@@ -49,7 +49,23 @@
                         <th>Unit Name</th>
                         <th style="width:100px">Campus</th>
                         <th style="width:140px" class="text-end"># Sessions</th>
-                        <th style="width:160px">Allocation Status</th>
+                        <th style="width:160px">
+                            <div class="d-flex align-items-center justify-content-between gap-2">
+                                <span>Allocation Status</span>
+                                <div class="dropdown">
+                                    <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button"
+                                        data-bs-toggle="dropdown" aria-expanded="false">
+                                        Filter
+                                    </button>
+                                    <ul class="dropdown-menu dropdown-menu-end" id="statusFilterMenu">
+                                        <li><a class="dropdown-item active" href="#" data-value="all">All</a></li>
+                                        <li><a class="dropdown-item" href="#" data-value="pending">Pending only</a></li>
+                                        <li><a class="dropdown-item" href="#" data-value="completed">Completed only</a>
+                                        </li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </th>
                         <th style="width:220px">Allocated Tutors</th>
                     </tr>
                 </thead>
@@ -122,28 +138,70 @@
                 const statusBadge = `<span class="badge bg-${isCompleted ? 'success' : 'warning'}">${isCompleted ? 'Completed' : 'Pending'}</span>`;
 
                 return `
-          <tr>
-            <td><a class="unitlink" href="${detailUrl}">${u.unit_code}</a></td>
-            <td><a class="unitlink" href="${detailUrl}">${u.unit_name || ""}</a></td>
-            <td>${u.campus}</td>
-            <td class="text-end">${u.session_count}</td>
-            <td>${statusBadge}</td>
-            <td>${tutorHtml}</td>
-          </tr>`;
+                <tr data-status="${isCompleted ? 'completed' : 'pending'}">
+                    <td><a class="unitlink" href="${detailUrl}">${u.unit_code}</a></td>
+                    <td><a class="unitlink" href="${detailUrl}">${u.unit_name || ""}</a></td>
+                    <td>${u.campus}</td>
+                    <td class="text-end">${u.session_count}</td>
+                    <td>${statusBadge}</td>
+                    <td>${tutorHtml}</td>
+                </tr>`;
             }).join("");
 
             document.getElementById("recordCount").textContent = `${rows.length} units found`;
+            applyStatusFilter();
         }
+
+        let currentStatusFilter = 'all';
+
+        function applyStatusFilter() {
+            const tbody = document.getElementById("unitsBody");
+            const rows = Array.from(tbody.querySelectorAll("tr"));
+            let visible = 0;
+
+            rows.forEach(tr => {
+                const status = tr.getAttribute("data-status"); // "pending" | "completed" | null for placeholders
+                const show = (currentStatusFilter === 'all') ||
+                    (currentStatusFilter === status);
+                tr.style.display = show ? '' : 'none';
+                if (show && status) visible++;
+            });
+
+            // update the count to reflect visible rows
+            const rc = document.getElementById("recordCount");
+            if (rc) rc.textContent = `${visible} units ${currentStatusFilter === 'all' ? 'found' : `(${currentStatusFilter})`}`;
+        }
+
+        // attach once on DOM ready
+        document.addEventListener("DOMContentLoaded", () => {
+            const menu = document.getElementById("statusFilterMenu");
+            if (menu) {
+                menu.addEventListener("click", (e) => {
+                    const a = e.target.closest('a[data-value]');
+                    if (!a) return;
+                    e.preventDefault();
+
+                    // set active item
+                    menu.querySelectorAll('.dropdown-item').forEach(it => it.classList.remove('active'));
+                    a.classList.add('active');
+
+                    currentStatusFilter = a.getAttribute('data-value'); // all | pending | completed
+                    applyStatusFilter();
+                });
+            }
+        });
 
         document.addEventListener("DOMContentLoaded", () => {
             loadUnits().catch(err => {
                 console.error(err);
                 alert(`Failed to load units.\n${err.message || err}`);
                 document.getElementById("unitsBody").innerHTML =
-                    `<tr><td colspan="5" class="text-danger text-center">${(err && err.message) || "Error"}</td></tr>`;
+                    `<tr><td colspan="6" class="text-danger text-center">${(err && err.message) || "Error"}</td></tr>`;
             });
         });
     </script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
 </body>
 
 </html>
