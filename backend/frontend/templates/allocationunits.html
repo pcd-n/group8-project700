@@ -43,21 +43,21 @@
 
         <div class="table-responsive table-wrap">
             <table class="table table-bordered align-middle">
-                <thead class="table-light">
+                <thead class="table-light text-center align-middle">
                     <tr>
-                        <th style="width:120px">Unit Code</th>
+                        <th style="width:120px;">Unit Code</th>
                         <th>Unit Name</th>
-                        <th style="width:100px">Campus</th>
-                        <th style="width:140px" class="text-end"># Sessions</th>
+                        <th style="width:100px;">Campus</th>
+                        <th style="width:140px;"># Sessions</th>
                         <th style="width:160px; vertical-align:middle;">
-                            <div class="d-flex flex-column align-items-start">
+                            <div class="d-flex flex-column align-items-center justify-content-center">
                                 <span>Allocation Status</span>
                                 <div class="dropdown mt-1">
                                     <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button"
                                         data-bs-toggle="dropdown" aria-expanded="false">
                                         Filter
                                     </button>
-                                    <ul class="dropdown-menu" id="statusFilterMenu">
+                                    <ul class="dropdown-menu dropdown-menu-end" id="statusFilterMenu">
                                         <li><a class="dropdown-item active" href="#" data-value="all">All</a></li>
                                         <li><a class="dropdown-item" href="#" data-value="pending">Pending</a></li>
                                         <li><a class="dropdown-item" href="#" data-value="completed">Completed</a></li>
@@ -65,10 +65,10 @@
                                 </div>
                             </div>
                         </th>
-
-                        <th style="width:220px">Allocated Tutors</th>
+                        <th style="width:220px;">Allocated Tutors</th>
                     </tr>
                 </thead>
+
                 <tbody id="unitsBody">
                     <tr>
                         <td colspan="6" class="text-center text-muted">Loading…</td>
