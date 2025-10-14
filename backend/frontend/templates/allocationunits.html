@@ -44,12 +44,13 @@
                         <th>Unit Name</th>
                         <th style="width:100px">Campus</th>
                         <th style="width:140px" class="text-end"># Sessions</th>
+                        <th style="width:160px">Allocation Status</th>
                         <th style="width:220px">Allocated Tutors</th>
                     </tr>
                 </thead>
                 <tbody id="unitsBody">
                     <tr>
-                        <td colspan="5" class="text-center text-muted">Loading…</td>
+                        <td colspan="6" class="text-center text-muted">Loading…</td>
                     </tr>
                 </tbody>
             </table>
@@ -94,7 +95,7 @@
 
             const tbody = document.getElementById("unitsBody");
             if (!Array.isArray(rows) || rows.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">No units found.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">No units found.</td></tr>`;
                 document.getElementById("recordCount").textContent = "0 units";
                 return;
             }
@@ -111,12 +112,17 @@
                     }).join(", ")
                     : `<span class="text-muted">—</span>`;
 
+                // Status badge (default to "Pending")
+                const isCompleted = (String(u.allocation_status || "").toLowerCase() === "completed");
+                const statusBadge = `<span class="badge bg-${isCompleted ? 'success' : 'warning'}">${isCompleted ? 'Completed' : 'Pending'}</span>`;
+
                 return `
           <tr>
             <td><a class="unitlink" href="${detailUrl}">${u.unit_code}</a></td>
             <td><a class="unitlink" href="${detailUrl}">${u.unit_name || ""}</a></td>
             <td>${u.campus}</td>
             <td class="text-end">${u.session_count}</td>
+            <td>${statusBadge}</td>
             <td>${tutorHtml}</td>
           </tr>`;
             }).join("");

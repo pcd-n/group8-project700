@@ -193,6 +193,7 @@ class UnitsForAllocationView(APIView):
                     "unit_name": unit.unit_name,
                     "campus": campus_name,
                     "session_count": 0,
+                    "assigned_count": 0,
                     "tutors": {},
                 }
 
@@ -200,6 +201,7 @@ class UnitsForAllocationView(APIView):
             rec["session_count"] += 1
 
             if tt.tutor_user_id:
+                rec["assigned_count"] += 1
                 full = f"{tt.tutor_user.first_name} {tt.tutor_user.last_name}".strip() or (tt.tutor_user.email or "")
                 email = tt.tutor_user.email or ""
                 tkey = email or full
@@ -208,12 +210,14 @@ class UnitsForAllocationView(APIView):
 
         data = []
         for rec in buckets.values():
+            allocation_status = "Completed" if (rec["session_count"] > 0 and rec["assigned_count"] == rec["session_count"]) else "Pending"  # <-- NEW
             data.append({
                 "unit_code": rec["unit_code"],
                 "unit_name": rec["unit_name"],
                 "campus": rec["campus"],
                 "session_count": rec["session_count"],
                 "tutors": list(rec["tutors"].values()),
+                "allocation_status": allocation_status,
             })
 
         data.sort(key=lambda x: (x["unit_code"], x["campus"]))
