@@ -19,6 +19,43 @@
     .actions {
       border-top: 1px solid #e5e7eb
     }
+
+    .eoi-table {
+      table-layout: fixed;
+      width: 100%;
+    }
+
+    .eoi-table col.pref {
+      width: 90px;
+    }
+
+    .eoi-table col.name {
+      width: 220px;
+    }
+
+    .eoi-table col.email {
+      width: 260px;
+    }
+
+    .eoi-table col.status {
+      width: 1fr;
+    }
+
+    /* flexible */
+    .eoi-table col.location {
+      width: 160px;
+    }
+
+    .eoi-table col.details {
+      width: 120px;
+    }
+
+    .eoi-table th,
+    .eoi-table td {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
   </style>
 </head>
 
@@ -32,7 +69,15 @@
     <div id="hobartBlock" class="mb-4 d-none">
       <div class="section-title mb-2">Location: Hobart</div>
       <div class="table-responsive">
-        <table class="table table-bordered align-middle">
+        <table class="table table-bordered align-middle eoi-table">
+          <colgroup>
+            <col class="pref">
+            <col class="name">
+            <col class="email">
+            <col class="status">
+            <col class="location">
+            <col class="details">
+          </colgroup>
           <thead class="table-light" id="hobartHead"></thead>
           <tbody id="hobartBody"></tbody>
         </table>
@@ -42,9 +87,17 @@
     <div id="launcBlock" class="mb-4 d-none">
       <div class="section-title mb-2">Location: Launceston</div>
       <div class="table-responsive">
-        <table class="table table-bordered align-middle">
-          <thead class="table-light" id="launcHead"></thead>
-          <tbody id="launcBody"></tbody>
+        <table class="table table-bordered align-middle eoi-table">
+          <colgroup>
+            <col class="pref">
+            <col class="name">
+            <col class="email">
+            <col class="status">
+            <col class="location">
+            <col class="details">
+          </colgroup>
+          <thead class="table-light" id="hobartHead"></thead>
+          <tbody id="hobartBody"></tbody>
         </table>
       </div>
     </div>
@@ -52,9 +105,17 @@
     <div id="otherBlock" class="mb-4 d-none">
       <div class="section-title mb-2">Location: Other</div>
       <div class="table-responsive">
-        <table class="table table-bordered align-middle">
-          <thead class="table-light" id="otherHead"></thead>
-          <tbody id="otherBody"></tbody>
+        <table class="table table-bordered align-middle eoi-table">
+          <colgroup>
+            <col class="pref">
+            <col class="name">
+            <col class="email">
+            <col class="status">
+            <col class="location">
+            <col class="details">
+          </colgroup>
+          <thead class="table-light" id="hobartHead"></thead>
+          <tbody id="hobartBody"></tbody>
         </table>
       </div>
     </div>
