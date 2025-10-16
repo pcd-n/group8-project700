@@ -116,14 +116,14 @@ class ImportStatusView(APIView):
             job = (
                 UploadJob.objects
                 .filter(import_type=import_type)
-                .order_by("-created_at")
+                .order_by("-started_at")
                 .first()
             )
             if not job:
                 return None
             return {
                 "filename": getattr(job.file, "name", "") or "",
-                "uploaded_at": job.created_at,
+                "uploaded_at": job.started_at,
                 "created_by": getattr(job.created_by, "email", None),
             }
 

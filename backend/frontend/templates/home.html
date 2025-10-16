@@ -511,13 +511,14 @@
 
         // NEW: persist state + disable button after success
         const alias = await getCurrentAlias();
-        sessionStorage.setItem("eoiPreviewAlias", alias);
-        sessionStorage.setItem("eoiFileName", f.name);
-        sessionStorage.setItem("eoiUploadDisabled", "1");
-
-        btnUpload.disabled = true;
-        btnUpload.classList.add("disabled");
-        btnUpload.textContent = "EOI uploaded";
+        const info = document.getElementById("eoiInfoRow");
+        if (info) {
+          info.innerHTML = `
+            <div class="text-success">
+              EOIs uploaded to <b>${alias || "current semester"}</b>. 
+              You can upload another spreadsheet any time — new applicants/units will be appended, existed data remains unchanged.
+            </div>`;
+        }
       } catch (e) {
         alert(e.message);
       }
@@ -904,25 +905,13 @@
         const btnUpload = document.getElementById("btnUpload");
         const eoiInfoRow = document.getElementById("eoiInfoRow");
 
-        if (await semesterHasAnyData(alias)) {
-          btnUpload.disabled = true;
-          btnUpload.classList.add("disabled");
-          btnUpload.textContent = "EOI already loaded";
-          if (eoiInfoRow && window.__isAdmin) {
-            eoiInfoRow.innerHTML = `
-              <div>
-                Database for <b>${alias}</b> already exists.
-                If you want to re-upload and <b>overwrite</b> it,
-                <button id="btnReuploadEOI" class="btn btn-link p-0 align-baseline">click here</button>.
-              </div>`;
-            document.getElementById("btnReuploadEOI").addEventListener("click", () => {
-              if (!confirm("This will overwrite existing EOI-derived data for this semester. Continue?")) return;
-              btnUpload.disabled = false;
-              btnUpload.classList.remove("disabled");
-              btnUpload.textContent = "Upload EOI Spreadsheet";
-              document.getElementById("eoiFile").click();
-            });
-          }
+        if (eoiInfoRow && window.__isAdmin) {
+          eoiInfoRow.innerHTML = `
+            <div class="text-muted">
+              You can upload additional <i>Casual Master EOI</i> spreadsheets at any time.
+              Each upload <b>appends</b> new EOIs to <b>${prettyFromAlias(alias)}</b>. 
+              Existing <code>(tutor_email, unit_code)</code> pairs are <b>updated</b>, not duplicated.
+            </div>`;
         }
         // If the Master Class List is already present → go straight to units
         const hasClassList = await semesterHasClassList(alias);
@@ -977,8 +966,8 @@
           }
 
           if (sessionStorage.getItem("eoiUploadDisabled") === "1") {
-            btnUpload.disabled = true;
-            btnUpload.classList.add("disabled");
+            //btnUpload.disabled = true;
+            //btnUpload.classList.add("disabled");
             btnUpload.textContent = "EOI uploaded";
             fileNameEl.textContent = sessionStorage.getItem("eoiFileName") || "";
           }

@@ -75,6 +75,7 @@ class SemesterSetCurrentView(APIView):
         # migrate BEFORE exposing as current
         ensure_migrated(alias)
         set_current_semester(alias)
+        set_view_semester(request, None)
         return Response({"ok": True})
 
 class SemesterCurrentView(APIView):
