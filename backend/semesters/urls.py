@@ -6,6 +6,8 @@ from .views import (
     SemesterSelectView,
     SemesterSetCurrentView,
     SemesterCurrentView,
+    SemesterDBListView, 
+    SemesterDropDBView,
 )
 
 app_name = "semesters"
@@ -16,4 +18,6 @@ urlpatterns = [
     path("select/", SemesterSelectView.as_view(), name="select-view"),
     path("set-current/<slug:alias>/", SemesterSetCurrentView.as_view(), name="set-current"),
     path("current/", SemesterCurrentView.as_view()),
+    path("dbs/", SemesterDBListView.as_view()),  # GET /api/semesters/dbs/
+    path("<str:alias>/drop/", SemesterDropDBView.as_view()),  # DELETE /api/semesters/<alias>/drop/
 ]

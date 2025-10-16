@@ -1,7 +1,7 @@
 #backend/users/urls.py
 from django.urls import path
 from . import views
-from .views import eoi_tutor_emails, delete_user_and_clear_alias
+from .views import eoi_tutor_emails, delete_user_and_clear_alias, tutors_across_aliases, delete_alias_user_view
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
@@ -35,6 +35,8 @@ urlpatterns = [
     path('users/reset-password/', views.ResetPasswordView.as_view(), name='reset_password'),
     path("tutors/eoi-emails/", eoi_tutor_emails, name="eoi-tutor-emails"),
     path("users/<int:user_id>/", delete_user_and_clear_alias, name="delete-user"),
+    path("tutors-across/", tutors_across_aliases),           # GET /api/accounts/tutors-across/
+    path("alias-user/", delete_alias_user_view),             # DELETE /api/accounts/alias-user/?alias=..&email=..
     # =====================================================
     # RBAC - ROLE MANAGEMENT ENDPOINTS (Admin only)
     # =====================================================

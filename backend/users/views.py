@@ -24,6 +24,7 @@ from .permissions import (
     CanManageAllocations, CanSetPreferences,
 )
 from semesters.services import get_active_semester_alias
+from semesters.models import Semester
 from rich.console import Console
 import logging
 
@@ -821,3 +822,81 @@ class ResetPasswordView(APIView):
         user.set_password(new_password)
         user.save(using=DEFAULT_DB, update_fields=["password"])
         return Response({"ok": True}, status=200)
+
+@api_view(["GET"])
+@permission_classes([IsAdminRole])
+def tutors_across_aliases(request):
+    """
+    GET /api/accounts/tutors-across/
+    Returns: {aliases:[{alias, db, tutors:[{id, username, name, email, source}]}]}
+    - default: platform users with active Tutor role
+    - each semester alias: users_user rows (EOI tutors)
+    """
+    out = {"aliases": []}
+
+    # default (platform)
+    default_db = connections[DEFAULT_DB].settings_dict.get("NAME", DEFAULT_DB)
+    default_qs = (User.objects.using(DEFAULT_DB)
+                  .filter(userroles__is_active=True, userroles__role__role_name="Tutor")
+                  .distinct())
+    out["aliases"].append({
+        "alias": DEFAULT_DB,
+        "db": default_db,
+        "tutors": [{
+            "id": u.id,
+            "username": u.username,
+            "name": u.get_full_name(),
+            "email": u.email,
+            "source": "platform",
+        } for u in default_qs.order_by("username")],
+    })
+
+    # semester aliases (EOI tutors live here; may not have roles)
+    for s in Semester.objects.all().order_by("year", "term"):
+        alias = s.alias
+        try:
+            dbname = connections[alias].settings_dict.get("NAME", alias)
+        except Exception:
+            dbname = alias
+        tutors = []
+        try:
+            qs = User.objects.using(alias).all().only("id", "username", "first_name", "last_name", "email")
+            for u in qs:
+                tutors.append({
+                    "id": getattr(u, "id", None),  # local id in alias DB (not used to delete)
+                    "username": u.username,
+                    "name": u.get_full_name(),
+                    "email": u.email,
+                    "source": "alias",
+                })
+        except Exception:
+            tutors = []
+        out["aliases"].append({"alias": alias, "db": dbname, "tutors": tutors})
+
+    return Response(out, status=200)
+
+@api_view(["DELETE"])
+@permission_classes([IsAdminRole])
+def delete_alias_user_view(request):
+    """
+    DELETE /api/accounts/alias-user/?alias=<sem_xxx_sy>&email=<email>
+    Deletes an EOI tutor (users_user row) in the specified alias DB by email.
+    """
+    alias = (request.GET.get("alias") or "").strip()
+    email = (request.GET.get("email") or "").strip().lower()
+    if not alias or not email:
+        return Response({"detail": "alias and email are required"}, status=400)
+    if alias == DEFAULT_DB:
+        return Response({"detail": "Use platform delete endpoint for default DB."}, status=400)
+
+    # sanity: ensure alias exists
+    try:
+        _ = Semester.objects.get(alias=alias)
+    except Semester.DoesNotExist:
+        return Response({"detail": "Unknown alias"}, status=404)
+
+    # delete EOI tutor row(s) with that email
+    cnt, _ = User.objects.using(alias).filter(email__iexact=email).delete()
+    if cnt == 0:
+        return Response({"detail": "No matching alias user"}, status=404)
+    return Response(status=204)

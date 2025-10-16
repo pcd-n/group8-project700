@@ -7,7 +7,8 @@ from django.db.utils import OperationalError
 from users.permissions import IsAdminRole
 from .serializers import SemesterSerializer, CreateSemesterSerializer, SelectViewSerializer
 from .models import Semester
-from django.db import connections
+from django.db import connection, connections, transaction
+from django.conf import settings
 from .services import (
     create_semester_db, set_view_semester, set_current_semester,
     list_existing_semesters, ensure_migrated, get_active_semester_alias
@@ -91,3 +92,51 @@ class SemesterCurrentView(APIView):
         ensure_migrated(alias)
         db_name = connections[alias].settings_dict.get("NAME", "")
         return Response({"alias": alias, "db": db_name}, status=200)
+
+class SemesterDBListView(APIView):
+    """Admin: list known semester aliases and their physical DB names."""
+    permission_classes = [IsAdminRole]
+
+    def get(self, request):
+        rows = []
+        for s in Semester.objects.all().order_by("-is_current", "-year", "term"):
+            try:
+                dbname = connections[s.alias].settings_dict.get("NAME", "")
+            except Exception:
+                dbname = ""
+            rows.append({
+                "alias": s.alias,
+                "db": dbname,
+                "year": s.year,
+                "term": s.term,
+                "is_current": s.is_current,
+            })
+        return Response(rows, status=200)
+
+class SemesterDropDBView(APIView):
+    """Admin: drop a semester database by alias (not allowed for current)."""
+    permission_classes = [IsAdminRole]
+
+    def delete(self, request, alias):
+        # Safety checks
+        try:
+            sem = Semester.objects.get(alias=alias)
+        except Semester.DoesNotExist:
+            return Response({"detail": "Unknown alias"}, status=404)
+        if sem.is_current:
+            return Response({"detail": "Cannot drop the current semester DB."}, status=400)
+
+        # Resolve physical DB name and drop
+        settings_dict = connections[alias].settings_dict
+        dbname = settings_dict.get("NAME")
+        if not dbname:
+            return Response({"detail": "No database bound to alias."}, status=400)
+
+        # Kill connection and DROP
+        with connections[alias].cursor() as c:
+            # MySQL: cannot drop while using; execute plain DROP DATABASE
+            c.execute(f"DROP DATABASE IF EXISTS `{dbname}`")
+
+        # Remove the Semester record
+        sem.delete()
+        return Response(status=204)

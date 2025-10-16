@@ -134,6 +134,9 @@
           <a id="btnTutorsListing" href="/tutor-search/" class="btn btn-outline-dark btn-pill btn-wide d-none">
             Tutors Listing
           </a>
+          <a id="btnDBMgmt" href="#" class="btn btn-outline-dark btn-pill btn-wide d-none">
+            Database Management
+          </a>
         </div>
       </div>
     </div>
@@ -208,6 +211,10 @@
       meCandidates: ["/users/me/", "/me/"],
     };
 
+    API.semesterDBs = "/semesters/dbs/";                // GET -> [{alias, db, year, term, is_current}]
+    API.semesterDrop = (alias) => `/semesters/${encodeURIComponent(alias)}/drop/`; // DELETE
+    API.tutorsAcross = "/accounts/tutors-across/";     // GET -> {aliases:[{alias,db,tutors:[]}]}
+    API.aliasUserDelete = (alias, email) => `/accounts/alias-user/?alias=${encodeURIComponent(alias)}&email=${encodeURIComponent(email)}`; // DELETE
     // =========================
     // Auth + request helpers
     // =========================
@@ -294,6 +301,8 @@
         if (isAdmin) adminCard.classList.remove("d-none");
         else adminCard.classList.add("d-none");
 
+        // Only Admin sees Database Managament
+        if (isAdmin) document.getElementById('btnDBMgmt')?.classList.remove('d-none');
         await initRoleUI({ me, meUser, isAdmin, isCoordinator, isTutor });
       }
       catch (_) {
@@ -617,6 +626,149 @@
       recordCount.textContent = `${unitSheets.length} Records Found`;
     }
 
+    // =================
+    // Database Management
+    // ===================
+    const btnDBMgmt = document.getElementById('btnDBMgmt');
+    btnDBMgmt?.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const modal = new bootstrap.Modal(document.getElementById('dbMgmtModal'));
+      modal.show();
+      // Load both tabs data the first time it opens
+      try {
+        await Promise.all([loadDBList(), loadTutorsAcross()]);
+      } catch (_) { }
+    });
+
+    async function loadDBList() {
+      const body = document.getElementById('dbListBody');
+      body.innerHTML = '<tr><td colspan="5" class="text-center py-3">Loading…</td></tr>';
+      try {
+        const rows = await apiGet(API.semesterDBs);
+        body.innerHTML = rows.map(r => `
+          <tr>
+            <td class="fw-semibold">${r.alias}</td>
+            <td>${r.db}</td>
+            <td>${r.year || ''} ${r.term || ''}</td>
+            <td>${r.is_current ? '<span class="badge bg-success">Yes</span>' : ''}</td>
+            <td>
+              <button class="btn btn-sm btn-outline-danger" data-alias="${r.alias}" ${r.is_current ? 'disabled' : ''}>
+                Drop
+              </button>
+            </td>
+          </tr>
+        `).join("") || '<tr><td colspan="5" class="text-center py-3">No semesters</td></tr>';
+
+        // wire drop buttons
+        body.querySelectorAll('button[data-alias]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const alias = btn.getAttribute('data-alias');
+            if (!alias) return;
+            if (!confirm(`DROP database for ${alias}? This cannot be undone.`)) return;
+            try {
+              const res = await fetch(`${API.base}${API.semesterDrop(alias)}`, {
+                method: 'DELETE',
+                headers: authHeaders(),
+                credentials: 'include'
+              });
+              if (!res.ok) {
+                let msg = 'Failed to drop database';
+                try { const j = await res.json(); msg = j.detail || j.error || msg; } catch { }
+                alert(msg); return;
+              }
+              await loadDBList(); // refresh
+            } catch (e) {
+              alert(e.message || 'Failed to drop database');
+            }
+          });
+        });
+      } catch (e) {
+        body.innerHTML = `<tr><td colspan="5" class="text-danger">Error: ${e.message || 'failed to load'}</td></tr>`;
+      }
+    }
+
+    let __tutorsAcrossCache = null;
+
+    async function loadTutorsAcross() {
+      const body = document.getElementById('tutorsAcrossBody');
+      const sel = document.getElementById('tutorDbFilter');
+      body.innerHTML = '<tr><td colspan="5" class="text-center py-3">Loading…</td></tr>';
+
+      try {
+        const data = await apiGet(API.tutorsAcross);
+        __tutorsAcrossCache = data?.aliases || [];
+
+        // fill filter
+        sel.innerHTML = `<option value="">All</option>` + __tutorsAcrossCache.map(a =>
+          `<option value="${a.alias}">${a.alias} (${a.db || a.alias})</option>`
+        ).join("");
+
+        renderTutorsAcrossRows();
+        sel.onchange = renderTutorsAcrossRows;
+      } catch (e) {
+        body.innerHTML = `<tr><td colspan="5" class="text-danger">Error: ${e.message || 'failed to load'}</td></tr>`;
+      }
+
+      function renderTutorsAcrossRows() {
+        const body = document.getElementById('tutorsAcrossBody');
+        const selAlias = sel.value;
+        const rows = [];
+        (__tutorsAcrossCache || []).forEach(a => {
+          if (selAlias && a.alias !== selAlias) return;
+          (a.tutors || []).forEach(t => {
+            rows.push(`
+              <tr>
+                <td class="fw-semibold">${a.alias}</td>
+                <td>${(t.name || t.username || '').trim()}</td>
+                <td>${t.email || ''}</td>
+                <td>${t.source || ''}</td>
+                <td>
+                  <button class="btn btn-sm btn-outline-danger" data-del='${JSON.stringify({ alias: a.alias, id: t.id || "", email: t.email || "" }).replace(/"/g, "&quot;")}'>
+                    Remove
+                  </button>
+                </td>
+              </tr>
+            `);
+          });
+        });
+        body.innerHTML = rows.join("") || '<tr><td colspan="5" class="text-center py-3">No tutors found</td></tr>';
+
+        body.querySelectorAll('button[data-del]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const { alias, id, email } = JSON.parse(btn.getAttribute('data-del'));
+            if (alias === 'default') {
+              if (!id) return alert('Missing user id');
+              if (!confirm(`Delete platform tutor (id=${id}) from default?`)) return;
+              const res = await fetch(`${API.base}/accounts/users/${id}/`, {
+                method: 'DELETE',
+                headers: authHeaders(),
+                credentials: 'include'
+              });
+              if (!res.ok) {
+                let msg = 'Failed to delete user';
+                try { const j = await res.json(); msg = j.detail || j.error || msg; } catch { }
+                return alert(msg);
+              }
+            } else {
+              if (!email) return alert('Missing tutor email');
+              if (!confirm(`Delete EOI tutor (${email}) from ${alias}?`)) return;
+              const res = await fetch(`${API.base}${API.aliasUserDelete(alias, email)}`, {
+                method: 'DELETE',
+                headers: authHeaders(),
+                credentials: 'include'
+              });
+              if (!res.ok) {
+                let msg = 'Failed to delete alias user';
+                try { const j = await res.json(); msg = j.detail || j.error || msg; } catch { }
+                return alert(msg);
+              }
+            }
+            await loadTutorsAcross();
+          });
+        });
+      }
+    }
+
     // =========================
     // Tutor allocation workflow
     // =========================
@@ -881,6 +1033,80 @@
     }
 
   </script>
+
+  <!-- Database Management Modal -->
+  <div class="modal fade" id="dbMgmtModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Database Management</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <ul class="nav nav-tabs" id="dbTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+              <button class="nav-link active" id="semesters-tab" data-bs-toggle="tab" data-bs-target="#semestersPane"
+                type="button" role="tab">Semesters</button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tutors-tab" data-bs-toggle="tab" data-bs-target="#tutorsPane" type="button"
+                role="tab">Tutors by Database</button>
+            </li>
+          </ul>
+          <div class="tab-content pt-3">
+            <!-- Semesters pane -->
+            <div class="tab-pane fade show active" id="semestersPane" role="tabpanel">
+              <div class="table-responsive">
+                <table class="table table-bordered align-middle">
+                  <thead class="table-light">
+                    <tr>
+                      <th style="width:160px">Alias</th>
+                      <th>Database Name</th>
+                      <th style="width:160px">Year / Term</th>
+                      <th style="width:120px">Current</th>
+                      <th style="width:120px">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dbListBody"></tbody>
+                </table>
+              </div>
+              <small class="text-muted">Dropping a semester DB is destructive and cannot be undone.</small>
+            </div>
+
+            <!-- Tutors pane -->
+            <div class="tab-pane fade" id="tutorsPane" role="tabpanel">
+              <div class="mb-2">
+                <label class="form-label me-2">Filter by DB:</label>
+                <select id="tutorDbFilter" class="form-select" style="max-width:280px"></select>
+              </div>
+              <div class="table-responsive">
+                <table class="table table-bordered align-middle">
+                  <thead class="table-light">
+                    <tr>
+                      <th style="width:160px">DB Alias</th>
+                      <th>Name / Username</th>
+                      <th>Email</th>
+                      <th style="width:160px">Source</th>
+                      <th style="width:120px">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tutorsAcrossBody"></tbody>
+                </table>
+              </div>
+              <small class="text-muted">Removing a tutor on <b>default</b> deletes the platform account; removing on a
+                semester DB deletes only the EOI tutor record in that DB.</small>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bootstrap bundle (for modal/tabs) -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
 </body>
 
