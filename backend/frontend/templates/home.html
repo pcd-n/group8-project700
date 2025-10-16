@@ -660,8 +660,8 @@
       const body = document.getElementById('dbListBody');
       body.innerHTML = '<tr><td colspan="5" class="text-center py-3">Loading…</td></tr>';
       try {
-        // rows now include: { alias, db, year, term, is_current, db_exists }
-        const rows = await apiGet(API.semesterDBs);
+        let rows = await apiGet(API.semesterDBs);
+        rows = (rows || []).filter(r => r.db_exists);
 
         body.innerHTML = (rows || []).map(r => {
           const dbCell = r.db_exists
