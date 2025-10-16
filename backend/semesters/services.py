@@ -256,3 +256,18 @@ def get_active_semester_alias(request=None) -> str:
     ensure_migrated(alias)
     return alias
 
+def db_name_for_alias(alias: str) -> str:
+    """
+    Return the stored physical DB name for a semester alias.
+    Uses Semester.db_name directly (no regex).
+    """
+    sem = Semester.objects.filter(alias=alias).only("db_name").first()
+    return sem.db_name if sem else ""
+
+def schema_exists_for_alias(alias: str) -> bool:
+    """
+    True if the physical schema exists in MySQL.
+    Uses existing _db_exists(db_name).
+    """
+    dbname = db_name_for_alias(alias)
+    return _db_exists(dbname) if dbname else False

@@ -660,24 +660,42 @@
       const body = document.getElementById('dbListBody');
       body.innerHTML = '<tr><td colspan="5" class="text-center py-3">Loading…</td></tr>';
       try {
+        // rows now include: { alias, db, year, term, is_current, db_exists }
         const rows = await apiGet(API.semesterDBs);
-        body.innerHTML = rows.map(r => `
-          <tr>
-            <td class="fw-semibold">${r.alias}</td>
-            <td>${r.db}</td>
-            <td>${r.year || ''} ${r.term || ''}</td>
-            <td>${r.is_current ? '<span class="badge bg-success">Yes</span>' : ''}</td>
-            <td>
-              <button class="btn btn-sm btn-outline-danger" data-alias="${r.alias}" ${r.is_current ? 'disabled' : ''}>
-                Drop
-              </button>
-            </td>
-          </tr>
-        `).join("") || '<tr><td colspan="5" class="text-center py-3">No semesters</td></tr>';
+
+        body.innerHTML = (rows || []).map(r => {
+          const dbCell = r.db_exists
+            ? `${r.db || ''}`
+            : `${r.db || ''} <span class="badge text-bg-secondary ms-2">Not created</span>`;
+
+          // Disable Drop when (a) current OR (b) schema missing
+          const dropDisabled = r.is_current || !r.db_exists;
+          const dropTitle = r.is_current
+            ? 'Cannot drop the current semester'
+            : (!r.db_exists ? 'Schema not created; nothing to drop' : 'Drop database');
+
+          return `
+            <tr>
+              <td class="fw-semibold">${r.alias}</td>
+              <td>${dbCell}</td>
+              <td>${r.year || ''} ${r.term || ''}</td>
+              <td>${r.is_current ? '<span class="badge bg-success">Yes</span>' : ''}</td>
+              <td>
+                <button class="btn btn-sm btn-outline-danger"
+                        data-alias="${r.alias}"
+                        ${dropDisabled ? 'disabled' : ''}
+                        title="${dropTitle}">
+                  Drop
+                </button>
+              </td>
+            </tr>
+          `;
+        }).join("") || '<tr><td colspan="5" class="text-center py-3">No semesters</td></tr>';
 
         // wire drop buttons
         body.querySelectorAll('button[data-alias]').forEach(btn => {
           btn.addEventListener('click', async () => {
+            if (btn.disabled) return;
             const alias = btn.getAttribute('data-alias');
             if (!alias) return;
             if (!confirm(`DROP database for ${alias}? This cannot be undone.`)) return;

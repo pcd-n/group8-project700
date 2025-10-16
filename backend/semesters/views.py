@@ -11,7 +11,8 @@ from django.db import connection, connections, transaction
 from django.conf import settings
 from .services import (
     create_semester_db, set_view_semester, set_current_semester,
-    list_existing_semesters, ensure_migrated, get_active_semester_alias
+    list_existing_semesters, ensure_migrated, get_active_semester_alias,
+    db_name_for_alias, schema_exists_for_alias,
 )
 
 class SemesterListView(APIView):
@@ -101,16 +102,14 @@ class SemesterDBListView(APIView):
     def get(self, request):
         rows = []
         for s in Semester.objects.all().order_by("-is_current", "-year", "term"):
-            try:
-                dbname = connections[s.alias].settings_dict.get("NAME", "")
-            except Exception:
-                dbname = ""
+            dbname = s.db_name or db_name_for_alias(s.alias)
             rows.append({
                 "alias": s.alias,
                 "db": dbname,
                 "year": s.year,
                 "term": s.term,
                 "is_current": s.is_current,
+                "db_exists": schema_exists_for_alias(s.alias),
             })
         return Response(rows, status=200)
 
@@ -127,15 +126,13 @@ class SemesterDropDBView(APIView):
         if sem.is_current:
             return Response({"detail": "Cannot drop the current semester DB."}, status=400)
 
-        # Resolve physical DB name and drop
-        settings_dict = connections[alias].settings_dict
-        dbname = settings_dict.get("NAME")
+        # Resolve physical DB name (prefer model; alias might not be registered)
+        dbname = sem.db_name
         if not dbname:
-            return Response({"detail": "No database bound to alias."}, status=400)
+            return Response({"detail": "No database name recorded for this semester."}, status=400)
 
-        # Kill connection and DROP
-        with connections[alias].cursor() as c:
-            # MySQL: cannot drop while using; execute plain DROP DATABASE
+        # Use the default connection to drop, even if alias is not registered
+        with connections["default"].cursor() as c:
             c.execute(f"DROP DATABASE IF EXISTS `{dbname}`")
 
         # Remove the Semester record
